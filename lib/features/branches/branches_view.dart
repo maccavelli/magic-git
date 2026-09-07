@@ -757,6 +757,13 @@ class _BranchesViewState extends ConsumerState<BranchesView>
       final next = {...prefs.hiddenBranchNames, ...hide}.toList()..sort();
       return prefs.copyWith(hiddenBranchNames: next);
     });
+    // The write above resolves the UI identity and then touches disk, and the
+    // panel can be disposed inside that window (MADR 0034 F2) — so `mounted` is
+    // re-checked on THIS side of the await. Without it `ref.invalidate` throws
+    // "Using \"ref\" when a widget is about to or has been unmounted", and the
+    // setState below throws too; the `mounted` test further down guarded only
+    // the statement after them.
+    if (!mounted) return;
     ref.invalidate(hiddenBranchesProvider(repoPath));
     // Keep whatever the user selected that did NOT just disappear — a mixed
     // selection where only some rows were eligible should not be wiped
@@ -998,6 +1005,13 @@ class _BranchesViewState extends ConsumerState<BranchesView>
       globalCollapsed: await loadLegacyBranchCollapsedSections(),
       update: update,
     );
+    // Guarded here, not only at the call sites: this method has ten callers
+    // (collapse, grouping, show-hidden, mode, base, pin, hide, unhide…) and
+    // every one of them awaits identity resolution and a disk write before
+    // these invalidations run. MADR 0034 F2 was reported against `_batchHide`
+    // alone; reproducing it showed the unguarded `ref` use is one level down,
+    // and shared.
+    if (!mounted) return;
     ref.invalidate(branchWorkspacePrefsProvider(repoPath));
     ref.invalidate(pinnedBranchesProvider(repoPath));
     ref.invalidate(branchBaseProvider);

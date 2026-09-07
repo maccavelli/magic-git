@@ -271,7 +271,9 @@ Future<_SpyGit> _pump(
         (ref) async =>
             GitStatus(branch: const GitBranchInfo(), files: const []),
       ),
-      // Last, so a caller can replace any default above.
+      // Appended, not merged: Riverpod THROWS on a duplicate override of
+      // the same provider in one container, so these must name providers
+      // the defaults above do not.
       ...extraOverrides,
     ],
   );
@@ -319,13 +321,21 @@ RepositoryUiIdentity _batchIdentity() =>
 Future<RepositoryUiIdentity> _pumpBatch(
   WidgetTester tester, {
   List<Override> extraOverrides = const [],
+
+  /// Supplies the UI identity instead of resolving it immediately — pass a
+  /// `Completer.future` to hold `_updateWorkspacePrefs` open while the test
+  /// disposes the panel. A parameter rather than an extra override, because
+  /// Riverpod rejects overriding the same provider twice in one container.
+  Future<RepositoryUiIdentity?>? identityFuture,
 }) async {
   SharedPreferences.setMockInitialValues({});
   final identity = _batchIdentity();
   await _pump(
     tester,
     extraOverrides: [
-      repositoryUiIdentityProvider(_repo).overrideWith((ref) async => identity),
+      repositoryUiIdentityProvider(
+        _repo,
+      ).overrideWith((ref) => identityFuture ?? Future.value(identity)),
       ...extraOverrides,
     ],
   );
@@ -795,6 +805,39 @@ void main() {
       find.byType(MacosSheet),
       findsOneWidget,
       reason: 'the batch bar must reach the bulk-delete sheet',
+    );
+  });
+
+  testWidgets('a batch hide whose panel is disposed mid-write touches nothing', (
+    tester,
+  ) async {
+    // MADR 0034 F2. `_batchHide` awaits `_updateWorkspacePrefs` — the UI
+    // identity, then disk — and used to run `ref.invalidate(...)` and
+    // `setState(...)` afterwards with no `mounted` check, even though the very
+    // next statement checks one (branches_view.dart:778).
+    final parked = Completer<RepositoryUiIdentity?>();
+    await _pumpBatch(tester, identityFuture: parked.future);
+    await _selectTwoInReview(tester);
+
+    await tester.tap(find.text('Hide'));
+    await tester.pump(); // now parked inside _updateWorkspacePrefs
+
+    // The panel goes away while the prefs write is still outstanding.
+    await tester.pumpWidget(const MacosApp(home: Text('gone')));
+    await tester.pump();
+
+    // Completed with a REAL identity, not null: completing with null would make
+    // this depend on `_updateWorkspacePrefs`'s `identity == null` early return
+    // (branches_view.dart:992), an implementation detail a refactor could move.
+    // A real identity runs the whole write and still lands on the code under
+    // test.
+    parked.complete(_batchIdentity());
+    await tester.pumpAndSettle();
+
+    expect(
+      tester.takeException(),
+      isNull,
+      reason: 'the resumed continuation must not touch a disposed State',
     );
   });
 }

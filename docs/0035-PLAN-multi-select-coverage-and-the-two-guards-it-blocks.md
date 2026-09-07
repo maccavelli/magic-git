@@ -321,8 +321,11 @@ Standing rules that apply here:
    is driven, not just rendered**.
 3. Every new test seen to fail against a deliberate break, with the failure text
    recorded — including the two reproductions.
-4. `git diff -- lib/` across the whole plan is **exactly two lines**, both
-   `if (!mounted) return;`.
+4. ~~`git diff -- lib/` across the whole plan is **exactly two lines**, both
+   `if (!mounted) return;`.~~ **Amended 2026-09-07 (Phase 4 deviation):**
+   **three** `if (!mounted) return;` — two for F2 (one in the shared
+   `_updateWorkspacePrefs`, one in `_batchHide`, both shown load-bearing) and
+   one for F3.
 5. `flutter analyze` clean at every phase; full suite green.
 6. The 10 pre-existing tests in `branches_view_guards_test.dart` are unedited.
 
@@ -466,6 +469,68 @@ than twice).
 
 **All four batch actions now have committed coverage.** That was this plan's
 first-priority goal; F2 and F3 follow.
+
+### Phase 4 — 2026-09-07 — *complete, with a deviation that widened the fix*
+
+**Reproduced first.** The parked-identity technique worked as planned, and the
+failure names the exact statement 0034 pointed at:
+
+```
+Bad state: Using "ref" when a widget is about to or has been unmounted is unsafe.
+Ref relies on BuildContext, and BuildContext is unsafe to use when the widget
+is deactivated.
+```
+
+Not `setState() called after dispose()` — `ref.invalidate` at `:760` runs first,
+so it throws first. The plan said to record the actual text rather than assume
+which; this is it.
+
+**Deviation — F2 is one level deeper and much broader than 0034 reported.**
+With the planned guard added to `_batchHide`, the test **still failed**, now
+from `branches_view.dart:1008` inside `_updateWorkspacePrefs` itself: after its
+own awaits (identity resolution, then `loadLegacyBranchCollapsedSections()` and
+the disk write) it runs **three** unguarded `ref.invalidate` calls. That method
+has **ten call sites** — collapse sections, grouping, show-hidden, mode, base,
+batch pin, batch hide, unhide and two more — so every one of them carries the
+same defect, not just `_batchHide`.
+
+0034 reported F2 against `_batchHide` because that is where inspection found it.
+Reproducing it showed the unguarded `ref` use is in shared code. **This is
+exactly what the "reproduce before guarding" rule is for**: the guard the plan
+specified would have made the test pass at one call site and left nine others
+broken, and nothing would have said so.
+
+**Both guards are load-bearing — verified, not assumed.** Removing the
+`_batchHide` guard while keeping the shared one still throws
+(`Bad state: Using "ref" …`), because `_batchHide` has its own
+`ref.invalidate(hiddenBranchesProvider(...))` at `:760` and `setState` at `:774`
+after the call returns. So the fix is:
+
+* `_updateWorkspacePrefs` — `if (!mounted) return;` before its three
+  invalidations, covering all ten callers;
+* `_batchHide` — `if (!mounted) return;` before its own.
+
+**Acceptance criterion 4 is amended.** It said the whole plan changes "exactly
+two lines" of `lib/`, both `if (!mounted) return;`. It is now **three** — two
+for F2, one for F3 — plus their comments. Recorded rather than quietly
+absorbed.
+
+**A helper defect found on the way.** `_pumpBatch` could not be given a parked
+identity through `extraOverrides`: Riverpod **throws** on a duplicate override
+of the same provider in one container ("Tried to override a provider twice
+within the same container"). `_pumpBatch` now takes an `identityFuture`
+parameter instead, and the Phase 1 comment claiming a caller "can replace any
+default" — which was **wrong** — has been corrected to say the opposite.
+
+**Verification:**
+
+```
+flutter analyze (whole project)   No issues found! (ran in 4.1s)
+dart format --output=none --set-exit-if-changed   (0 changed)
+flutter test (full suite)         03:23 +3611 ~2: All tests passed!
+```
+
+**Counts.** `expect(` 9129 -> **9130**, `testWidgets(` 1010 -> **1011**.
 
 ## Rollout and Rollback
 
