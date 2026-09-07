@@ -1,5 +1,5 @@
 ---
-status: "in-progress"
+status: "complete"
 date: 2026-09-07
 associated-madr: "0034-MADR-debugging-pass-findings.md"
 ---
@@ -316,6 +316,66 @@ grep -c "catch (_) {}" lib/features/forge/forge_prefs.dart   -> 0
 
 **Counts.** `expect(` 9140 -> **9145**; suite 3617 -> **3620**. Acceptance
 criterion 3 met.
+
+### Phase 3 — 2026-09-07 — *complete*
+
+**Delivered.** `gh_service.dart`'s `user/orgs` call is page-walked, bounded by
+`_maxListPages`, terminating on a short page — the same shape as `runJobs`
+(`:539`), which carries the scar of the identical bug on the Actions jobs
+endpoint.
+
+**Deliberately not `gh api --paginate`.** 0034's F8 records that glab's
+equivalent emits one JSON document *per page*, concatenated, which no JSON
+parser accepts. Whether `gh` behaves the same is **unverified**, and a hand-walk
+needs no such assumption. That reasoning is in the code comment, not just here.
+
+**A bug I wrote and then caught with the test written for it.** The first
+version of the argv reached the file as `'per_page=\$perPage'` and
+`'page=\$page'` — **escaped**, so Dart would have sent the literal text
+`page=$page` instead of the number. `flutter analyze` accepts it (a valid
+string), and GitHub would simply have answered page 1 forever: the walk would
+loop `_maxListPages` times over the same 100 orgs and terminate only on the
+bound. Caught by reading the generated source, fixed, and then pinned by a test
+that asserts the argv contains `page=1` and `page=2` — not merely that two calls
+were made.
+
+The same escaping then bit the **test's own** org generator, where every entry
+came out named `org$i` and deduped to one. Symptom: `Expected: <104> Actual:
+<2>`.
+
+**Sabotage — three, each isolating its own test:**
+
+```
+walk removed (single page again)  -> walks past the first page …
+                                     asks for a real page number …
+page number sent as a literal     -> asks for a real page number, not a literal
+short page does not terminate     -> a single short page issues exactly one orgs call
+                                     asks for a real page number …
+```
+
+**Verification:**
+
+```
+flutter analyze (whole project)   No issues found! (ran in 4.3s)
+dart format --output=none --set-exit-if-changed   (0 changed)
+flutter test (full suite)         03:28 +3623 ~2: All tests passed!
+```
+
+**Counts.** `expect(` 9145 -> **9152**; suite 3620 -> **3623**.
+
+### Plan complete
+
+| # | Criterion | Result |
+| --- | --- | --- |
+| 1 | Main window and tab containers log provider failures | yes — unit tests for the tab factory, a source scan for `main.dart`'s unreachable scope |
+| 2 | A throwing sink cannot turn one failure into two | yes, and the test took four attempts to stop being vacuous |
+| 3 | `grep -c "catch (_) {}" forge_prefs.dart` is 0 | yes |
+| 4 | `user/orgs` walks pages | yes, proven with a two-page fake |
+| 5 | Every new test seen to fail | yes — 10 sabotages across the three phases |
+| 6 | analyze clean, suite green each phase | yes |
+
+Suite 3612 -> **3623**. **Tranche 3 (F5, F6, F8) remains**, and is the last of
+0034.
 
 ## Rollout and Rollback
 

@@ -175,4 +175,68 @@ void main() {
       );
     });
   });
+
+  group('GhService.listCreatableNamespaces pagination (MADR 0034 F7)', () {
+    String orgsPage(int n, {required int from}) =>
+        '[${[for (var i = from; i < from + n; i++) '{"login":"org$i"}'].join(',')}]';
+
+    test('walks past the first page instead of truncating at 100', () async {
+      final exec = _FakeExecutor();
+      exec.results
+        ..add(_ok('{"login":"me"}')) // gh api user
+        ..add(_ok(orgsPage(100, from: 0))) // full page -> keep going
+        ..add(_ok(orgsPage(3, from: 100))); // short page -> stop
+      final gh = GhService(exec);
+
+      final namespaces = await gh.listCreatableNamespaces(
+        '/repo',
+        host: 'github.com',
+      );
+
+      expect(namespaces.length, 104, reason: 'login + 103 orgs');
+      expect(namespaces.first, 'me');
+      expect(
+        namespaces.last,
+        'org102',
+        reason: 'the tail past the first page must be offered',
+      );
+    });
+
+    test('asks for a real page number, not a literal', () async {
+      // Regression for a `\\$page` that reached the argv as the literal text
+      // rather than the value — the analyzer accepts it and the API would
+      // simply return page 1 forever.
+      final exec = _FakeExecutor();
+      exec.results
+        ..add(_ok('{"login":"me"}'))
+        ..add(_ok(orgsPage(100, from: 0)))
+        ..add(_ok(orgsPage(1, from: 100)));
+      await GhService(
+        exec,
+      ).listCreatableNamespaces('/repo', host: 'github.com');
+
+      final orgCalls = exec.calls
+          .where((c) => c.contains('user/orgs'))
+          .toList();
+      expect(orgCalls, hasLength(2));
+      expect(orgCalls[0], containsAll(<String>['per_page=100', 'page=1']));
+      expect(orgCalls[1], containsAll(<String>['per_page=100', 'page=2']));
+    });
+
+    test('a single short page issues exactly one orgs call', () async {
+      final exec = _FakeExecutor();
+      exec.results
+        ..add(_ok('{"login":"me"}'))
+        ..add(_ok(orgsPage(2, from: 0)));
+      await GhService(
+        exec,
+      ).listCreatableNamespaces('/repo', host: 'github.com');
+
+      expect(
+        exec.calls.where((c) => c.contains('user/orgs')),
+        hasLength(1),
+        reason: 'the common case must not pay for a second round trip',
+      );
+    });
+  });
 }

@@ -385,13 +385,35 @@ class GhService {
       return const <String>[];
     }
     try {
-      final decoded = await _runJson(
-        repoPath,
-        ['gh', 'api', 'user/orgs', '--method', 'GET', '-f', 'per_page=100'],
-        'gh api user/orgs',
-        extraEnv: hostEnv(host),
-      );
-      if (decoded is List) {
+      // Page-walked, bounded by [_maxListPages] — same shape as [runJobs], and
+      // for the same reason: a single `per_page=100` page silently drops
+      // everything past the hundredth, and the user is simply never offered
+      // those organisations (MADR 0034 F7). Walk until a short page marks the
+      // end.
+      //
+      // NOT `gh api --paginate`: MADR 0034 F8 records that glab's equivalent
+      // returns one JSON document PER PAGE, concatenated, which no JSON parser
+      // accepts. Whether gh behaves the same is unverified, and a hand-walk
+      // needs no such assumption.
+      const perPage = 100;
+      for (var page = 1; page <= _maxListPages; page++) {
+        final decoded = await _runJson(
+          repoPath,
+          [
+            'gh',
+            'api',
+            'user/orgs',
+            '--method',
+            'GET',
+            '-f',
+            'per_page=$perPage',
+            '-f',
+            'page=$page',
+          ],
+          'gh api user/orgs',
+          extraEnv: hostEnv(host),
+        );
+        if (decoded is! List) break;
         for (final entry in decoded) {
           if (entry is! Map) continue;
           final login = entry['login'] as String?;
@@ -399,6 +421,7 @@ class GhService {
           if (namespaces.contains(login)) continue;
           namespaces.add(login);
         }
+        if (decoded.length < perPage) break; // last (short) page reached
       }
     } catch (_) {
       // A missing org list still leaves the login usable.
