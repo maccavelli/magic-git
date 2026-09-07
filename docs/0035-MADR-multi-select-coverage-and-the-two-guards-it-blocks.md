@@ -122,6 +122,41 @@ test proves the batch bar connects them to a selection.
 That is why F4 took minutes and F2/F3 could not be done: F4 sat behind a
 dropdown the existing tests already drive.
 
+### Does multi-select actually work? Measured: yes, for three of four actions
+
+The coverage gap raises the obvious question, so it was answered directly
+rather than left to the plan. A throwaway probe drove the real panel — Review
+mode, shift-extended selection of two branches — against a durable
+`RepositoryUiIdentity.ssh` and a mocked `SharedPreferences`, then read the
+persisted prefs back:
+
+```
+PROBE bar: Pin, Unpin, Hide, Delete if merged…
+PROBE pinned after batch Pin:   [feature, main]
+PROBE pinned after batch Unpin: []
+PROBE hidden after batch Hide:  [feature]
+PROBE exception: null
+```
+
+* **Pin** — both selected branches pinned, persisted.
+* **Unpin** — both cleared, persisted.
+* **Hide** — `feature` hidden and persisted; `main` correctly **skipped**
+  because it is HEAD, which is the documented rule (0003: "Current, pinned,
+  protected/default, and worktree-held branches cannot be hidden").
+* No exception on any of them.
+
+**"Delete if merged…" was NOT verified.** The probe tapped it and nothing
+happened, and the reason is the fixture, not the feature: the panel reported
+*"No base available"*, and the button is gated `busy || base == null ? null :
+…` (`branches_view.dart:682`), so it was disabled and the tap was a no-op. A
+first read of the probe output looked like the sheet had opened — the finder
+matched the button's own label. **Recorded as unverified rather than counted as
+working**, and the plan must give the fixture a comparison base to exercise it.
+
+So the feature is not broken, and this record's job is to stop that being a
+matter of opinion: three actions demonstrably work today, one is unproven, and
+**no test guards any of them against tomorrow**.
+
 ### The two defects, restated
 
 Both from 0034, unchanged and still unreproduced:
@@ -169,6 +204,12 @@ Chosen option: **A** — build the technique, then use it for F2 and F3 — beca
 the technique is now known and cheap, it is the only route that meets 0034's own
 standard, and it leaves behind coverage for four actions that have none.
 
+**Ordering (maintainer's priority, 2026-09-07): proving multi-select works comes
+first.** The steps below are unchanged in content but deliberately ordered so
+the feature's own coverage lands before the two guards, rather than falling out
+of them. F2 and F3 are then written on top of an entry point that already
+exists.
+
 Shape of the work:
 
 1. **A shared entry point for the batch bar** in
@@ -177,18 +218,20 @@ Shape of the work:
    Review-mode knowledge, so the next batch test does not rediscover it.
 2. **A fixture that can exercise a batch** — at least two branches eligible for
    hide and delete (the current `_refs` has one, since `main` is HEAD).
-3. **F2 and F3 reproduced**, each seen to throw before its guard, following
+3. **Coverage for the four batch actions — first, not last.** Pin, Unpin and
+   Hide assert the persisted prefs (the probe above is the shape, and its
+   expected values are already known: `[feature, main]`, `[]`, `[feature]`,
+   with HEAD skipped). "Delete if merged…" needs a fixture with a comparison
+   base before it can be driven at all — that is the one action whose behaviour
+   is currently unproven.
+4. **F2 and F3 reproduced**, each seen to throw before its guard, following
    F4's pattern: park the awaited work (F2: override
    `repositoryUiIdentityProvider` with a `Completer`; F3: hold the bulk-delete
    sheet open), dispose the panel, release, assert no exception.
-4. **The two guards**, each with the comment naming the finding, as F4 has.
-5. **Coverage for the four batch actions** while the entry point is fresh —
-   the smallest useful set, not exhaustive: that Pin/Unpin/Hide reach the prefs
-   write with the right names, and that "Delete if merged…" opens the sheet with
-   the right candidates.
+5. **The two guards**, each with the comment naming the finding, as F4 has.
 
-Step 5 is the part that would not exist if only F2 and F3 were fixed, and it is
-the reason to choose A over C.
+Step 3 is the part that would not exist if only F2 and F3 were fixed, and it is
+both the reason to choose A over C and the reason it now runs first.
 
 ### Consequences
 
