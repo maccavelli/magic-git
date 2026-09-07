@@ -430,6 +430,11 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
   Future<void> _onDestChanged(String? connectionId) async {
     // Switching destination abandons any in-flight provisioning.
     await resetProvisioning();
+    // The hang-up above is a real network round trip once a session has been
+    // adopted, and the sheet can be dismissed inside that window (MADR 0034
+    // F4) — so `mounted` is re-checked on THIS side of the await, not only
+    // before it.
+    if (!mounted) return;
     setState(() {
       _destConnectionId = connectionId;
       _error = null;

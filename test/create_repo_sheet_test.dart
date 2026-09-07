@@ -8,6 +8,7 @@
 import 'dart:async';
 
 import 'package:flutter/services.dart';
+import 'package:flutter/widgets.dart' hide ConnectionState;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
 import 'package:remote_magic_git/core/forge/forge.dart';
@@ -1371,6 +1372,58 @@ void main() {
     dial.complete(null);
     await tester.pumpAndSettle();
   });
+
+  testWidgets(
+    'switching destination mid-hang-up does not setState on a disposed sheet',
+    (tester) async {
+      // F4 (MADR 0034). `_onDestChanged` awaits `resetProvisioning()` — a real
+      // network hang-up once a dial has been adopted — and then calls setState
+      // with no `mounted` guard. Dismissing the sheet inside that window used
+      // to throw "setState() called after dispose()".
+      await tester.binding.setSurfaceSize(const Size(1200, 900));
+      final abort = Completer<void>();
+      final stub = _ParkingAbortConnection(abort);
+      await tester.pumpWidget(
+        appProviderScope(
+          overrides: [
+            connectionProvider.overrideWith(() => stub),
+            savedConnectionsProvider.overrideWith((ref) async => [testConn]),
+          ],
+          child: const MacosApp(
+            debugShowCheckedModeBanner: false,
+            home: CreateRepositorySheet.landing(),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Adopt a session, so resetProvisioning has a token to hang up.
+      await tester.tap(find.byType(MacosPopupButton<String?>));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Prod').last);
+      await tester.pumpAndSettle();
+
+      // Switch back to This Mac: the hang-up parks.
+      await tester.tap(find.byType(MacosPopupButton<String?>));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('This Mac').last);
+      await tester.pump();
+      expect(stub.aborts, 1, reason: 'the hang-up must actually be in flight');
+
+      // The sheet goes away while the hang-up is still outstanding.
+      await tester.pumpWidget(const MacosApp(home: Text('gone')));
+      await tester.pump();
+
+      abort.complete();
+      await tester.pumpAndSettle();
+
+      expect(
+        tester.takeException(),
+        isNull,
+        reason: 'the resumed continuation must not touch a disposed State',
+      );
+    },
+  );
 }
 
 /// Parks `beginProvisioning` so a test can observe the in-flight dial.
@@ -1386,4 +1439,24 @@ class _ParkingProvisionConnection extends ConnectionController {
 
   @override
   Future<void> abortProvisioning(int token) async {}
+}
+
+/// Dials instantly, then parks the hang-up so a test can dispose the sheet
+/// while `resetProvisioning()` is still awaiting.
+class _ParkingAbortConnection extends ConnectionController {
+  _ParkingAbortConnection(this._abort);
+  final Completer<void> _abort;
+  int aborts = 0;
+
+  @override
+  ConnectionState build() => const ConnectionState();
+
+  @override
+  Future<int?> beginProvisioning(SavedConnection conn) async => 7;
+
+  @override
+  Future<void> abortProvisioning(int token) {
+    aborts++;
+    return _abort.future;
+  }
 }

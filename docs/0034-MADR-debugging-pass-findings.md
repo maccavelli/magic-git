@@ -99,7 +99,12 @@ The await is a modal sheet, so the window is "as long as the user takes". The
 
 Confidence: **traced by reading**; not reproduced.
 
-### F4 — `_onDestChanged` in both workspace sheets — *and this session widened it*
+### F4 — `_onDestChanged` in both workspace sheets — **RESOLVED 2026-09-07**
+
+> **Brought into scope and fixed on the maintainer's instruction, ahead of
+> tranche 2.** Reproduced first, as this record's own Confirmation section
+> demands, then fixed in both sheets with a test each. Details in
+> *Resolution* at the end of this finding.
 
 `create_repo_sheet.dart:430` and `clone_sheet.dart:262` (both
 `_onDestChanged`), byte-identical:
@@ -126,7 +131,40 @@ window barely existed. **That change made this defect materially more reachable
 in the create sheet.** It was not introduced by that change (the clone sheet
 has always had both), but the honest statement is that this session widened it.
 
-Confidence: **traced by reading**; not reproduced.
+~~Confidence: **traced by reading**; not reproduced.~~
+
+**Resolution — 2026-09-07.**
+
+*Reproduced before it was fixed.* A widget test adopts a session (so
+`provisionToken` is non-null), switches the destination back to This Mac (so
+`resetProvisioning` awaits a parked `abortProvisioning`), disposes the sheet,
+then releases the hang-up. Against the unfixed code both sheets throw:
+
+```
+setState() called after dispose():
+  _CloneRepositorySheetState#86450(lifecycle state: defunct, not mounted)
+  _CreateRepositorySheetState#c464a(lifecycle state: defunct, not mounted)
+```
+
+So this stops being "traced by reading" — it is a real crash, and the entry
+above is left struck through rather than edited so the record shows what was
+known when.
+
+*Fixed* by re-checking `mounted` on the far side of the await in both sheets
+(`create_repo_sheet.dart:430`, `clone_sheet.dart:262`), with a comment naming
+this finding. The two bodies remain byte-identical, verified by `diff` — MADR
+0033 Phase 3 deliberately left them that way, so the fix had to land twice.
+
+*Tested twice on purpose.* `create_repo_sheet_test.dart` and
+`clone_sheet_test.dart` each carry the mirror, because one test pinning one of
+two identical copies is what let this diverge in the first place. The clone
+mirror reuses that file's existing `_StubConnection` — extended with an
+`abortGate` beside its existing `dialGate` — rather than adding a second stub
+class.
+
+*Verification:* `flutter analyze` clean; `dart format` clean; full suite
+**3,604 passing** (up 2). Both tests seen to fail against `HEAD` in a scratch
+worktree before the fix.
 
 ### F5 — `WorkspaceCiState` and `AppTheme.ciColor` are orphaned
 
@@ -276,6 +314,10 @@ Suggested order, each its own change with its own test:
    and is seen to fail first. F4 must be fixed in both sheets — they are
    byte-identical after MADR 0033 Phase 3, so this is one fix applied twice, not
    two bugs.
+   > **F4 done 2026-09-07**, pulled forward on request; the approach above is
+   > what it used, and it worked — the reproduction threw before the guard and
+   > passes after. **F2 and F3 remain**, and the same method applies: reproduce,
+   > then guard.
 3. **Hygiene (F5, F6, F8).** Delete the orphaned CI enum and colour function;
    point `bounded_watch.dart` at the named legacy-filename helpers or delete
    them; correct the `--paginate` comment.

@@ -4,6 +4,7 @@
 
 import 'dart:async';
 
+import 'package:flutter/widgets.dart' hide ConnectionState;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
@@ -107,8 +108,15 @@ class _StubConnection extends ConnectionController {
     return gate.future;
   }
 
+  /// Gates [abortProvisioning] so a test can hold a hang-up in flight while it
+  /// disposes the sheet — the window in which MADR 0034 F4 happens.
+  Completer<void>? abortGate;
+
   @override
-  Future<void> abortProvisioning(int token) async => aborted.add(token);
+  Future<void> abortProvisioning(int token) async {
+    aborted.add(token);
+    await abortGate?.future;
+  }
 }
 
 class _FakeStore extends ConnectionStore {
@@ -458,6 +466,59 @@ void main() {
       reason: 'the control must be usable again once the dial resolves',
     );
   });
+
+  testWidgets(
+    'switching destination mid-hang-up does not setState on a disposed sheet',
+    (tester) async {
+      // The clone sheet's `_onDestChanged` is byte-identical to the create
+      // sheet's, so this mirrors that test rather than trusting two copies to
+      // stay in step (MADR 0034 F4).
+      await tester.binding.setSurfaceSize(const Size(1200, 900));
+      final stub = _StubConnection(const ConnectionState())
+        ..abortGate = Completer<void>();
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            connectionProvider.overrideWith(() => stub),
+            activeExecutorProvider.overrideWithValue(_FakeExecutor()),
+            savedConnectionsProvider.overrideWith((ref) async => [_conn]),
+            forgeRepoListProvider.overrideWith((ref, key) async => []),
+            forgeAuthHostProvider.overrideWith((ref, key) async => null),
+          ],
+          child: const MacosApp(
+            debugShowCheckedModeBanner: false,
+            home: CloneRepositorySheet.landing(),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Adopt a session, so resetProvisioning has a token to hang up.
+      await tester.tap(find.byType(MacosPopupButton<String?>));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text(_conn.displayName).last);
+      await tester.pumpAndSettle();
+
+      // Switch back to This Mac: the hang-up parks.
+      await tester.tap(find.byType(MacosPopupButton<String?>));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('This Mac').last);
+      await tester.pump();
+      expect(stub.aborted, [1], reason: 'the hang-up must be in flight');
+
+      // The sheet goes away while the hang-up is still outstanding.
+      await tester.pumpWidget(const MacosApp(home: Text('gone')));
+      await tester.pump();
+      stub.abortGate!.complete();
+      await tester.pumpAndSettle();
+
+      expect(
+        tester.takeException(),
+        isNull,
+        reason: 'the resumed continuation must not touch a disposed State',
+      );
+    },
+  );
 }
 
 extension on _FakeHandle {
