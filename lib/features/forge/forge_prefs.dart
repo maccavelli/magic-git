@@ -1,6 +1,31 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../core/output/output_log.dart';
+
+/// Reports a forge-prefs read/write failure to the output log (MADR 0034 F9).
+///
+/// These stores apply their change to `state` optimistically and then persist.
+/// Swallowing the persistence failure left the UI showing a setting that would
+/// not survive a restart, with nothing said to anyone.
+///
+/// **Reporting, not reverting.** Rolling the optimistic state back would make a
+/// pin flicker off under the user's cursor; the honest behaviour is to keep the
+/// change and say it did not persist.
+///
+/// Note each caller's `catch` only fires on a genuine failure — a *missing* key
+/// is handled explicitly before it, and is not an error.
+void _reportPrefsFailure(Ref ref, String what, Object error) {
+  try {
+    ref
+        .read(outputLogProvider.notifier)
+        .logError('forge prefs', '$what: $error');
+  } catch (_) {
+    // The notifier may already be disposed (marks are autoDispose), and a
+    // failure to REPORT a failure must never be worse than the original.
+  }
+}
+
 // The Forge list-section collapse store moved to the canonical, app-wide
 // `collapsedSectionsProvider` in `../common/section_collapse.dart` so the
 // Forge and Branches tabs share one minimize/expand mechanism.
@@ -69,7 +94,9 @@ class ForgeInboxMode extends Notifier<bool> {
       final prefs = await SharedPreferences.getInstance();
       final stored = prefs.getBool(_key);
       if (stored != null) state = stored;
-    } catch (_) {}
+    } catch (e) {
+      _reportPrefsFailure(ref, 'could not read the Inbox/Browse choice', e);
+    }
   }
 
   Future<void> set(bool inbox) async {
@@ -77,7 +104,13 @@ class ForgeInboxMode extends Notifier<bool> {
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool(_key, inbox);
-    } catch (_) {}
+    } catch (e) {
+      _reportPrefsFailure(
+        ref,
+        'the Inbox/Browse choice will not survive a restart',
+        e,
+      );
+    }
   }
 }
 
@@ -117,7 +150,9 @@ class ForgeInboxMarks
             if (e.startsWith('s:')) e.substring(2),
         },
       );
-    } catch (_) {}
+    } catch (e) {
+      _reportPrefsFailure(ref, 'could not read pinned/snoozed items', e);
+    }
   }
 
   Future<void> togglePin(String itemKey) => _toggle(itemKey, pin: true);
@@ -143,7 +178,9 @@ class ForgeInboxMarks
         for (final k in pinned.toList()..sort()) 'p:$k',
         for (final k in snoozed.toList()..sort()) 's:$k',
       ]);
-    } catch (_) {}
+    } catch (e) {
+      _reportPrefsFailure(ref, 'pin/snooze will not survive a restart', e);
+    }
   }
 }
 

@@ -268,6 +268,55 @@ flutter test (full suite)         03:23 +3617 ~2: All tests passed!
 **Counts.** `expect(` 9134 -> **9140**; `testWidgets(` **1012** unchanged (these
 are plain `test()`s). Suite 3612 -> **3617**.
 
+### Phase 2 — 2026-09-07 — *complete*
+
+**Open question 2 resolved by reading the code: all four sites report; the
+phase does not shrink.** The plan wondered whether the two *load* paths swallow
+"missing key" (which is normal) or a thrown read (which is not). Both handle the
+missing key **explicitly before the catch** — `if (stored != null)` at `:71` and
+`if (stored == null || stored.isEmpty) return;` in the marks loader — so every
+one of the four `catch` blocks fires only on a genuine failure.
+
+**Reporting, not reverting.** All four now log to the output log and **keep** the
+optimistic state. Rolling back on failure would make a pin flicker off under the
+user's cursor; the honest behaviour is to keep the change and say it did not
+persist. Each message says which it was, e.g. *"pin/snooze will not survive a
+restart"*.
+
+`_reportPrefsFailure` wraps its own write in a `try/catch` for the same reason
+the observer does — the marks notifier is `autoDispose`, so `ref.read` can throw
+after teardown, and a failure to *report* a failure must not be worse than the
+original.
+
+**Making it fail was the interesting part.** There is no clean way to force
+`SharedPreferences` to throw with a mock installed — so the test installs
+**none**. Without `setMockInitialValues`, `getInstance()` throws, which is
+exactly the thrown-read/write case these catches exist for. Three tests: the
+write path, the pin path, and a read.
+
+**Sabotage — both halves of the claim:**
+
+```
+reporting removed entirely       -> all three tests
+state reverted instead of kept   -> a failed Inbox/Browse write is reported,
+                                    and the choice still applies
+```
+
+The second matters: without it the tests would pass for an implementation that
+reported the failure *and* silently discarded the user's change.
+
+**Verification:**
+
+```
+flutter analyze (whole project)   No issues found! (ran in 4.8s)
+dart format --output=none --set-exit-if-changed   (0 changed)
+flutter test (full suite)         03:25 +3620 ~2: All tests passed!
+grep -c "catch (_) {}" lib/features/forge/forge_prefs.dart   -> 0
+```
+
+**Counts.** `expect(` 9140 -> **9145**; suite 3617 -> **3620**. Acceptance
+criterion 3 met.
+
 ## Rollout and Rollback
 
 **Rollout.** Three commits in severity order. They are independent — F1 touches
