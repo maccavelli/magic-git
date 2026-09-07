@@ -445,7 +445,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(
-      find.text('Some repositories have active items pending...'),
+      find.text('Some repositories have active items pending…'),
       findsOneWidget,
     );
     expect(find.text('Are you sure you want to quit?'), findsOneWidget);
@@ -459,7 +459,7 @@ void main() {
     await tester.tap(find.text('No'));
     await tester.pumpAndSettle();
     expect(
-      find.text('Some repositories have active items pending...'),
+      find.text('Some repositories have active items pending…'),
       findsNothing,
     );
     await _teardownHost(tester);
@@ -481,7 +481,7 @@ void main() {
 
     expect(find.text('Are you sure you want to quit?'), findsOneWidget);
     expect(
-      find.text('Some repositories have active items pending...'),
+      find.text('Some repositories have active items pending…'),
       findsNothing,
       reason: 'nothing is at risk, so the situation line must not appear',
     );

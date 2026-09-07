@@ -393,7 +393,7 @@ void main() {
         anyAtRisk: true,
         question: 'Are you sure you want to quit?',
       );
-      expect(atRisk.title, 'Some repositories have active items pending...');
+      expect(atRisk.title, 'Some repositories have active items pending…');
       expect(atRisk.message, 'Are you sure you want to quit?');
     });
 

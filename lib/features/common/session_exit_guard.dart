@@ -102,8 +102,5 @@ List<SessionAtRisk> sessionsAtRisk(
   required bool anyAtRisk,
   required String question,
 }) => anyAtRisk
-    ? (
-        title: 'Some repositories have active items pending...',
-        message: question,
-      )
+    ? (title: 'Some repositories have active items pending…', message: question)
     : (title: question, message: '');
