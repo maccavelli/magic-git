@@ -1,5 +1,5 @@
 ---
-status: "in-progress"
+status: "complete"
 date: 2026-09-07
 associated-madr: "0035-MADR-multi-select-coverage-and-the-two-guards-it-blocks.md"
 ---
@@ -531,6 +531,78 @@ flutter test (full suite)         03:23 +3611 ~2: All tests passed!
 ```
 
 **Counts.** `expect(` 9129 -> **9130**, `testWidgets(` 1010 -> **1011**.
+
+### Phase 5 — 2026-09-07 — *complete; the plan's one unproven technique worked, after four wrong reproductions*
+
+**The host swap works.** `_pump` gained an optional `ValueListenable<bool>
+panelVisible`; when supplied, the panel is wrapped in a `ValueListenableBuilder`
+so a test can dispose **only** the panel while `MacosApp` — and the root
+navigator holding the sheet — stays mounted. The test asserts both halves
+(`BranchesView` gone, `MacosSheet` still present) rather than assuming.
+
+**Four reproductions that passed for the wrong reason, before one that
+didn't.** This is the assessment the fix rests on:
+
+1. **Cancel the sheet.** Passed. `_bulkDeleteSelected` guards its
+   `_refresh()`/`setState` behind `if (results != null)`, and **Cancel pops
+   `null`** — so a cancelled sheet never reaches the code under test at all. A
+   reproduction that only cancels is green forever.
+2. **Run the delete, then Close.** Failed to even get there: the sheet showed
+   **`Will delete (0)` / `Skipped (2)` — "feature — incomplete OID"**. The
+   bulk delete is OID-pinned, and this file's `_refs` fixture uses `'aaa'` /
+   `'bbb'`. Added `_refsFullOid` with 40-character ids matching the review
+   summary.
+3. **Was the panel really disposed?** Verified before trusting anything:
+   `panel disposed? true`, `sheet still up? true`, `BranchesView present?
+   false`. The experiment was sound; the earlier passes were not.
+4. Only then did it throw.
+
+**The reproduction:**
+
+```
+Bad state: Using "ref" when a widget is about to or has been unmounted is unsafe.
+```
+
+Same class as F2, reached through a modal instead of a disk write.
+
+**Guard** added after the sheet await, before `if (results != null)`, and shown
+load-bearing: removing it in a scratch worktree fails exactly this test and
+nothing else.
+
+**A mistake I made and had to repair.** A `replace(..., 1)` intended for my own
+test's `tap(find.text('Cancel'))` hit the **first** occurrence in the file —
+which belongs to a pre-existing worktree test — silently rewriting it to
+`'Close'`. It surfaced as that unrelated test failing, and was restored. The
+plan's acceptance criterion 6 (pre-existing tests unedited) now holds:
+`git diff` removes exactly **one** line from this file, the `_pump` `home:`
+expression the `panelVisible` gate replaced.
+
+**Verification:**
+
+```
+flutter analyze (whole project)   No issues found! (ran in 4.4s)
+dart format --output=none --set-exit-if-changed   (0 changed)
+flutter test (full suite)         03:22 +3612 ~2: All tests passed!
+```
+
+**Counts.** `expect(` 9130 -> **9134**, `testWidgets(` 1011 -> **1012**; the
+file at **18**.
+
+### Plan complete
+
+All five phases landed. Final tally against the acceptance criteria:
+
+| # | Criterion | Result |
+| --- | --- | --- |
+| 1 | `_selectTwoInReview` documents the Review-mode gate | yes, citing `branch_navigator.dart:450` and MADR 0003 |
+| 2 | All four batch actions covered; delete **driven** | yes — and driven twice over, since F3 runs a real delete |
+| 3 | Every new test seen to fail | yes, 9 sabotages across the five phases |
+| 4 | `lib/` diff is three `if (!mounted) return;` | yes (amended from two in Phase 4) |
+| 5 | analyze clean, suite green at every phase | yes |
+| 6 | 10 pre-existing tests unedited | yes, after the repair recorded above |
+
+Suite 3604 -> **3612**. `branches_view_guards_test.dart` 10 -> **18**
+`testWidgets`.
 
 ## Rollout and Rollback
 

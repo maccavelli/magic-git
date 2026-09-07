@@ -937,6 +937,10 @@ class _BranchesViewState extends ConsumerState<BranchesView>
       baseDisplayName: base.displayName,
       candidates: candidates,
     );
+    // The await above is a MODAL: the window is however long the user takes,
+    // and the panel underneath can be disposed in it (MADR 0034 F3). The
+    // `mounted` check before the sheet says nothing about the state after it.
+    if (!mounted) return;
     if (results != null) {
       _refresh();
       setState(() {

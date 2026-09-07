@@ -19,6 +19,7 @@
 import 'dart:async';
 
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter/gestures.dart' show kSecondaryButton;
 import 'package:flutter/services.dart' show LogicalKeyboardKey;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -73,6 +74,26 @@ class _SpyGit extends GitService {
   int fetches = 0;
 
   Completer<void>? checkoutGate;
+
+  /// The bulk-delete sheet's mutation. Stubbed so the sheet can actually RUN a
+  /// delete — without it the sheet only ever returns null on Cancel, and the
+  /// `if (results != null)` branch under test is never reached.
+  final List<String> baseDeletes = [];
+
+  @override
+  Future<BaseDeleteResult> deleteBranchMergedIntoBase(
+    String repoPath, {
+    required String branchName,
+    required String expectedBranchOid,
+    required String baseOid,
+  }) async {
+    baseDeletes.add(branchName);
+    return BaseDeleteResult(
+      branchName: branchName,
+      status: BaseDeleteStatus.deleted,
+      deletedOid: expectedBranchOid,
+    );
+  }
 
   @override
   Future<void> setUpstream(
@@ -248,6 +269,12 @@ Future<_SpyGit> _pump(
   Map<String, String>? remoteTags,
   String repoPath = _repo,
   List<Override> extraOverrides = const [],
+
+  /// Lets a test dispose the panel while leaving `MacosApp` — and therefore
+  /// the root navigator, and anything pushed onto it — mounted. Needed for any
+  /// defect whose await is a sheet: replacing the whole tree would take the
+  /// sheet down with the panel and prove nothing.
+  ValueListenable<bool>? panelVisible,
 }) async {
   final git = _SpyGit();
   final container = ProviderContainer(
@@ -283,7 +310,14 @@ Future<_SpyGit> _pump(
       container: container,
       child: MacosApp(
         debugShowCheckedModeBanner: false,
-        home: BranchesView(repoPath: repoPath),
+        home: panelVisible == null
+            ? BranchesView(repoPath: repoPath)
+            : ValueListenableBuilder<bool>(
+                valueListenable: panelVisible,
+                builder: (_, visible, _) => visible
+                    ? BranchesView(repoPath: repoPath)
+                    : const Center(child: Text('panel gone')),
+              ),
       ),
     ),
   );
@@ -327,11 +361,15 @@ Future<RepositoryUiIdentity> _pumpBatch(
   /// disposes the panel. A parameter rather than an extra override, because
   /// Riverpod rejects overriding the same provider twice in one container.
   Future<RepositoryUiIdentity?>? identityFuture,
+  ValueListenable<bool>? panelVisible,
+  List<GitRef> refs = _refs,
 }) async {
   SharedPreferences.setMockInitialValues({});
   final identity = _batchIdentity();
   await _pump(
     tester,
+    refs: refs,
+    panelVisible: panelVisible,
     extraOverrides: [
       repositoryUiIdentityProvider(
         _repo,
@@ -424,6 +462,20 @@ List<Override> _withBase() => [
 
 const _mainOid = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 const _featOid = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+
+/// [_refs] with FULL object ids. The bulk-delete sheet is OID-pinned, so a
+/// short oid lands every candidate in "Skipped — incomplete OID" and the
+/// Delete button stays at "Delete 0". The default `_refs` uses 'aaa'/'bbb',
+/// which is right for every other test in this file and useless for this one.
+const _refsFullOid = [
+  GitRef(name: 'refs/heads/main', oid: _mainOid, isHead: true, subject: 's'),
+  GitRef(
+    name: 'refs/heads/feature',
+    oid: _featOid,
+    isHead: false,
+    subject: 's',
+  ),
+];
 
 void main() {
   testWidgets('creating a branch via the prompt never checks out the '
@@ -832,6 +884,54 @@ void main() {
     // A real identity runs the whole write and still lands on the code under
     // test.
     parked.complete(_batchIdentity());
+    await tester.pumpAndSettle();
+
+    expect(
+      tester.takeException(),
+      isNull,
+      reason: 'the resumed continuation must not touch a disposed State',
+    );
+  });
+
+  testWidgets('a bulk delete whose panel is disposed while the sheet is open '
+      'touches nothing', (tester) async {
+    // MADR 0034 F3. `_bulkDeleteSelected` checks `mounted` BEFORE awaiting
+    // `showBranchBulkDeleteSheet` — a modal, so the window is however long the
+    // user takes — and never re-checks before `_refresh()` and `setState(...)`.
+    //
+    // The sheet is pushed on the ROOT navigator, so it outlives the panel;
+    // disposing only the panel needs the app to stay mounted, which is what
+    // `panelVisible` is for.
+    final panelVisible = ValueNotifier(true);
+    addTearDown(panelVisible.dispose);
+    await _pumpBatch(
+      tester,
+      extraOverrides: _withBase(),
+      panelVisible: panelVisible,
+      refs: _refsFullOid,
+    );
+    await _selectTwoInReview(tester);
+
+    await tester.tap(find.text('Delete if merged…'));
+    await tester.pumpAndSettle();
+    expect(find.byType(MacosSheet), findsOneWidget);
+
+    // The delete must actually RUN. Cancelling pops `null`, and
+    // `_bulkDeleteSelected` guards its `_refresh()`/`setState` behind
+    // `if (results != null)` — so a cancelled sheet never reaches the code
+    // under test, and a reproduction that only cancels passes for the wrong
+    // reason.
+    await tester.tap(find.textContaining('Delete 1'));
+    await tester.pumpAndSettle();
+
+    // The panel goes away underneath the open, finished sheet.
+    panelVisible.value = false;
+    await tester.pumpAndSettle();
+    expect(find.byType(BranchesView), findsNothing, reason: 'panel disposed');
+    expect(find.byType(MacosSheet), findsOneWidget, reason: 'sheet survived');
+
+    // Closing resolves the await inside the now-disposed panel.
+    await tester.tap(find.text('Close'));
     await tester.pumpAndSettle();
 
     expect(
