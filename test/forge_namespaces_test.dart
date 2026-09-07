@@ -19,6 +19,13 @@ class _FakeExecutor extends SSHCommandExecutor {
   final List<List<String>> calls = [];
   final List<Map<String, String>?> envs = [];
   final List<SSHCommandResult> results = [];
+
+  /// Answers by REQUEST rather than by queue position. Concurrent calls
+  /// (`Future.wait` over several access floors) interleave in an order the
+  /// test cannot predict, so a positional queue silently hands the wrong page
+  /// to the wrong floor. Takes precedence over [results] when set.
+  SSHCommandResult Function(List<String> args)? respond;
+
   SSHCommandResult next = const SSHCommandResult(
     exitCode: 0,
     stdout: '',
@@ -44,6 +51,8 @@ class _FakeExecutor extends SSHCommandExecutor {
   }) async {
     calls.add(gitArgs);
     envs.add(extraEnv);
+    final router = respond;
+    if (router != null) return router(gitArgs);
     return results.isNotEmpty ? results.removeAt(0) : next;
   }
 }
@@ -80,19 +89,34 @@ void main() {
       final glab = GlabService(exec);
       exec.results.addAll([
         _okWithHeaders('{"username":"testuser"}'),
-        _okWithHeaders('[]'),
+        _ok('[]'), // three floors, each an empty (short) page
+        _ok('[]'),
+        _ok('[]'),
       ]);
 
       await glab.listCreatableNamespaces('/repo', host: 'gitlab.example');
 
-      final groupCall = exec.calls.last.join(' ');
-      // min_access_level=30 is Developer, the floor for creating a project.
-      expect(groupCall, contains('min_access_level=30'));
-      // `namespaces` lists what the account can SEE, including other people's
-      // personal namespaces it cannot create in. Verified live; MADR 0031.
-      expect(groupCall, isNot(contains('namespaces')));
-      // No origin exists yet, so the host must be explicit.
-      expect(groupCall, contains('gitlab.example'));
+      final groupCalls = [
+        for (final c in exec.calls)
+          if (c.contains('groups')) c.join(' '),
+      ];
+      // Three concurrent floors, not one: `min_access_level=30` alone is not
+      // GitLab's create gate — the group's own `project_creation_level` is, and
+      // deciding needs the account's actual access (MADR 0032 Phase 2).
+      expect(groupCalls, hasLength(3));
+      expect(
+        groupCalls.map(
+          (c) => RegExp(r'min_access_level=(\d+)').firstMatch(c)!.group(1),
+        ),
+        containsAll(<String>['30', '40', '50']),
+      );
+      for (final call in groupCalls) {
+        // `namespaces` lists what the account can SEE, including other people's
+        // personal namespaces it cannot create in. Verified live; MADR 0031.
+        expect(call, isNot(contains('namespaces')));
+        // No origin exists yet, so the host must be explicit.
+        expect(call, contains('gitlab.example'));
+      }
     });
 
     test('a failing groups call still yields the own namespace', () async {
@@ -236,6 +260,176 @@ void main() {
         exec.calls.where((c) => c.contains('user/orgs')),
         hasLength(1),
         reason: 'the common case must not pay for a second round trip',
+      );
+    });
+  });
+
+  group('GlabService creatable filter (MADR 0032 Phase 2)', () {
+    /// One `/groups` page. `level` is the group's `project_creation_level`.
+    String page(List<(String path, String? level)> groups) =>
+        '[${groups.map((g) => '{"full_path":"${g.$1}"'
+            '${g.$2 == null ? '' : ',"project_creation_level":"${g.$2}"'}}').join(',')}]';
+
+    /// Routes by REQUEST, not by queue position: `Future.wait` interleaves the
+    /// access floors in an order the test cannot predict, so a positional queue
+    /// silently hands the wrong page to the wrong floor.
+    void route(
+      _FakeExecutor exec, {
+      List<String> at30 = const [],
+      List<String> at40 = const [],
+      List<String> at50 = const [],
+      Map<String, String?> levels = const {},
+      Map<String, List<List<String>>> pagesAt30 = const {},
+    }) {
+      List<(String, String?)> rows(List<String> paths) => [
+        for (final p in paths) (p, levels[p]),
+      ];
+      exec.respond = (args) {
+        final joined = args.join(' ');
+        if (!joined.contains('groups')) {
+          return _okWithHeaders('{"username":"me"}');
+        }
+        final floor =
+            RegExp(r'min_access_level=(\d+)').firstMatch(joined)?.group(1) ??
+            '30';
+        final pageNo =
+            int.tryParse(
+              // NOT `page=(\d+)`: that matches `per_page=100` first, so every
+              // request reads as page 100 and the walk looks finished.
+              RegExp(r'(?<![a-z_])page=(\d+)').firstMatch(joined)?.group(1) ??
+                  '1',
+            ) ??
+            1;
+        final override = pagesAt30[floor];
+        if (override != null) {
+          return _ok(
+            page(
+              rows(pageNo <= override.length ? override[pageNo - 1] : const []),
+            ),
+          );
+        }
+        if (pageNo > 1) return _ok(page(const []));
+        return _ok(
+          page(
+            rows(switch (floor) {
+              '30' => at30,
+              '40' => at40,
+              _ => at50,
+            }),
+          ),
+        );
+      };
+    }
+
+    test(
+      'excludes a group whose creation level outranks the account',
+      () async {
+        // NOT reproducible on the maintainer's own account — it holds Owner on
+        // every group, so 30/40/50 all return the same list and nothing is ever
+        // filtered. A fixture is the only way to prove this arm (MADR 0032).
+        final exec = _FakeExecutor();
+        route(
+          exec,
+          at30: ['team/dev-ok', 'team/needs-maintainer'],
+          at40: ['team/dev-ok'], // account is Maintainer here, Developer there
+          at50: const <String>[],
+          levels: {
+            'team/dev-ok': 'developer',
+            'team/needs-maintainer': 'maintainer',
+          },
+        );
+
+        final namespaces = await GlabService(
+          exec,
+        ).listCreatableNamespaces('/repo', host: 'gitlab.example');
+
+        expect(namespaces, ['me', 'team/dev-ok']);
+      },
+    );
+
+    test(
+      'keeps a maintainer-level group when the account is a Maintainer',
+      () async {
+        final exec = _FakeExecutor();
+        route(
+          exec,
+          at30: ['team/needs-maintainer'],
+          at40: ['team/needs-maintainer'],
+          at50: const <String>[],
+          levels: {'team/needs-maintainer': 'maintainer'},
+        );
+
+        final namespaces = await GlabService(
+          exec,
+        ).listCreatableNamespaces('/repo', host: 'gitlab.example');
+
+        expect(namespaces, ['me', 'team/needs-maintainer']);
+      },
+    );
+
+    test('a null creation level is treated as permissive', () async {
+      // Hiding a usable group is worse than a create failure the user can
+      // retry, so an absent level must not filter.
+      final exec = _FakeExecutor();
+      route(
+        exec,
+        at30: ['team/unknown-level'],
+        at40: const <String>[],
+        at50: const <String>[],
+        levels: {'team/unknown-level': null},
+      );
+
+      final namespaces = await GlabService(
+        exec,
+      ).listCreatableNamespaces('/repo', host: 'gitlab.example');
+
+      expect(namespaces, ['me', 'team/unknown-level']);
+    });
+
+    test('a `noone` group is never offered', () async {
+      final exec = _FakeExecutor();
+      route(
+        exec,
+        at30: ['team/locked'],
+        at40: ['team/locked'],
+        at50: ['team/locked'], // even as Owner
+        levels: {'team/locked': 'noone'},
+      );
+
+      final namespaces = await GlabService(
+        exec,
+      ).listCreatableNamespaces('/repo', host: 'gitlab.example');
+
+      expect(namespaces, ['me']);
+    });
+
+    test('walks past the first page of groups', () async {
+      // A single per_page=100 silently dropped everything past the hundredth.
+      final exec = _FakeExecutor();
+      final full = [for (var i = 0; i < 100; i++) 'team/g$i'];
+      route(
+        exec,
+        levels: {
+          for (final p in [...full, 'team/tail']) p: 'developer',
+        },
+        pagesAt30: {
+          '30': [
+            full,
+            const ['team/tail'],
+          ],
+        },
+      );
+
+      final namespaces = await GlabService(
+        exec,
+      ).listCreatableNamespaces('/repo', host: 'gitlab.example');
+
+      expect(namespaces.length, 102, reason: 'login + 101 groups');
+      expect(namespaces.last, 'team/tail');
+      expect(
+        exec.calls.where((c) => c.contains('groups')).length,
+        greaterThanOrEqualTo(4),
+        reason: 'floor 30 needed two pages; 40 and 50 one each',
       );
     });
   });

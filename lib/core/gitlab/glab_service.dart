@@ -567,29 +567,104 @@ class GlabService {
       return const <String>[];
     }
     try {
-      // `min_access_level=30` is Developer — the floor for creating a project
-      // in a group. `namespaces` is the wrong endpoint and must not be used
-      // here: it returns what the account can *see*, including other people's
-      // personal namespaces, which a create would then fail on (MADR 0031).
-      final decoded = await api(
-        repoPath,
-        'groups',
-        fields: ['min_access_level=30', 'per_page=100'],
-        host: host,
-      );
-      if (decoded is List) {
-        for (final entry in decoded) {
-          if (entry is! Map) continue;
-          final path = entry['full_path'] as String?;
-          if (path == null || path.isEmpty) continue;
-          if (namespaces.contains(path)) continue;
-          namespaces.add(path);
-        }
-      }
+      namespaces.addAll(await _creatableGroupPaths(repoPath, host: host));
     } catch (_) {
       // A missing group list still leaves the own namespace usable.
     }
     return namespaces;
+  }
+
+  /// Group full paths this account may actually create a project in on [host].
+  ///
+  /// **`min_access_level=30` alone is not GitLab's create gate** (MADR 0032).
+  /// The gate is the group's own `project_creation_level`, whose documented
+  /// values are `noone`, `developer`, `maintainer` and `administrator`. A
+  /// Developer in a group set to `maintainer` was previously offered a
+  /// namespace the create would reject. Measured on one real account: 23 of 24
+  /// groups are `developer` and **1 is `maintainer`**.
+  ///
+  /// So: fetch the groups at each access floor **concurrently** (~0.67 s each,
+  /// in parallel), derive each group's effective access from the highest floor
+  /// it still appears at, and keep it only when that meets what its
+  /// `project_creation_level` demands. A **null** level is treated as
+  /// permissive — hiding a usable group is worse than a create failure the user
+  /// can retry.
+  ///
+  /// Each floor is **page-walked**. A single `per_page=100` silently dropped
+  /// everything past the hundredth group. Never `paginate: true`: it returns
+  /// one JSON document per page, concatenated (MADR 0034 F8).
+  Future<List<String>> _creatableGroupPaths(
+    String repoPath, {
+    required String host,
+  }) async {
+    // `namespaces` is the wrong endpoint and must not be used here: it returns
+    // what the account can *see*, including other people's personal
+    // namespaces, which a create would then fail on (MADR 0031).
+    final byFloor = await Future.wait([
+      for (final floor in _accessFloors)
+        _groupsAtLeast(repoPath, host: host, minAccessLevel: floor),
+    ]);
+
+    final paths = <String>[];
+    final seen = <String>{};
+    for (final entry in byFloor.first) {
+      final path = entry.path;
+      if (path.isEmpty || !seen.add(path)) continue;
+      // Highest floor this group still appears at == the account's access.
+      var access = _accessFloors.first;
+      for (var i = 1; i < byFloor.length; i++) {
+        if (byFloor[i].any((g) => g.path == path)) access = _accessFloors[i];
+      }
+      if (access >= _requiredAccess(entry.creationLevel)) paths.add(path);
+    }
+    return paths;
+  }
+
+  /// Developer, Maintainer, Owner — the three floors a `project_creation_level`
+  /// can demand. Ascending, and the first is the widest query.
+  static const List<int> _accessFloors = [30, 40, 50];
+
+  /// The access a group's `project_creation_level` requires. `noone` is
+  /// unreachable (returns above Owner); an unknown or absent value is
+  /// permissive.
+  static int _requiredAccess(String? creationLevel) => switch (creationLevel) {
+    'noone' => 1 << 30,
+    'maintainer' => 40,
+    'administrator' => 1 << 30,
+    _ => 30,
+  };
+
+  Future<List<({String path, String? creationLevel})>> _groupsAtLeast(
+    String repoPath, {
+    required String host,
+    required int minAccessLevel,
+  }) async {
+    const perPage = 100;
+    final out = <({String path, String? creationLevel})>[];
+    for (var page = 1; page <= _maxListPages; page++) {
+      final decoded = await api(
+        repoPath,
+        'groups',
+        fields: [
+          'min_access_level=$minAccessLevel',
+          'per_page=$perPage',
+          'page=$page',
+        ],
+        host: host,
+      );
+      if (decoded is! List) break;
+      for (final entry in decoded) {
+        if (entry is! Map) continue;
+        final path = entry['full_path'] as String?;
+        if (path == null || path.isEmpty) continue;
+        out.add((
+          path: path,
+          creationLevel: entry['project_creation_level'] as String?,
+        ));
+      }
+      if (decoded.length < perPage) break; // last (short) page reached
+    }
+    return out;
   }
 
   /// Safety bound on the manual page walks ([mergeRequests], [jobs], and

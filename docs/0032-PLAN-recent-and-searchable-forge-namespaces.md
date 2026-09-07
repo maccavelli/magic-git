@@ -286,6 +286,65 @@ flutter test (full suite)         03:36 +3634 ~2: All tests passed!
 
 **Counts.** `expect(` 9152 -> **9174**; suite 3623 -> **3634**.
 
+### Phase 2 — 2026-09-07 — *complete*
+
+**2a — the create gate is now `project_creation_level`, not
+`min_access_level=30`.** `_creatableGroupPaths` fetches the three access floors
+(30/40/50) **concurrently** via `Future.wait`, derives each group's effective
+access from the highest floor it still appears at, and keeps it only when that
+meets what its `project_creation_level` demands. `noone` and `administrator`
+are unreachable; a **null** level is permissive, because hiding a usable group
+is worse than a create failure the user can retry.
+
+**2b — page-walked**, `per_page`/`page`, stopping on a short page, bounded by
+`_maxListPages`. Never `paginate: true` (0034 F8). **This pays the pagination
+debt 0034's tranche-1 plan explicitly deferred to "whichever plan executes
+0032".**
+
+**One pre-existing test was updated, deliberately.** "asks for groups the
+account can actually create in" asserted on `exec.calls.last` — meaningful when
+there was one groups call, meaningless now there are three concurrent ones. Its
+intent (the `groups` endpoint, not `namespaces`; an explicit host) is preserved
+and strengthened: it now asserts **all three floors** are requested and checks
+every groups call rather than whichever finished last.
+
+**Two fixture bugs, both mine, both instructive:**
+
+* **A positional queue cannot fixture concurrent calls.** The first version fed
+  responses by queue position, but `Future.wait` issues all three floors' page 1
+  before any floor's page 2 — so floor 40 received floor 30's second page.
+  Symptom: `Expected: <102> Actual: <101>`. Replaced with a **request router**
+  on `_FakeExecutor` (`respond`), which answers by argv and is order-independent.
+* **`RegExp(r'page=(\d+)')` matches `per_page=100` first.** Every request read
+  as page 100, the walk looked finished, and all three filter tests returned
+  only the login. The router now uses `(?<![a-z_])page=`, with a comment saying
+  why. A production-side version of this mistake would have been a real bug;
+  here it only made the fixture lie.
+
+**Sabotage — four contracts, each isolating its own test:**
+
+```
+creation level ignored (old behaviour) -> a `noone` group is never offered
+                                          excludes a group whose creation level outranks…
+null level treated as forbidden        -> a null creation level is treated as permissive
+noone treated as ordinary              -> a `noone` group is never offered
+page walk removed                      -> walks past the first page of groups
+```
+
+**The exclusion arm is fixture-only, and the test says so.** The maintainer's
+account holds Owner on all 24 groups, so 30/40/50 return identical lists and
+nothing is ever filtered — live verification cannot reach this branch.
+
+**Verification:**
+
+```
+flutter analyze (whole project)   No issues found! (ran in 4.2s)
+dart format --output=none --set-exit-if-changed   (0 changed)
+flutter test (full suite)         03:23 +3639 ~2: All tests passed!
+```
+
+**Counts.** `expect(` 9174 -> **9182**; suite 3634 -> **3639**.
+
 ## Rollout and Rollback
 
 **Rollout.** Five commits. Phases 1–2 are independently valuable (a correct,
