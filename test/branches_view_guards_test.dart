@@ -33,6 +33,7 @@ import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 import 'package:remote_magic_git/core/storage/repository_ui_identity.dart';
 import 'package:remote_magic_git/core/theme/app_theme.dart';
 import 'package:remote_magic_git/core/utils/git_porcelain_parser.dart';
+import 'package:remote_magic_git/features/branches/branch_workspace_prefs.dart';
 import 'package:remote_magic_git/features/branches/branches_view.dart';
 import 'package:remote_magic_git/features/common/inline_action_button.dart';
 import 'package:remote_magic_git/features/common/panel_shortcuts.dart';
@@ -646,5 +647,62 @@ void main() {
       'Hide',
       'Delete if merged…',
     ], reason: 'the four batch actions, in order');
+  });
+
+  testWidgets('batch Pin pins every eligible branch in the selection', (
+    tester,
+  ) async {
+    final identity = await _pumpBatch(tester);
+    await _selectTwoInReview(tester);
+
+    await tester.tap(find.text('Pin'));
+    await tester.pumpAndSettle();
+
+    final prefs = await loadBranchWorkspacePrefs(
+      identity: identity,
+      legacyRepoPath: _repo,
+    );
+    expect(prefs.pinnedBranchNames, ['feature', 'main']);
+  });
+
+  testWidgets('batch Unpin clears the whole selection again', (tester) async {
+    final identity = await _pumpBatch(tester);
+    await _selectTwoInReview(tester);
+
+    await tester.tap(find.text('Pin'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Unpin'));
+    await tester.pumpAndSettle();
+
+    final prefs = await loadBranchWorkspacePrefs(
+      identity: identity,
+      legacyRepoPath: _repo,
+    );
+    expect(prefs.pinnedBranchNames, isEmpty);
+  });
+
+  testWidgets('batch Hide skips the current branch and says so', (
+    tester,
+  ) async {
+    // `main` is HEAD, and MADR 0003 makes current/pinned/protected/
+    // worktree-held branches unhideable — so a two-row selection hides exactly
+    // one. The skip must be REPORTED, not silent: skipping quietly reads as
+    // "the button did nothing" (branches_view.dart:747,778).
+    final identity = await _pumpBatch(tester);
+    await _selectTwoInReview(tester);
+
+    await tester.tap(find.text('Hide'));
+    await tester.pumpAndSettle();
+
+    final prefs = await loadBranchWorkspacePrefs(
+      identity: identity,
+      legacyRepoPath: _repo,
+    );
+    expect(prefs.hiddenBranchNames, ['feature']);
+    expect(
+      find.textContaining('current branch'),
+      findsOneWidget,
+      reason: 'the skipped branch and its reason must be surfaced',
+    );
   });
 }

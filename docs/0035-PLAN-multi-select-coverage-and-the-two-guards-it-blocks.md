@@ -372,6 +372,47 @@ git diff --stat -- lib/           (empty)
 `branches_view_guards_test.dart` at **11** `testWidgets`, as the phase's
 acceptance requires. The 10 pre-existing tests are unedited.
 
+### Phase 2 — 2026-09-07 — *complete*
+
+**Three tests, values as predicted.** The MADR's probe had already established
+what these should assert, so nothing here was discovery:
+
+| Action | Asserted | Result |
+| --- | --- | --- |
+| Pin | `pinnedBranchNames == ['feature', 'main']` | as predicted |
+| Unpin (after Pin) | `pinnedBranchNames` empty | as predicted |
+| Hide | `hiddenBranchNames == ['feature']` | as predicted |
+
+Hide's test also asserts the skip is **surfaced** — `find.textContaining('current
+branch')` — not merely absent from the result. A silent skip reads as "the
+button did nothing", which is why `_batchHide` collects reasons at all
+(`branches_view.dart:747,778`).
+
+**Sabotage — all three seen to fail, with the full failure list read.** Not
+`head -1`: these three share a fixture, and the first mutation was expected to
+break two tests, which it did.
+
+```
+batch Pin inverted        -> batch Pin pins every eligible branch in the selection
+                             batch Unpin clears the whole selection again
+batch Hide adds nothing   -> batch Hide skips the current branch and says so
+HEAD skip removed         -> batch Hide skips the current branch and says so
+```
+
+Each matches the prediction in the phase's table above.
+
+**Verification:**
+
+```
+flutter analyze (whole project)   No issues found! (ran in 3.4s)
+dart format --output=none --set-exit-if-changed   (0 changed)
+flutter test (full suite)         03:24 +3608 ~2: All tests passed!
+git diff --stat -- lib/           (empty)
+```
+
+**Counts.** `expect(` 9121 -> **9125**, `testWidgets(` 1005 -> **1008**; the
+file at **14**, as the phase's acceptance requires.
+
 ## Rollout and Rollback
 
 **Rollout.** Five commits in order. Phases 1–3 are test-only and carry no
