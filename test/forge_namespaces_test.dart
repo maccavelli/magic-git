@@ -433,4 +433,139 @@ void main() {
       );
     });
   });
+
+  group('recentlyActiveNamespaces (MADR 0032 Phase 3)', () {
+    test('GitLab projects the events onto their owning namespaces', () async {
+      // A repo is created in a NAMESPACE, never in a project — so recent
+      // projects must be projected onto their owners, which is also what makes
+      // the list short: three projects here, two namespaces.
+      final exec = _FakeExecutor();
+      exec.respond = (args) {
+        final joined = args.join(' ');
+        if (joined.contains(' events')) {
+          return _okWithHeaders(
+            '[{"project_id":1},{"project_id":2},{"project_id":1},'
+            '{"project_id":3}]',
+          );
+        }
+        final id = RegExp(r'projects/(\d+)').firstMatch(joined)?.group(1);
+        return _okWithHeaders(
+          '{"namespace":{"full_path":"${{'1': 'team/alpha', '2': 'team/alpha', '3': 'solo'}[id]}"}}',
+        );
+      };
+
+      final namespaces = await GlabService(
+        exec,
+      ).recentlyActiveNamespaces('/repo', host: 'gitlab.example');
+
+      expect(namespaces, ['team/alpha', 'solo']);
+    });
+
+    test('GitLab keeps event order — most recently touched first', () async {
+      final exec = _FakeExecutor();
+      exec.respond = (args) {
+        final joined = args.join(' ');
+        if (joined.contains(' events')) {
+          return _okWithHeaders('[{"project_id":9},{"project_id":8}]');
+        }
+        final id = RegExp(r'projects/(\d+)').firstMatch(joined)?.group(1);
+        return _okWithHeaders(
+          '{"namespace":{"full_path":"${id == '9' ? 'newest' : 'older'}"}}',
+        );
+      };
+
+      expect(
+        await GlabService(
+          exec,
+        ).recentlyActiveNamespaces('/repo', host: 'gitlab.example'),
+        ['newest', 'older'],
+        reason:
+            'ranked by recency, not frequency — the 100-event page cap '
+            'makes a frequency ranking a biased sample',
+      );
+    });
+
+    test('GitLab asks only for the window it was given', () async {
+      final exec = _FakeExecutor();
+      exec.respond = (args) => _okWithHeaders('[]');
+      await GlabService(exec).recentlyActiveNamespaces(
+        '/repo',
+        host: 'gitlab.example',
+        window: const Duration(days: 7),
+      );
+
+      final call = exec.calls.single.join(' ');
+      expect(call, contains('events'));
+      expect(call, matches(RegExp(r'after=\d{4}-\d{2}-\d{2}')));
+    });
+
+    test('GitLab survives a project it cannot read', () async {
+      // One unreadable project must not lose the whole list.
+      final exec = _FakeExecutor();
+      exec.respond = (args) {
+        final joined = args.join(' ');
+        if (joined.contains(' events')) {
+          return _okWithHeaders('[{"project_id":1},{"project_id":2}]');
+        }
+        if (joined.contains('projects/1')) return _ok('not json at all');
+        return _okWithHeaders('{"namespace":{"full_path":"survivor"}}');
+      };
+
+      expect(
+        await GlabService(
+          exec,
+        ).recentlyActiveNamespaces('/repo', host: 'gitlab.example'),
+        ['survivor'],
+      );
+    });
+
+    test('GitHub reads the owner straight off the event, no lookup', () async {
+      // A GitHub event carries `repo.name` as `owner/repo`, so the namespace
+      // is already in the payload — one round trip fewer than GitLab per
+      // project.
+      final exec = _FakeExecutor();
+      exec.respond = (args) {
+        final joined = args.join(' ');
+        if (joined.contains('events')) {
+          return _ok(
+            '[{"repo":{"name":"acme/one"}},{"repo":{"name":"acme/two"}},'
+            '{"repo":{"name":"solo/three"}}]',
+          );
+        }
+        return _ok('{"login":"me"}');
+      };
+
+      final namespaces = await GhService(
+        exec,
+      ).recentlyActiveNamespaces('/repo', host: 'github.com');
+
+      expect(namespaces, ['acme', 'solo']);
+      expect(
+        exec.calls.where((c) => c.join(' ').contains('repos/')),
+        isEmpty,
+        reason: 'the owner is in the event; no per-repo lookup is needed',
+      );
+    });
+
+    test('a failing events call yields an empty list, never a throw', () async {
+      // The namespace field is free text and works with no list at all.
+      final exec = _FakeExecutor();
+      exec.respond = (args) => args.join(' ').contains('events')
+          ? const SSHCommandResult(exitCode: 1, stdout: '', stderr: 'boom')
+          : _okWithHeaders('{"username":"me","login":"me"}');
+
+      expect(
+        await GlabService(
+          exec,
+        ).recentlyActiveNamespaces('/repo', host: 'gitlab.example'),
+        isEmpty,
+      );
+      expect(
+        await GhService(
+          exec,
+        ).recentlyActiveNamespaces('/repo', host: 'github.com'),
+        isEmpty,
+      );
+    });
+  });
 }

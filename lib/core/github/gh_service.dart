@@ -429,6 +429,75 @@ class GhService {
     return namespaces;
   }
 
+  /// Namespaces this account has been **active in** recently on [host], most
+  /// recent first (MADR 0032 Phase 3) — the GitHub half of
+  /// `GlabService.recentlyActiveNamespaces`.
+  ///
+  /// Cheaper than GitLab's by one round trip per project: a GitHub event
+  /// carries `repo.name` as `owner/repo`, so the owner — which is exactly the
+  /// namespace a create targets — is already in the payload. GitLab's events
+  /// carry only `project_id` and need a lookup each.
+  ///
+  /// `users/<login>/events` **does include private events** when authenticated
+  /// as that user, verified live; a public-only list would rank the wrong
+  /// things for anyone whose work is private.
+  ///
+  /// Returns empty on any failure — the namespace field is free text and works
+  /// with no list at all.
+  Future<List<String>> recentlyActiveNamespaces(
+    String repoPath, {
+    required String host,
+  }) async {
+    final String login;
+    try {
+      final who = await _runJson(
+        repoPath,
+        ['gh', 'api', 'user'],
+        'gh api user',
+        extraEnv: hostEnv(host),
+      );
+      final name = (who is Map ? who['login'] : null) as String?;
+      if (name == null || name.isEmpty) return const <String>[];
+      login = name;
+    } catch (_) {
+      return const <String>[];
+    }
+    try {
+      final decoded = await _runJson(
+        repoPath,
+        [
+          'gh',
+          'api',
+          'users/$login/events',
+          '--method',
+          'GET',
+          '-f',
+          'per_page=100',
+        ],
+        'gh api users/$login/events',
+        extraEnv: hostEnv(host),
+      );
+      if (decoded is! List) return const <String>[];
+      final namespaces = <String>[];
+      for (final event in decoded) {
+        if (event is! Map) continue;
+        final repo = event['repo'];
+        if (repo is! Map) continue;
+        final fullName = repo['name'];
+        // `owner/repo` — the namespace is the half before the slash.
+        if (fullName is! String) continue;
+        final slash = fullName.indexOf('/');
+        if (slash <= 0) continue;
+        final owner = fullName.substring(0, slash);
+        if (namespaces.contains(owner)) continue;
+        namespaces.add(owner);
+      }
+      return namespaces;
+    } catch (_) {
+      return const <String>[];
+    }
+  }
+
   /// Open pull requests for the current repo, via `gh pr list --json`.
   ///
   /// [limit] matches the GitLab side's paginated ceiling (20 pages × 30 —

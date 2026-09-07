@@ -345,6 +345,55 @@ flutter test (full suite)         03:23 +3639 ~2: All tests passed!
 
 **Counts.** `expect(` 9174 -> **9182**; suite 3634 -> **3639**.
 
+### Phase 3a — 2026-09-07 — *complete*
+
+> **Deviation: Phase 3 split into 3a (forge events) and 3b (local history),
+> one commit each.** The plan said one commit per phase. 3a is a pair of
+> service methods with their own tests; 3b is two persistence stores behind one
+> reader/writer. Bundling them would have produced a single diff spanning the
+> forge services, `SavedConnection`, a new app-level store and the seam between
+> them — reviewable as neither. Each half stands alone.
+
+**`GlabService.recentlyActiveNamespaces`** — `events?after=<date>&per_page=100`,
+distinct `project_id` in event order, then **concurrent** `projects/:id` lookups
+(capped at `_maxRecentProjects` = 10) to reach `namespace.full_path`. The
+one-call alternative, `projects?membership=true`, measured **9.0 s** and is
+disqualified for anything the create sheet touches.
+
+**`GhService.recentlyActiveNamespaces`** — one round trip fewer per project: a
+GitHub event carries `repo.name` as `owner/repo`, so the namespace is already in
+the payload. `users/<login>/events` includes **private** events when
+authenticated as that user, verified live in the MADR; a public-only list would
+rank the wrong things for anyone whose work is private.
+
+**Ranked by most-recently-touched, not frequency** — asserted by its own test.
+The 100-event page cap was *reached in one week* on a real account, so frequency
+would be a biased sample of a truncated page.
+
+**Both return empty on any failure**, never throw: the namespace field is free
+text and works with no list at all (0031's contract). One unreadable project
+does not lose the rest — also its own test.
+
+**Sabotage — four contracts, each isolating its own test:**
+
+```
+GitLab: events order not preserved       -> keeps event order — most recently touched first
+                                            projects the events onto their owning namespaces
+GitLab: unreadable project kills list    -> survives a project it cannot read
+GitLab: no window sent                   -> asks only for the window it was given
+GitHub: owner not split from repo.name   -> reads the owner straight off the event
+```
+
+**Verification:**
+
+```
+flutter analyze (whole project)   No issues found! (ran in 3.4s)
+dart format --output=none --set-exit-if-changed   (0 changed)
+flutter test (full suite)         03:36 +3645 ~2: All tests passed!
+```
+
+**Counts.** `expect(` 9182 -> **9191**; suite 3639 -> **3645**.
+
 ## Rollout and Rollback
 
 **Rollout.** Five commits. Phases 1–2 are independently valuable (a correct,

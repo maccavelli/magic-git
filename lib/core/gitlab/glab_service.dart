@@ -667,6 +667,96 @@ class GlabService {
     return out;
   }
 
+  /// Namespaces this account has been **active in** recently on [host], most
+  /// recent first (MADR 0032 Phase 3).
+  ///
+  /// A repository cannot be created *inside* a project, only inside a
+  /// namespace — so the user's recent **projects** are projected onto the
+  /// namespaces that own them, which is what makes the list short enough to be
+  /// useful (11 distinct projects in a week collapsed to far fewer namespaces
+  /// on a real account).
+  ///
+  /// **Ranked by most-recently-touched, not by frequency.** `/events` caps at
+  /// 100 per page and that cap was *reached in one week* on a real account, so
+  /// a frequency ranking would be a biased sample of a truncated page. Recency
+  /// is unbiased under the same cap.
+  ///
+  /// Events carry `project_id` and nothing else identifying, so each needs a
+  /// lookup. Those run **concurrently** ([_maxRecentProjects] of them, ~0.5 s
+  /// each): the one-call alternative — `projects?membership=true` — measured
+  /// **9.0 s**, which is disqualifying for anything the create sheet touches.
+  ///
+  /// Returns empty on any failure. The namespace field is free text and works
+  /// with no list at all; a slow or unreachable forge must cost the user
+  /// nothing.
+  Future<List<String>> recentlyActiveNamespaces(
+    String repoPath, {
+    required String host,
+    Duration window = const Duration(days: 7),
+  }) async {
+    final since = DateTime.now().toUtc().subtract(window);
+    final after =
+        '${since.year.toString().padLeft(4, '0')}-'
+        '${since.month.toString().padLeft(2, '0')}-'
+        '${since.day.toString().padLeft(2, '0')}';
+    final List<int> projectIds;
+    try {
+      final decoded = await api(
+        repoPath,
+        'events',
+        fields: ['after=$after', 'per_page=100'],
+        host: host,
+      );
+      if (decoded is! List) return const <String>[];
+      final ordered = <int>[];
+      for (final event in decoded) {
+        if (event is! Map) continue;
+        final id = event['project_id'];
+        if (id is! int || ordered.contains(id)) continue;
+        ordered.add(id);
+        if (ordered.length >= _maxRecentProjects) break;
+      }
+      projectIds = ordered;
+    } catch (_) {
+      return const <String>[];
+    }
+    if (projectIds.isEmpty) return const <String>[];
+
+    final resolved = await Future.wait([
+      for (final id in projectIds)
+        _namespaceOfProject(repoPath, id, host: host),
+    ]);
+    final namespaces = <String>[];
+    for (final path in resolved) {
+      if (path == null || path.isEmpty || namespaces.contains(path)) continue;
+      namespaces.add(path);
+    }
+    return namespaces;
+  }
+
+  /// How many recent projects are worth resolving. Ten lookups run
+  /// concurrently cost about one; a hundred would not.
+  static const int _maxRecentProjects = 10;
+
+  /// The namespace that owns a project, or null if it cannot be read. Never
+  /// throws — one unreadable project must not lose the whole recency list.
+  Future<String?> _namespaceOfProject(
+    String repoPath,
+    int projectId, {
+    required String host,
+  }) async {
+    try {
+      final decoded = await api(repoPath, 'projects/$projectId', host: host);
+      if (decoded is! Map) return null;
+      final namespace = decoded['namespace'];
+      if (namespace is! Map) return null;
+      final full = namespace['full_path'];
+      return full is String && full.isNotEmpty ? full : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// Safety bound on the manual page walks ([mergeRequests], [jobs], and
   /// [pipelines]'s full-history mode) — far beyond any realistic project's
   /// open-MR or pipeline-job count, but a hard stop so a bug (or a
