@@ -1,5 +1,5 @@
 ---
-status: "in-progress"
+status: "complete"
 date: 2026-09-08
 associated-madr: "0037-MADR-namespace-recency-from-repositories-you-open.md"
 ---
@@ -561,6 +561,35 @@ flutter test (full suite)         03:29 +3768 ~3: All tests passed!
 tool/mutate.py (21 mutations)     21 killed, 0 survived, 0 did not apply
 expect=9471 testWidgets=1072
 ```
+
+### Phase 5 — 2026-09-08 — *complete*
+
+Catalogue, index row, plan status and the MADR's `verified:` date.
+
+**Acceptance criteria, each against the test that establishes it:**
+
+| # | Criterion | Established by |
+| --- | --- | --- |
+| 1 | An open with a forge origin records its namespace, timed by the open | `namespace_open_recording_test.dart` "an SSH open records its namespace"; `namespace_backfill_test.dart` pins the time against `openedAt` |
+| 2 | No origin / non-forge / no namespace above the repo / not creatable / lookup failed → nothing recorded | five tests in `namespace_open_recording_test.dart` |
+| 3 | Recording never fails or delays an open | "a throwing store does not fail the open" |
+| 4 | The scan reads local repos offline and SSH repos with a live session, and **dials nothing** | `namespace_backfill_test.dart` "a host with no live session is skipped, and never dialled", plus the different-connection and no-tabs-host arms |
+| 5 | Every grant released, including on a throw | "a grant already held is released when a later one throws" |
+| 6 | Idempotent; a stale bookmark or unreadable repo is skipped | "running twice records the namespace once", "a stale bookmark is skipped, not fatal", "a repo that will not read does not stop the rest" |
+| 7 | The sheet renders without waiting, and updates when the scan lands | `namespace_backfill_wiring_test.dart` "renders on the first frame, scan still in flight" and the two "appears" arms |
+| 8 | The composer drops a namespace the account can no longer create in, and keeps history when the lookup failed | `namespace_suggestions_test.dart` (0032; unchanged and re-verified) |
+| 9 | Analyze clean, suite green each phase, every mutation killed | the per-phase verification blocks above |
+
+**What was deliberately not built.** The MADR's central limit stands: a saved
+SSH host with **no live session** is never read and never dialled, so its
+namespaces are learned only at the next open. Nothing persists an origin cache
+(decision 2B) and nothing persists the creatable list — both memos are
+session-scoped, as the two caches they mirror are.
+
+**Residual.** `docs/README.md` index drift has now recurred four times with
+nothing preventing a fifth. A scan test over the index and frontmatter is still
+unwritten; it is not part of this plan, and is recorded here so the next
+maintainer does not mistake its absence for an oversight.
 
 #### Deviation 1 — 2026-09-08 — the creatable check is unreachable from a new file
 
