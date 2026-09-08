@@ -4,20 +4,161 @@
     "file": "lib/features/workspace/workspace_registration.dart",
     "find": "      if (conn == null || provisionToken == null) return false;",
     "replace": "      if (conn == null || provisionToken == null || true) return false;",
-    "tests": ["test/create_repo_sheet_test.dart"]
+    "tests": [
+      "test/create_repo_sheet_test.dart"
+    ]
   },
   {
     "label": "phase1: a failed dial reports no error",
     "file": "lib/features/workspace/workspace_provisioning.dart",
-    "find": "    if (token == null) {\n      onProvisioningError(\n        ref.read(connectionProvider).error ?? 'Could not connect to host.',\n      );\n    }",
+    "find": "    if (token == null) {\n      onProvisioningError(\n        _dialContainer.read(connectionProvider).error ??\n            'Could not connect to host.',\n      );\n    }",
     "replace": "    // error reporting removed",
-    "tests": ["test/create_repo_sheet_test.dart"]
+    "tests": [
+      "test/create_repo_sheet_test.dart"
+    ]
   },
   {
     "label": "phase1: a failed dial is treated as provisioned",
     "file": "lib/features/workspace/workspace_provisioning.dart",
     "find": "    return token != null;",
     "replace": "    return true;",
-    "tests": ["test/create_repo_sheet_test.dart"]
+    "tests": [
+      "test/create_repo_sheet_test.dart"
+    ]
+  },
+  {
+    "label": "phase3: the Destination step gated to landing again",
+    "file": "lib/features/workspace/create_repo_sheet.dart",
+    "find": "      applicable: () => true,\n",
+    "replace": "      applicable: () => widget.landing,\n",
+    "tests": [
+      "test/create_repo_sheet_test.dart"
+    ]
+  },
+  {
+    "label": "phase3: the current session resolves to sshActive again",
+    "file": "lib/features/workspace/create_repo_sheet.dart",
+    "find": "    _target = _destConnectionId == null\n        ? WorkspaceTarget.localMac\n        : WorkspaceTarget.sshProvision;",
+    "replace": "    _target = _destConnectionId == null\n        ? WorkspaceTarget.localMac\n        : (_destConnectionId == conn.connectionId\n            ? WorkspaceTarget.sshActive\n            : WorkspaceTarget.sshProvision);",
+    "tests": [
+      "test/create_repo_sheet_test.dart"
+    ]
+  },
+  {
+    "label": "phase3: the wizard does not open on the current session",
+    "file": "lib/features/workspace/create_repo_sheet.dart",
+    "find": "      _destConnectionId = conn.isLocal ? null : conn.connectionId;\n",
+    "replace": "      _destConnectionId = null;\n",
+    "tests": [
+      "test/create_repo_sheet_test.dart"
+    ]
+  },
+  {
+    "label": "phase3: cap gate removed",
+    "file": "lib/features/workspace/create_repo_sheet.dart",
+    "find": "    if (_refusedAtTabCap) return false;\n",
+    "replace": "",
+    "tests": [
+      "test/create_repo_sheet_test.dart"
+    ]
+  },
+  {
+    "label": "phase3: an unsaved local create is gated by the cap too",
+    "file": "lib/features/workspace/create_repo_sheet.dart",
+    "find": "  bool get _opensNewTab => !_isLocalTarget || _saveLocal;",
+    "replace": "  bool get _opensNewTab => true;",
+    "tests": [
+      "test/create_repo_sheet_test.dart"
+    ]
+  },
+  {
+    "label": "phase4: the mixin dials in the sheet's own container",
+    "file": "lib/features/workspace/workspace_provisioning.dart",
+    "find": "      provisionTarget ?? ProviderScope.containerOf(context, listen: false);",
+    "replace": "      ProviderScope.containerOf(context, listen: false);",
+    "tests": [
+      "test/create_repo_sheet_test.dart"
+    ]
+  },
+  {
+    "label": "phase4: finalize runs in the sheet's own container",
+    "file": "lib/features/workspace/create_repo_sheet.dart",
+    "find": "    if (tab == null) {\n      // No tab host: the sheet's own container dialled (landing behaviour).",
+    "replace": "    if (tab == null || true) {\n      // No tab host: the sheet's own container dialled (landing behaviour).",
+    "tests": [
+      "test/create_repo_sheet_test.dart"
+    ]
+  },
+  {
+    "label": "phase4: grant-release guard removed from the local open",
+    "file": "lib/features/workspace/workspace_open_in_tab.dart",
+    "find": "  if (connected) return tab;\n",
+    "replace": "  return tab;\n",
+    "tests": [
+      "test/create_repo_sheet_test.dart"
+    ]
+  },
+  {
+    "label": "phase4: a saved local create opens in place anyway",
+    "file": "lib/features/workspace/create_repo_sheet.dart",
+    "find": "      if (!_saveLocal) {\n        return registerAndActivateLocal(",
+    "replace": "      if (!_saveLocal || true) {\n        return registerAndActivateLocal(",
+    "tests": [
+      "test/create_repo_sheet_test.dart"
+    ]
+  },
+  {
+    "label": "phase4: an unsaved local create is routed to a tab",
+    "file": "lib/features/workspace/create_repo_sheet.dart",
+    "find": "      if (!_saveLocal) {\n        return registerAndActivateLocal(",
+    "replace": "      if (false) {\n        return registerAndActivateLocal(",
+    "tests": [
+      "test/create_repo_sheet_test.dart"
+    ]
+  },
+  {
+    "label": "phase4: a failed dial leaves its tab open",
+    "file": "lib/features/workspace/create_repo_sheet.dart",
+    "find": "        if (!await ensureProvisioned()) {\n          await _abandonProvisionTab();\n          return;\n        }",
+    "replace": "        if (!await ensureProvisioned()) {\n          await resetProvisioning();\n          return;\n        }",
+    "tests": [
+      "test/create_repo_sheet_test.dart"
+    ]
+  },
+  {
+    "label": "phase4: a failed create leaves its tab open",
+    "file": "lib/features/workspace/create_repo_sheet.dart",
+    "find": "        // Nothing to open: a tab this sheet dialled is closed again.\n        await _abandonProvisionTab();",
+    "replace": "        // Nothing to open: a tab this sheet dialled is closed again.\n        await resetProvisioning();",
+    "tests": [
+      "test/create_repo_sheet_test.dart"
+    ]
+  },
+  {
+    "label": "phase4: Browse\u2026 dials in the current tab",
+    "file": "lib/features/workspace/create_repo_sheet.dart",
+    "find": "  Future<void> _browseRemote() async {\n    if (!await _ensureProvisionTab()) {",
+    "replace": "  Future<void> _browseRemote() async {\n    if (false) {",
+    "tests": [
+      "test/create_repo_sheet_test.dart"
+    ]
+  },
+  {
+    "label": "phase4: destination control live while dialling (0022 H4)",
+    "file": "lib/features/workspace/create_repo_sheet.dart",
+    "find": "      onChanged: (_submitting || provisioning) ? null : _onDestChanged,",
+    "replace": "      onChanged: _onDestChanged,",
+    "tests": [
+      "test/create_repo_sheet_test.dart"
+    ]
+  },
+  {
+    "label": "phase4: mid-hang-up mounted guard removed (0034 F4)",
+    "file": "lib/features/workspace/create_repo_sheet.dart",
+    "find": "    if (!mounted) return;\n    setState(() {\n      _destConnectionId = connectionId;",
+    "replace": "    setState(() {\n      _destConnectionId = connectionId;",
+    "tests": [
+      "test/create_repo_sheet_test.dart"
+    ]
   }
 ]

@@ -9,14 +9,15 @@ import 'dart:async';
 
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart' hide ConnectionState;
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
 import 'package:remote_magic_git/core/forge/forge.dart';
 import 'package:remote_magic_git/core/git/git_service.dart';
+import 'package:remote_magic_git/core/output/output_log.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/core/settings/app_settings.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
-import 'package:remote_magic_git/core/storage/saved_connection.dart';
 import 'package:remote_magic_git/features/common/buttons.dart';
 import 'package:remote_magic_git/features/common/field_styles.dart';
 import 'package:remote_magic_git/features/workspace/create_repo_sheet.dart';
@@ -184,6 +185,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+    await nextStep(tester); // Destination (MADR 0036, 2A) → Source
     await nextStep(tester); // Source
     await nextStep(tester); // Remote
     expect(
@@ -352,6 +354,7 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
+      await nextStep(tester); // Destination (MADR 0036, 2A) → Source
       await nextStep(tester); // Source → Remote
 
       await tester.tap(find.widgetWithText(AppPushButton, 'GitLab'));
@@ -388,12 +391,16 @@ void main() {
   testWidgets('the progress bar tracks the current step left to right', (
     tester,
   ) async {
-    await pumpConnected(tester);
-    expect(find.text('Step 1 of 4 — Source'), findsOneWidget);
+    // Deliberately renumbered: the connected wizard gained a Destination step
+    // in front of Source (MADR 0036, 2A), so it is five steps, not four.
+    await pumpConnected(tester, pastDestination: false);
+    expect(find.text('Step 1 of 5 — Destination'), findsOneWidget);
     await nextStep(tester);
-    expect(find.text('Step 2 of 4 — Remote'), findsOneWidget);
+    expect(find.text('Step 2 of 5 — Source'), findsOneWidget);
     await nextStep(tester);
-    expect(find.text('Step 3 of 4 — Details'), findsOneWidget);
+    expect(find.text('Step 3 of 5 — Remote'), findsOneWidget);
+    await nextStep(tester);
+    expect(find.text('Step 4 of 5 — Details'), findsOneWidget);
   });
 
   testWidgets('plain create: git init -b main in the parent, then activates', (
@@ -412,7 +419,11 @@ void main() {
 
     expect(exec.calls.last, ['git', 'init', '-b', 'main', '--', 'new-proj']);
     expect(stub.repoPathsSet, ['/srv/new-proj']);
-    expect(store.updated.single.allRepoPaths, contains('/srv/new-proj'));
+    // Deliberately dropped: `store.updated…allRepoPaths`. The sheet no longer
+    // persists the path itself; the real `finalizeProvisioned` does, in the
+    // tab that dialled (MADR 0036, 3B). Without a tab host this stub IS that
+    // tab, and `repoPathsSet` above is its finalize.
+    expect(store.updated, isEmpty);
     expect(find.byType(CreateRepositorySheet), findsNothing, reason: 'popped');
   });
 
@@ -1336,75 +1347,49 @@ void main() {
     await tester.pumpAndSettle(const Duration(seconds: 2));
   });
 
-  testWidgets('selecting an SSH destination dials without waiting for submit', (
-    tester,
-  ) async {
-    await tester.binding.setSurfaceSize(const Size(1200, 900));
-    final dial = Completer<int?>();
-    await tester.pumpWidget(
-      appProviderScope(
-        overrides: [
-          connectionProvider.overrideWith(
-            () => _ParkingProvisionConnection(dial),
-          ),
-          savedConnectionsProvider.overrideWith((ref) async => [testConn]),
-        ],
-        child: const MacosApp(
-          debugShowCheckedModeBanner: false,
-          home: CreateRepositorySheet.landing(),
-        ),
-      ),
-    );
-    await tester.pumpAndSettle();
+  testWidgets('selecting an SSH destination does not dial', (tester) async {
+    // Deliberately inverted: this pinned dial-on-selection, and MADR 0036
+    // decision 6B dials at the first commitment to the host instead — Browse…
+    // or Create — so a cancelled wizard never has a tab to unwind.
+    final (stub, _, _) = await pumpLanding(tester);
+    await chooseDestination(tester, 'Prod');
 
-    // Destination is step 0 of the landing variant. Choose the saved host.
-    await tester.tap(find.byType(MacosPopupButton<String?>));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Prod').last);
-    await tester.pump();
-
-    expect(
-      find.text('Connecting…'),
-      findsOneWidget,
-      reason: 'the destination control must dial, not wait for submit',
-    );
-
-    dial.complete(null);
-    await tester.pumpAndSettle();
+    expect(stub.dialed, isEmpty);
+    expect(find.text('Connecting…'), findsNothing);
   });
 
   testWidgets(
     'switching destination mid-hang-up does not setState on a disposed sheet',
     (tester) async {
-      // F4 (MADR 0034). `_onDestChanged` awaits `resetProvisioning()` — a real
-      // network hang-up once a dial has been adopted — and then calls setState
-      // with no `mounted` guard. Dismissing the sheet inside that window used
-      // to throw "setState() called after dispose()".
-      await tester.binding.setSurfaceSize(const Size(1200, 900));
+      // F4 (MADR 0034). `_onDestChanged` awaits the hang-up of an adopted
+      // session — a real network round trip — and then calls setState with no
+      // `mounted` guard; dismissing the sheet inside that window used to throw
+      // "setState() called after dispose()". Re-pointed for MADR 0036 (6B):
+      // selection no longer dials, so the session is adopted through Browse…,
+      // the first commitment to the host.
+      final (stub, _, _) = await pumpLanding(tester);
       final abort = Completer<void>();
-      final stub = _ParkingAbortConnection(abort);
-      await tester.pumpWidget(
-        appProviderScope(
-          overrides: [
-            connectionProvider.overrideWith(() => stub),
-            savedConnectionsProvider.overrideWith((ref) async => [testConn]),
-          ],
-          child: const MacosApp(
-            debugShowCheckedModeBanner: false,
-            home: CreateRepositorySheet.landing(),
-          ),
-        ),
+      stub.abortGate = abort;
+      await chooseDestination(tester, 'Prod');
+      await nextStep(tester); // Destination → Source
+
+      // Browse… dials (instantly here) and opens the host's directory browser.
+      await tester.tap(find.widgetWithText(AppPushButton, 'Browse…').first);
+      await tester.pumpAndSettle();
+      expect(stub.dialed.single.id, 'c1', reason: 'Browse… adopted a session');
+      // `byTooltip` matches Material's Tooltip; this app's is MacosTooltip.
+      // Two carry 'Close' now — the sheet's own and the browser's on top.
+      await tester.tap(
+        find
+            .byWidgetPredicate((w) => w is MacosTooltip && w.message == 'Close')
+            .last,
       );
       await tester.pumpAndSettle();
 
-      // Adopt a session, so resetProvisioning has a token to hang up.
-      await tester.tap(find.byType(MacosPopupButton<String?>));
+      // Back to Destination, switch to This Mac: the hang-up parks.
+      await tester.tap(find.widgetWithText(AppPushButton, 'Back'));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('Prod').last);
-      await tester.pumpAndSettle();
-
-      // Switch back to This Mac: the hang-up parks.
-      await tester.tap(find.byType(MacosPopupButton<String?>));
+      await tester.tap(destinationPopup());
       await tester.pumpAndSettle();
       await tester.tap(find.text('This Mac').last);
       await tester.pump();
@@ -1434,9 +1419,11 @@ void main() {
   // -------------------------------------------------------------------------
   group("connected: today's behaviour, pinned (MADR 0036 Phase 2)", () {
     testWidgets(
-      'a connected SSH create runs on the current session and switches '
-      'the current tab',
+      'a connected SSH create provisions in its own tab and leaves the '
+      'current tab alone',
       (tester) async {
+        // Deliberately inverted from the Phase 2 pin "runs on the current
+        // session and switches the current tab": MADR 0036 decision 3B.
         final tabs = RecordingTabs();
         installTabs(tabs);
         final (stub, exec, _) = await pumpConnected(tester);
@@ -1446,22 +1433,40 @@ void main() {
         await tester.pumpAndSettle();
         await nextStep(tester); // Details → Review
 
-        exec.results.add(okResult('absent')); // probe
+        tabs.exec.results.add(okResult('absent')); // probe, in the NEW tab
         await tester.tap(createButton());
         await tester.pumpAndSettle();
 
-        expect(stub.repoPathsSet, ['/srv/new-proj'], reason: 'this tab');
-        expect(tabs.opened, isEmpty, reason: 'no tab was opened');
-        expect(tabs.connectRan, 0);
+        expect(tabs.opened, hasLength(1), reason: 'one tab was opened');
+        final spawned = tabs.stubIn(tabs.tabs.single);
+        expect(spawned.dialed.single.id, 'c1', reason: 'dialled there');
+        expect(tabs.exec.calls.last, [
+          'git',
+          'init',
+          '-b',
+          'main',
+          '--',
+          'new-proj',
+        ], reason: 'the init ran on the new tab\'s executor');
+        expect(spawned.finalized.single.repoPath, '/srv/new-proj');
+        // The tab the wizard was opened from is untouched.
+        expect(exec.calls, isEmpty, reason: 'nothing ran on this tab');
+        expect(stub.repoPathsSet, isEmpty, reason: 'this tab did not switch');
+        expect(stub.dialed, isEmpty);
       },
     );
 
-    testWidgets('a connected local create opens in the current tab', (
-      tester,
-    ) async {
+    testWidgets('a saved local create opens in its own tab', (tester) async {
+      // Deliberately inverted from the Phase 2 pin "opens in the current
+      // tab": MADR 0036 decision 3B. (5B keeps the current tab for an UNSAVED
+      // local create — its own test in Phase 4.)
       final tabs = RecordingTabs();
       installTabs(tabs);
       installFolderPicker('/Users/me/projects');
+      final counting = CountingScopedAccess();
+      final previousAccess = CreateRepositorySheet.scopedAccess;
+      CreateRepositorySheet.scopedAccess = counting.access;
+      addTearDown(() => CreateRepositorySheet.scopedAccess = previousAccess);
       final (stub, exec, _) = await pumpConnectedLocal(tester);
 
       await tester.tap(chooseFolderButton()); // Source: parent folder
@@ -1473,25 +1478,250 @@ void main() {
       await nextStep(tester); // Details → Review
 
       exec.respond = localCreateOk;
-      // pumpCreate, not tap+settle: the Review step's long local path
-      // overflows the test surface's row chrome, and the helper drains that
-      // non-fatal layout exception the way every other create test does.
       await pumpCreate(tester);
 
       expect(
         exec.calls.map((c) => c.join(' ')),
         containsAllInOrder(['git init -b main -- new-proj']),
-        reason: 'ran on the LOCAL executor',
+        reason: 'ran on the LOCAL executor of the tab it started in',
       );
-      expect(stub.localConnects, [
-        '/Users/me/projects/new-proj',
-      ], reason: 'opened in place, in this tab');
-      expect(tabs.opened, isEmpty, reason: 'no tab was opened');
+      expect(tabs.opened, hasLength(1), reason: 'one tab was opened');
+      expect(tabs.opened.single.repoPath, '/resolved');
+      final spawned = tabs.stubIn(tabs.tabs.single);
+      expect(spawned.localConnects, ['/resolved'], reason: 'opened there');
+      expect(stub.localConnects, isEmpty, reason: 'not in this tab');
+      expect(counting.acquired, hasLength(1), reason: 'one grant, held');
+      expect(counting.released, isEmpty);
     });
 
-    testWidgets('a connected sheet shows no Destination step', (tester) async {
+    testWidgets('a connected sheet shows the Destination step', (tester) async {
+      // Deliberately inverted from the Phase 2 pin: MADR 0036 decision 2A.
+      await pumpConnected(tester, pastDestination: false);
+      expect(destinationPopup(), findsOneWidget);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // MADR 0036 Phases 3+4 — the destination choice, and where the result opens.
+  // -------------------------------------------------------------------------
+  group('connected: the destination choice (MADR 0036 Phase 3)', () {
+    testWidgets('it opens on the current SSH session', (tester) async {
+      await pumpConnected(tester, pastDestination: false);
+      expect(
+        tester.widget<MacosPopupButton<String?>>(destinationPopup()).value,
+        'c1',
+        reason: 'the wizard opens on where the user is (2A)',
+      );
+    });
+
+    testWidgets('a local session opens on This Mac', (tester) async {
+      await pumpConnectedLocal(tester, pastDestination: false);
+      expect(
+        tester.widget<MacosPopupButton<String?>>(destinationPopup()).value,
+        isNull,
+      );
+    });
+
+    testWidgets('it refuses at the tab cap and runs nothing', (tester) async {
+      final tabs = RecordingTabs()..capReached = true;
+      installTabs(tabs);
+      final (stub, exec, _) = await pumpConnected(tester);
+      await nextStep(tester); // Source
+      await nextStep(tester); // Remote (None)
+      await tester.enterText(nameField(), 'new-proj');
+      await tester.pumpAndSettle();
+      await nextStep(tester); // Details → Review
+
+      expect(
+        tester.widget<AppPushButton>(createButton()).onPressed,
+        isNull,
+        reason: 'refused up front (7A), not silently no-op\'d by openOrFocus',
+      );
+      expect(find.text(CreateRepositorySheet.capMessage), findsOneWidget);
+      expect(tabs.connectRan, 0);
+      expect(exec.calls, isEmpty);
+      expect(stub.dialed, isEmpty);
+    });
+
+    testWidgets('an unsaved local create is not gated by the cap', (
+      tester,
+    ) async {
+      final tabs = RecordingTabs()..capReached = true;
+      installTabs(tabs);
+      installFolderPicker('/Users/me/projects');
+      await pumpConnectedLocal(tester);
+      await tester.tap(chooseFolderButton());
+      await tester.pumpAndSettle();
+      await nextStep(tester); // Source → Remote
+      await nextStep(tester); // Remote → Details
+      await tester.enterText(nameField(), 'new-proj');
+      await tester.pumpAndSettle();
+      // Turn off "Save to Local Repositories" (5B: opens in place, no tab).
+      await tapSaveLocal(tester);
+      await nextStep(tester); // Details → Review
+
+      expect(tester.widget<AppPushButton>(createButton()).onPressed, isNotNull);
+      expect(find.text(CreateRepositorySheet.capMessage), findsNothing);
+      expect(
+        find.text('Opens in this tab (not saved to Local Repositories)'),
+        findsOneWidget,
+      );
+    });
+  });
+
+  group('the result opens in its own tab (MADR 0036 Phase 4)', () {
+    testWidgets("the current session's output log is intact after a routed "
+        'create', (tester) async {
+      final tabs = RecordingTabs();
+      installTabs(tabs);
+      final (_, exec, _) = await pumpConnected(tester);
+      // Seed this tab's log; a session takeover would clear it (P4).
+      final own = ProviderScope.containerOf(
+        tester.element(find.byType(CreateRepositorySheet)),
+        listen: false,
+      );
+      own.read(outputLogProvider.notifier).logInfo('before the create');
+      await nextStep(tester); // Source
+      await nextStep(tester); // Remote (None)
+      await tester.enterText(nameField(), 'new-proj');
+      await tester.pumpAndSettle();
+      await nextStep(tester); // Details → Review
+      tabs.exec.results.add(okResult('absent'));
+      await tester.tap(createButton());
+      await tester.pumpAndSettle();
+
+      expect(tabs.opened, hasLength(1));
+      expect(
+        own.read(outputLogProvider).lines.map((OutputLine l) => l.text),
+        contains('before the create'),
+        reason: 'this tab\'s log was not cleared by a takeover',
+      );
+      expect(exec.calls, isEmpty);
+    });
+
+    testWidgets('an unsaved local create opens in the current tab and opens '
+        'no tab', (tester) async {
+      final tabs = RecordingTabs();
+      installTabs(tabs);
+      installFolderPicker('/Users/me/projects');
+      final (stub, exec, _) = await pumpConnectedLocal(tester);
+      await tester.tap(chooseFolderButton());
+      await tester.pumpAndSettle();
+      await nextStep(tester); // Source → Remote
+      await nextStep(tester); // Remote → Details
+      await tester.enterText(nameField(), 'new-proj');
+      await tester.pumpAndSettle();
+      await tapSaveLocal(tester);
+      await nextStep(tester); // Details → Review
+
+      exec.respond = localCreateOk;
+      await pumpCreate(tester);
+
+      expect(stub.localConnects, ['/Users/me/projects/new-proj']);
+      expect(tabs.opened, isEmpty, reason: 'no tab: nothing to reopen from');
+    });
+
+    testWidgets('no grant leaks when openOrFocus declines', (tester) async {
+      final tabs = RecordingTabs();
+      installTabs(tabs);
+      installFolderPicker('/Users/me/projects');
+      final counting = CountingScopedAccess();
+      final previousAccess = CreateRepositorySheet.scopedAccess;
+      CreateRepositorySheet.scopedAccess = counting.access;
+      addTearDown(() => CreateRepositorySheet.scopedAccess = previousAccess);
+      final (_, exec, _) = await pumpConnectedLocal(tester);
+      await tester.tap(chooseFolderButton());
+      await tester.pumpAndSettle();
+      await nextStep(tester); // Source → Remote
+      await nextStep(tester); // Remote → Details
+      await tester.enterText(nameField(), 'new-proj');
+      await tester.pumpAndSettle();
+      await nextStep(tester); // Details → Review
+
+      // The racing double-open: the up-front cap check passes, but the tab
+      // host declines the open and never runs `connect`. The grant acquired
+      // for it backs no session and must be released, or it leaks for the
+      // app's lifetime.
+      tabs.declineOpens = true;
+      exec.respond = localCreateOk;
+      await pumpCreate(tester);
+
+      expect(counting.acquired, hasLength(1));
+      expect(counting.released, ['/resolved'], reason: 'released on decline');
+      expect(tabs.connectRan, 0);
+      expect(
+        find.text('The repository was created but could not be opened.'),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('a failed dial closes the tab it opened', (tester) async {
+      final tabs = RecordingTabs()..spawnedDialResult = null;
+      installTabs(tabs);
+      final (_, exec, _) = await pumpConnected(tester);
+      await nextStep(tester); // Source
+      await nextStep(tester); // Remote (None)
+      await tester.enterText(nameField(), 'new-proj');
+      await tester.pumpAndSettle();
+      await nextStep(tester); // Details → Review
+      await tester.tap(createButton());
+      await tester.pumpAndSettle();
+
+      expect(tabs.opened, hasLength(1), reason: 'opened to dial in');
+      expect(tabs.closed, hasLength(1), reason: 'closed again: no session');
+      expect(find.text('Could not connect to host.'), findsOneWidget);
+      expect(find.byType(CreateRepositorySheet), findsOneWidget);
+      expect(exec.calls, isEmpty);
+      expect(tabs.exec.calls, isEmpty);
+    });
+
+    testWidgets('a failed create after the dial closes the tab and aborts '
+        'the session', (tester) async {
+      final tabs = RecordingTabs();
+      installTabs(tabs);
       await pumpConnected(tester);
-      expect(destinationPopup(), findsNothing);
+      await nextStep(tester); // Source
+      await nextStep(tester); // Remote (None)
+      await tester.enterText(nameField(), 'new-proj');
+      await tester.pumpAndSettle();
+      await nextStep(tester); // Details → Review
+      tabs.exec.results.add(okResult('absent')); // probe
+      tabs.exec.results.add(
+        const SSHCommandResult(exitCode: 128, stdout: '', stderr: 'boom'),
+      ); // git init fails
+      await tester.tap(createButton());
+      await tester.pumpAndSettle();
+
+      // The tab is closed by then, so read the stub RecordingTabs kept.
+      final spawned = tabs.spawned.single;
+      expect(spawned.dialed, hasLength(1));
+      expect(spawned.aborts, 1, reason: 'the dialled session was hung up');
+      expect(tabs.closed, hasLength(1), reason: 'and its tab closed');
+      expect(find.byType(CreateRepositorySheet), findsOneWidget);
+      expect(find.textContaining('boom'), findsOneWidget);
+    });
+
+    testWidgets('the destination control is dead while Browse… is dialling '
+        '(MADR 0022 H4, UI half)', (tester) async {
+      final gate = Completer<int?>();
+      final tabs = RecordingTabs()..spawnedDialGate = gate;
+      installTabs(tabs);
+      await pumpConnected(tester); // on Source
+      await tester.tap(find.widgetWithText(AppPushButton, 'Browse…').first);
+      await tester.pump();
+      await tester.pump(); // the dial is in flight, parked on the gate
+
+      await tester.tap(find.widgetWithText(AppPushButton, 'Back'));
+      await tester.pump();
+      expect(
+        tester.widget<MacosPopupButton<String?>>(destinationPopup()).onChanged,
+        isNull,
+        reason: 'switching mid-dial would adopt host A\'s session under B',
+      );
+      expect(find.text('Connecting…'), findsOneWidget);
+
+      gate.complete(null); // let the dial fail so the test can settle
+      await tester.pumpAndSettle();
     });
   });
 
@@ -1508,7 +1738,13 @@ void main() {
       (tester) async {
         final (stub, exec, _) = await pumpLanding(tester);
         await chooseDestination(tester, 'Prod');
-        expect(stub.dialed.single.id, 'c1', reason: 'dials on selection');
+        expect(
+          stub.dialed,
+          isEmpty,
+          reason:
+              'no dial on selection — inverted from Phase 1 as first '
+              'written: MADR 0036 decision 6B dials at the first commitment',
+        );
 
         await nextStep(tester); // Destination → Source
         await tester.enterText(parentField(), '/srv/git');
@@ -1540,6 +1776,7 @@ void main() {
           '--',
           'new-proj',
         ]);
+        expect(stub.dialed.single.id, 'c1', reason: 'dialled at submit');
         expect(stub.finalized.single.repoPath, '/srv/git/new-proj');
         expect(stub.finalized.single.token, 7);
         expect(
@@ -1555,13 +1792,8 @@ void main() {
       (tester) async {
         final (stub, exec, _) = await pumpLanding(tester, dialResult: null);
         await chooseDestination(tester, 'Prod');
-
-        expect(find.text('Could not connect to host.'), findsOneWidget);
-        expect(find.byType(CreateRepositorySheet), findsOneWidget);
-
-        // "Runs nothing" has to survive the user pressing on regardless: the
-        // steps stay navigable after a failed dial, so drive all the way to
-        // Create. A create that ran here would be a create on no host.
+        // Under 6B the host is dialled at submit, so the failure surfaces
+        // there — the steps in between are navigable, and must stay so.
         await nextStep(tester); // Destination → Source
         await tester.enterText(parentField(), '/srv/git');
         await tester.pumpAndSettle();
@@ -1573,7 +1805,8 @@ void main() {
         await tester.tap(createButton());
         await tester.pumpAndSettle();
 
-        expect(stub.dialed.length, 2, reason: 'submit re-dials, and fails');
+        expect(stub.dialed.single.id, 'c1', reason: 'one dial, at submit');
+        expect(find.text('Could not connect to host.'), findsOneWidget);
         expect(exec.calls, isEmpty, reason: 'nothing ran on any executor');
         expect(stub.finalized, isEmpty);
         expect(find.byType(CreateRepositorySheet), findsOneWidget);
@@ -1594,36 +1827,3 @@ void main() {
 }
 
 /// Parks `beginProvisioning` so a test can observe the in-flight dial.
-class _ParkingProvisionConnection extends ConnectionController {
-  _ParkingProvisionConnection(this._dial);
-  final Completer<int?> _dial;
-
-  @override
-  ConnectionState build() => const ConnectionState();
-
-  @override
-  Future<int?> beginProvisioning(SavedConnection conn) => _dial.future;
-
-  @override
-  Future<void> abortProvisioning(int token) async {}
-}
-
-/// Dials instantly, then parks the hang-up so a test can dispose the sheet
-/// while `resetProvisioning()` is still awaiting.
-class _ParkingAbortConnection extends ConnectionController {
-  _ParkingAbortConnection(this._abort);
-  final Completer<void> _abort;
-  int aborts = 0;
-
-  @override
-  ConnectionState build() => const ConnectionState();
-
-  @override
-  Future<int?> beginProvisioning(SavedConnection conn) async => 7;
-
-  @override
-  Future<void> abortProvisioning(int token) {
-    aborts++;
-    return _abort.future;
-  }
-}

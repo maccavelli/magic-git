@@ -92,10 +92,26 @@ class FakeCreateExecutor extends SSHCommandExecutor {
   }
 }
 
+/// Records every way a sheet can point a session at a repository, and runs
+/// none of them. `repoPathsSet` is "the path this session ended on" whether
+/// that came from `setRepoPath` (a switch) or `finalizeProvisioned` (a dial
+/// promoted into a workspace) — the observable the create tests assert.
 class StubConnection extends ConnectionController {
-  StubConnection(this._state);
+  StubConnection(this._state, {this.dialResult = 7, this.dialGate});
   final ConnectionState _state;
+
+  /// What `beginProvisioning` resolves to: a token, or null for a failed dial.
+  final int? dialResult;
+
+  /// When set, `beginProvisioning` parks on it and resolves to its value —
+  /// lets a test act while a dial is in flight (MADR 0022 H4).
+  final Completer<int?>? dialGate;
+
   final List<String> repoPathsSet = [];
+  final List<SavedConnection> dialed = [];
+  final List<({int token, String repoPath, String label})> finalized = [];
+  final List<({String connectionId, String? repoPath})> savedConnects = [];
+  int aborts = 0;
 
   /// Paths a local create asked this session to open in place
   /// (`registerAndActivateLocal` → `connectLocal`). Recorded, never run: the
@@ -117,6 +133,42 @@ class StubConnection extends ConnectionController {
     String? gitDir,
   }) async {
     localConnects.add(repoPath);
+  }
+
+  @override
+  Future<void> connectToSaved(SavedConnection conn, {String? repoPath}) async {
+    savedConnects.add((connectionId: conn.id, repoPath: repoPath));
+  }
+
+  @override
+  Future<int?> beginProvisioning(SavedConnection conn) async {
+    dialed.add(conn);
+    if (dialGate != null) return dialGate!.future;
+    return dialResult;
+  }
+
+  @override
+  Future<bool> finalizeProvisioned({
+    required int token,
+    required SavedConnection conn,
+    required String repoPath,
+    bool enableFsmonitor = false,
+    String label = '',
+    String gitDir = '',
+  }) async {
+    finalized.add((token: token, repoPath: repoPath, label: label));
+    repoPathsSet.add(repoPath);
+    return true;
+  }
+
+  /// When set, `abortProvisioning` parks on it — lets a test dismiss the
+  /// sheet while a hang-up is still outstanding (MADR 0034 F4).
+  Completer<void>? abortGate;
+
+  @override
+  Future<void> abortProvisioning(int token) async {
+    aborts++;
+    if (abortGate != null) await abortGate!.future;
   }
 }
 
@@ -186,9 +238,13 @@ const testConn = SavedConnection(
   repoPaths: ['/srv/repo'],
 );
 
+/// [pastDestination] advances off the Destination step the connected wizard
+/// now opens on (MADR 0036, 2A), so the many tests written when Source was
+/// step 0 keep their `nextStep` sequences. Pass false to look at the step.
 Future<(StubConnection, FakeCreateExecutor, FakeConnectionStore)> pumpConnected(
   WidgetTester tester, {
   List<Override> extraOverrides = const [],
+  bool pastDestination = true,
 }) async {
   // `SharedPreferences.getInstance()` **never settles inside `testWidgets`** —
   // its platform-channel reply needs `runAsync`, which a pumped widget test
@@ -230,6 +286,7 @@ Future<(StubConnection, FakeCreateExecutor, FakeConnectionStore)> pumpConnected(
     ),
   );
   await tester.pumpAndSettle();
+  if (pastDestination) await nextStep(tester);
   return (stub, exec, store);
 }
 
@@ -287,6 +344,20 @@ Future<void> tapReadme(WidgetTester tester) async {
   await tester.pumpAndSettle();
 }
 
+/// The "Save to Local Repositories" toggle (Details step, local target),
+/// found and tapped through its tooltip the way [tapReadme] is.
+Finder saveLocalToggle() => find.byWidgetPredicate(
+  (w) =>
+      w is MacosTooltip && w.message.startsWith('Save to Local Repositories'),
+);
+
+Future<void> tapSaveLocal(WidgetTester tester) async {
+  await tester.ensureVisible(saveLocalToggle());
+  await tester.pumpAndSettle();
+  await tester.tap(saveLocalToggle());
+  await tester.pumpAndSettle();
+}
+
 /// Queues the two local `git config` writes that follow init when identity
 /// is filled.
 void queueIdentityConfig(FakeCreateExecutor exec) {
@@ -308,45 +379,11 @@ Future<void> nextStep(WidgetTester tester) async {
 // MADR 0036 Phase 1 — the landing twin of [pumpConnected].
 // ---------------------------------------------------------------------------
 
-/// A connection controller for the landing page: no session until a saved
-/// host is chosen, then a dial that resolves to [dialResult] (a token, or
-/// null for a failed dial). Records what the sheet asked of it so a test can
-/// assert the provisioned create really ran on the chosen host and was
-/// finalized there — the path MADR 0036 found no test had ever driven.
-class ProvisionStub extends ConnectionController {
-  ProvisionStub({this.dialResult = 7});
-
-  final int? dialResult;
-  final List<SavedConnection> dialed = [];
-  final List<({int token, String repoPath, String label})> finalized = [];
-  int aborts = 0;
-
-  @override
-  ConnectionState build() => const ConnectionState();
-
-  @override
-  Future<int?> beginProvisioning(SavedConnection conn) async {
-    dialed.add(conn);
-    return dialResult;
-  }
-
-  @override
-  Future<bool> finalizeProvisioned({
-    required int token,
-    required SavedConnection conn,
-    required String repoPath,
-    bool enableFsmonitor = false,
-    String label = '',
-    String gitDir = '',
-  }) async {
-    finalized.add((token: token, repoPath: repoPath, label: label));
-    return true;
-  }
-
-  @override
-  Future<void> abortProvisioning(int token) async {
-    aborts++;
-  }
+/// The landing page's connection: no session until a saved host is chosen,
+/// then a dial that resolves to [dialResult]. All recording lives on
+/// [StubConnection]; this only fixes the empty starting state.
+class ProvisionStub extends StubConnection {
+  ProvisionStub({super.dialResult}) : super(const ConnectionState());
 }
 
 /// Pumps `CreateRepositorySheet.landing()` — no session, a Destination step —
@@ -455,16 +492,58 @@ SSHCommandResult? localCreateOk(List<String> args) =>
 /// exactly: `openOrFocus` returns the active tab and never runs `connect`
 /// (`tabs_controller.dart:289-292`).
 class RecordingTabs extends TabsController {
-  RecordingTabs()
-    : super(
-        containerFactory: (overrides) =>
-            ProviderContainer(retry: noProviderRetry, overrides: overrides),
+  RecordingTabs({FakeCreateExecutor? exec})
+    : exec = exec ?? FakeCreateExecutor(),
+      super(containerFactory: _factory);
+
+  /// The executor a create routed into a spawned tab runs on — the tab
+  /// containers all share it, so a test can queue results and assert argv.
+  final FakeCreateExecutor exec;
+
+  static late FakeCreateExecutor _tabExec;
+  static int? _spawnedDial = 7;
+  static Completer<int?>? _spawnedDialGate;
+
+  /// What a spawned tab's `beginProvisioning` resolves to (null = fails).
+  int? spawnedDialResult = 7;
+
+  /// When set, a spawned tab's dial parks on it.
+  Completer<int?>? spawnedDialGate;
+  static ProviderContainer _factory(List<Override> overrides) =>
+      ProviderContainer(
+        retry: noProviderRetry,
+        overrides: [
+          // Recorded, never run: a real controller in a spawned tab would
+          // dial a real host or validate with real git.
+          connectionProvider.overrideWith(
+            () => StubConnection(
+              const ConnectionState(),
+              dialResult: _spawnedDial,
+              dialGate: _spawnedDialGate,
+            ),
+          ),
+          activeExecutorProvider.overrideWithValue(_tabExec),
+          ...overrides,
+        ],
       );
+
+  /// The (recording) connection of a spawned tab.
+  StubConnection stubIn(RepoTab tab) =>
+      tab.container.read(connectionProvider.notifier) as StubConnection;
 
   final List<({String? connectionId, String? repoPath})> opened = [];
   final List<String> closed = [];
   int connectRan = 0;
   bool capReached = false;
+
+  /// Simulates the racing double-open: `canOpenTab` stays true (the sheet's
+  /// up-front check passes) but the next `openOrFocus` declines and never
+  /// runs `connect`, exactly like the cap path (`tabs_controller.dart:289`).
+  bool declineOpens = false;
+
+  /// Every spawned tab's connection stub, in order — kept here because a
+  /// closed tab's container is disposed and gone from [tabs].
+  final List<StubConnection> spawned = [];
 
   @override
   bool get canOpenTab => !capReached;
@@ -478,9 +557,9 @@ class RecordingTabs extends TabsController {
     List<Override> overrides = const [],
     required void Function(ProviderContainer container) connect,
   }) {
-    if (capReached) return active ?? ensureInitialTab();
+    if (capReached || declineOpens) return active ?? ensureInitialTab();
     opened.add((connectionId: connectionId, repoPath: repoPath));
-    return super.openOrFocus(
+    final tab = super.openOrFocus(
       connectionId: connectionId,
       repoPath: repoPath,
       savedKind: savedKind,
@@ -491,12 +570,15 @@ class RecordingTabs extends TabsController {
         connect(container);
       },
     );
+    spawned.add(stubIn(tab));
+    return tab;
   }
 
   @override
   RepoTab newTab() {
     final tab = super.newTab();
     opened.add((connectionId: null, repoPath: null));
+    spawned.add(stubIn(tab));
     return tab;
   }
 
@@ -511,6 +593,9 @@ class RecordingTabs extends TabsController {
 /// `TabsController.current`, and undoes it when the test ends — the same
 /// pair `tabs_host.dart:126` / `:166-167` performs.
 void installTabs(RecordingTabs tabs) {
+  RecordingTabs._tabExec = tabs.exec;
+  RecordingTabs._spawnedDial = tabs.spawnedDialResult;
+  RecordingTabs._spawnedDialGate = tabs.spawnedDialGate;
   TabsController.current = tabs;
   addTearDown(() {
     if (identical(TabsController.current, tabs)) TabsController.current = null;
@@ -586,6 +671,7 @@ Future<(StubConnection, FakeLocalExecutor, FakeConnectionStore)>
 pumpConnectedLocal(
   WidgetTester tester, {
   List<Override> extraOverrides = const [],
+  bool pastDestination = true,
 }) async {
   SharedPreferences.setMockInitialValues({});
   // `registerAndActivateLocal` bookmarks the new folder through the
@@ -634,5 +720,6 @@ pumpConnectedLocal(
     ),
   );
   await tester.pumpAndSettle();
+  if (pastDestination) await nextStep(tester);
   return (stub, exec, store);
 }

@@ -26,6 +26,16 @@ mixin WorkspaceProvisioning<T extends ConsumerStatefulWidget>
   /// this (see the class doc), and their wizard steps treat it as invalid.
   bool provisioning = false;
 
+  /// The container the dial runs in. Null means the sheet's own — the landing
+  /// page, whose tab is blank and free to claim. A connected sheet sets this
+  /// to a **new** tab's container before dialling, so `beginProvisioning`'s
+  /// session takeover lands on a tab nobody is working in (MADR 0036, 1C).
+  ProviderContainer? provisionTarget;
+
+  /// The container to dial in: [provisionTarget] when set, else this sheet's.
+  ProviderContainer get _dialContainer =>
+      provisionTarget ?? ProviderScope.containerOf(context, listen: false);
+
   /// The saved connection currently chosen as the destination, or null for
   /// "This Mac".
   String? get destConnectionId;
@@ -63,7 +73,7 @@ mixin WorkspaceProvisioning<T extends ConsumerStatefulWidget>
     // this is what lets the guard below — and dispose()'s own teardown — still
     // hang up a session nobody owns.
     final ConnectionController notifier =
-        _notifier ?? ref.read(connectionProvider.notifier);
+        _notifier ?? _dialContainer.read(connectionProvider.notifier);
     _notifier = notifier;
     final token = await notifier.beginProvisioning(conn);
     if (!mounted || destConnectionId != conn.id) {
@@ -84,7 +94,8 @@ mixin WorkspaceProvisioning<T extends ConsumerStatefulWidget>
     });
     if (token == null) {
       onProvisioningError(
-        ref.read(connectionProvider).error ?? 'Could not connect to host.',
+        _dialContainer.read(connectionProvider).error ??
+            'Could not connect to host.',
       );
     }
     return token != null;

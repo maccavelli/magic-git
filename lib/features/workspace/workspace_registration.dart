@@ -32,27 +32,39 @@ Future<bool> registerAndActivateLocal(
       .connectLocal(dest, label: label.isEmpty ? null : label, id: id);
   if (!ref.read(connectionProvider).isConnected) return false;
   if (id != null) {
-    // Bookmark only a confirmed-open repo; the child of a picker-granted
-    // parent is bookmarkable while that grant is live. Unsigned builds
-    // return null → store '' (same degraded path as the local repo form).
-    final bookmark = await SecurityScopedBookmark.create(dest);
-    try {
-      await ref
-          .read(localRepoStoreProvider)
-          .save(
-            SavedLocalRepo(
-              id: id,
-              label: label,
-              repoPath: dest,
-              bookmarkData: bookmark ?? '',
-            ),
-          );
-      ref.invalidate(savedLocalReposProvider);
-    } catch (_) {
-      // Open-for-session even if the save failed.
-    }
+    await saveLocalRepo(ref, id: id, dest: dest, label: label);
   }
   return true;
+}
+
+/// The bookmark-and-save half of [registerAndActivateLocal], on its own so a
+/// create that opens its result in **another** tab (MADR 0036, 3B) can
+/// bookmark without connecting here. Returns the saved record, or null when
+/// the store could not be written — the repository still exists either way.
+///
+/// The child of a picker-granted parent is bookmarkable while that grant is
+/// live, which it is for the whole sheet. Unsigned builds return null from the
+/// bookmark call → stored as '' (the local repo form's degraded path).
+Future<SavedLocalRepo?> saveLocalRepo(
+  WidgetRef ref, {
+  required String id,
+  required String dest,
+  String label = '',
+}) async {
+  final bookmark = await SecurityScopedBookmark.create(dest);
+  final repo = SavedLocalRepo(
+    id: id,
+    label: label,
+    repoPath: dest,
+    bookmarkData: bookmark ?? '',
+  );
+  try {
+    await ref.read(localRepoStoreProvider).save(repo);
+    ref.invalidate(savedLocalReposProvider);
+  } catch (_) {
+    return null;
+  }
+  return repo;
 }
 
 /// Persists [dest] into the *active saved connection's* repo list (when the

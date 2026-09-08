@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/cupertino.dart' hide ConnectionState;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
@@ -6,6 +8,7 @@ import '../../core/forge/forge.dart';
 import '../../core/git/host_fs_service.dart';
 import '../../core/github/gh_service.dart';
 import '../../core/gitlab/glab_service.dart';
+import '../../core/local/scoped_access.dart';
 import '../../core/output/output_log.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/settings/app_settings.dart';
@@ -18,12 +21,15 @@ import '../common/field_styles.dart';
 import '../common/labeled_text_field.dart';
 import '../common/sized_sheet.dart';
 import '../common/tool_icon_button.dart';
+import '../connection/local_repo_form.dart' show LocalOpenGrants;
+import '../tabs/tabs_controller.dart';
 import 'create_repo_pipeline.dart';
 import 'create_repo_steps/folder_fields.dart';
 import 'create_repo_steps/namespace_field.dart';
 import 'create_repo_steps/segmented_choice.dart';
 import 'wizard.dart';
 import 'workspace_destination.dart';
+import 'workspace_open_in_tab.dart';
 import 'workspace_pickers.dart';
 import 'workspace_provisioning.dart';
 import 'workspace_registration.dart';
@@ -99,6 +105,17 @@ class CreateRepositorySheet extends ConsumerStatefulWidget {
   /// sheet pops on success. Overridable so tests don't wait it out.
   @visibleForTesting
   static Duration successPopDelay = const Duration(milliseconds: 600);
+
+  /// The sandbox-grant registry a saved local create acquires through before
+  /// opening its tab. Overridable so a test can count acquires and releases;
+  /// the real one is process-wide and not injectable (MADR 0036 plan, P11).
+  static ScopedAccess scopedAccess = ScopedAccess.instance;
+
+  /// Shown when a create that would open a tab is refused at the tab cap
+  /// (MADR 0036, 7A). One string, used by the Review step and the error slot.
+  static String get capMessage =>
+      'All ${TabsController.maxTabs} tabs are open — close one to '
+      'create a repository.';
 
   @override
   ConsumerState<CreateRepositorySheet> createState() =>
@@ -185,7 +202,7 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
           'Choose where the repository will live: on this Mac, or on one of '
           'your saved SSH hosts. Picking a host connects to it on demand — '
           'the repository stays on the host, nothing is copied to this Mac.',
-      applicable: () => widget.landing,
+      applicable: () => true,
       valid: () => !provisioning,
       body: _destinationSection,
     ),
@@ -339,6 +356,12 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
       _requestClose();
       return true;
     });
+    if (!widget.landing) {
+      // The wizard opens on the destination the user is in (MADR 0036, 2A).
+      // The picker never sets this in connected mode, so it is seeded here.
+      final conn = ref.read(connectionProvider);
+      _destConnectionId = conn.isLocal ? null : conn.connectionId;
+    }
     _recomputeTarget();
     _applyIdentityPrefill(ref.read(appSettingsProvider));
   }
@@ -367,7 +390,7 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
     // A barrier-dismiss / route teardown skips _requestClose — hang up any
     // still-provisioned session instead of leaking it (0009 M29; same
     // fire-and-forget pattern as AddExistingRepoSheet's dispose).
-    resetProvisioning();
+    unawaited(_abandonProvisionTab());
     _unregisterEscape?.call();
     _name.dispose();
     _namespace.dispose();
@@ -386,22 +409,21 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
 
   void _recomputeTarget() {
     final conn = ref.read(connectionProvider);
-    final WorkspaceTarget target;
-    if (!widget.landing) {
-      target = conn.isLocal
-          ? WorkspaceTarget.localMac
-          : WorkspaceTarget.sshActive;
-      if (target == WorkspaceTarget.sshActive &&
-          _parent.text.isEmpty &&
-          conn.repoPath != null) {
-        _parent.text = dirname(conn.repoPath!);
-      }
-    } else {
-      target = _destConnectionId == null
-          ? WorkspaceTarget.localMac
-          : WorkspaceTarget.sshProvision;
+    // One rule for both variants (MADR 0036, 3B): This Mac, or a saved host
+    // dialled in its own tab. `sshActive` is no longer produced here — every
+    // tab is its own session, so creating on the host you are already on
+    // costs the same single dial as creating on any other host.
+    _target = _destConnectionId == null
+        ? WorkspaceTarget.localMac
+        : WorkspaceTarget.sshProvision;
+    // Prefill the parent from the current session only when the destination
+    // IS the current session; another host's layout is not known here.
+    if (_target == WorkspaceTarget.sshProvision &&
+        _destConnectionId == conn.connectionId &&
+        _parent.text.isEmpty &&
+        conn.repoPath != null) {
+      _parent.text = dirname(conn.repoPath!);
     }
-    _target = target;
   }
 
   bool get _isLocalTarget => _target == WorkspaceTarget.localMac;
@@ -428,8 +450,9 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
       _remote == CreateRemoteMode.gitlab ? 'gitlab.com' : 'github.com';
 
   Future<void> _onDestChanged(String? connectionId) async {
-    // Switching destination abandons any in-flight provisioning.
-    await resetProvisioning();
+    // Switching destination abandons any in-flight provisioning, and the tab
+    // it was dialled in.
+    await _abandonProvisionTab();
     // The hang-up above is a real network round trip once a session has been
     // adopted, and the sheet can be dismissed inside that window (MADR 0034
     // F4) — so `mounted` is re-checked on THIS side of the await, not only
@@ -440,19 +463,30 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
       _error = null;
       _recomputeTarget();
     });
-    if (_target == WorkspaceTarget.sshProvision) {
-      await ensureProvisioned();
-    }
+    // No dial here (MADR 0036, 6B): the host is dialled — in its own tab — at
+    // the first commitment to it, Browse… or Create.
   }
 
   bool get _canSubmit {
     if (_submitting || _finished || _completedWarning != null) return false;
+    if (_refusedAtTabCap) return false;
     return _activeSteps.every((s) => s.valid());
   }
 
-  CommandExecutor get _executor => _isLocalTarget
-      ? ref.read(localExecutorProvider)
-      : ref.read(activeExecutorProvider);
+  /// Whether this create ends by opening a tab (MADR 0036, 3B). The one
+  /// exception is an unsaved local create, which has no bookmark to reopen
+  /// from and so opens in place, as it always did (decision 5B).
+  bool get _opensNewTab => !_isLocalTarget || _saveLocal;
+
+  /// A create that opens a tab cannot run at the cap: `openOrFocus` would
+  /// silently never run `connect` (`tabs_controller.dart:289-292`), and for a
+  /// host with no session there is no current-tab fallback that does not
+  /// destroy the workspace the user is in. Refuse up front, and say why
+  /// (decision 7A).
+  bool get _refusedAtTabCap =>
+      _opensNewTab &&
+      _provisionTab == null &&
+      !(TabsController.current?.canOpenTab ?? true);
 
   Future<void> _submit() async {
     if (_submitting || !_canSubmit) return;
@@ -460,15 +494,33 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
       _submitting = true;
       _error = null;
     });
+    // Captured ONCE. Sheets live above the root Navigator inside the ACTIVE
+    // tab's scope (tabs_host.dart), so `ref` follows whichever tab is active —
+    // the tab opened below, or one the user clicks mid-create, would move it.
+    // A local create keeps reading from the tab it started in; an SSH create
+    // from the tab it dialled (MADR 0036, 1C).
+    final own = ProviderScope.containerOf(context, listen: false);
+    RepoTab? tab;
     try {
-      if (!await ensureProvisioned()) return;
       if (_isLocalTarget) {
         // Outside a local session (landing → This Mac) the local executor has
         // never been environment-probed; without this, gh/glab in a Homebrew
         // bin dir are invisible to the GUI app's inherited PATH.
-        await ref.read(localEnvironmentProvider).ensure();
+        await own.read(localEnvironmentProvider).ensure();
+        if (!mounted) return;
+      } else {
+        if (!await _ensureProvisionTab()) {
+          setState(() => _error = CreateRepositorySheet.capMessage);
+          return;
+        }
+        tab = _provisionTab;
+        if (!await ensureProvisioned()) {
+          await _abandonProvisionTab();
+          return;
+        }
         if (!mounted) return;
       }
+      final runIn = tab?.container ?? own;
 
       final resolved = await _resolveForgeHost();
       if (!mounted) return;
@@ -479,19 +531,23 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
       final host = resolved.host;
 
       final outcome = await runCreateRepo(
-        executor: _executor,
-        log: _OutputLogSink(ref.read(outputLogProvider.notifier)),
+        executor: _isLocalTarget
+            ? own.read(localExecutorProvider)
+            : runIn.read(activeExecutorProvider),
+        log: _OutputLogSink(runIn.read(outputLogProvider.notifier)),
         request: _request(host),
         deps: CreateRepoDeps(
-          ensureForgeLogin: () => ref
+          ensureForgeLogin: () => runIn
               .read(connectionProvider.notifier)
               .ensureForgeHostLogin(_forge, host),
           isActive: () => mounted,
         ),
       );
-      if (!mounted || outcome.aborted) return;
-      if (outcome.error != null) {
-        setState(() => _error = outcome.error);
+      if (!mounted) return;
+      if (outcome.aborted || outcome.error != null) {
+        if (outcome.error != null) setState(() => _error = outcome.error);
+        // Nothing to open: a tab this sheet dialled is closed again.
+        await _abandonProvisionTab();
         return;
       }
       // The repository exists — remember the namespace it went into, so the
@@ -506,10 +562,10 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
       await _rememberNamespace(host, outcome);
       if (!mounted) return;
 
-      // --- Register + activate (shared matrix) ------------------------------
-      final registered = await _register(outcome.dest);
+      // --- Open the result in its own tab (MADR 0036, 3B) -------------------
+      final opened = await _openResult(outcome.dest, own: own, tab: tab);
       if (!mounted) return;
-      if (!registered) {
+      if (!opened) {
         // Created on disk/forge but never became the live workspace — the
         // green Complete state would be a lie (0009 H19). Provisioning (if
         // any) stays alive for a retry.
@@ -518,7 +574,10 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
         });
         return;
       }
-      provisionToken = null; // finalized (or not provisioning) — don't abort
+      // The dialled tab is the workspace now: nothing left to abort or close.
+      provisionToken = null;
+      _provisionTab = null;
+      provisionTarget = null;
       final warning = outcome.warningText;
       if (warning != null) {
         setState(() => _completedWarning = warning);
@@ -595,17 +654,123 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
     authorEmail: _authorEmailText,
   );
 
-  Future<bool> _register(String dest) => registerAndActivate(
-    ref,
-    target: _target,
-    dest: dest,
-    localLabel: _localLabel.text.trim(),
-    saveLocal: _saveLocal,
-    remoteLabel: _remoteLabel.text.trim(),
-    fsmonitor: _fsmonitor,
-    connection: () => connectionById(_destConnectionId),
-    provisionToken: provisionToken,
-  );
+  /// The tab an SSH create dials in (MADR 0036, 1C/6B). Opened at the first
+  /// commitment to the host — Browse… or Create, whichever comes first
+  /// (Deviation 2) — and owned by this sheet until the create succeeds, when
+  /// it becomes the workspace, or the sheet is abandoned, when it is closed.
+  RepoTab? _provisionTab;
+
+  /// The tab the wizard was opened from, to return to after an abandon.
+  String? _originTabId;
+
+  /// Makes sure there is a container to dial in. Returns false only when
+  /// refused at the tab cap. Without a tab host at all (no `TabsController`)
+  /// the sheet's own container is used — today's landing behaviour, which is
+  /// also what `newTab()` yields on the landing page: the active tab is blank
+  /// and is reused rather than duplicated.
+  Future<bool> _ensureProvisionTab() async {
+    if (_provisionTab != null) return true;
+    final tabs = TabsController.current;
+    if (tabs == null) return true;
+    if (!tabs.canOpenTab) return false;
+    _originTabId = tabs.activeId;
+    final tab = tabs.newTab();
+    _provisionTab = tab;
+    provisionTarget = tab.container;
+    return true;
+  }
+
+  /// Hangs up whatever was dialled and closes the tab this sheet opened. A
+  /// blank tab it merely reused (the landing page) is left as it was. Safe
+  /// from `dispose()`: nothing here touches `ref`.
+  Future<void> _abandonProvisionTab() async {
+    final tab = _provisionTab;
+    _provisionTab = null;
+    provisionTarget = null;
+    await resetProvisioning();
+    if (tab == null) return;
+    final tabs = TabsController.current;
+    if (tabs == null || tab.id == _originTabId) return;
+    await tabs.close(tab.id);
+    final origin = _originTabId;
+    if (origin != null) tabs.activate(origin);
+  }
+
+  /// Where the created repository opens (MADR 0036, 3B): its own tab —
+  /// except an unsaved local create, which has no bookmark to reopen from and
+  /// opens in place as it always did (5B). [own] is the container the create
+  /// ran in; [tab] the one an SSH create dialled.
+  Future<bool> _openResult(
+    String dest, {
+    required ProviderContainer own,
+    required RepoTab? tab,
+  }) async {
+    final tabs = TabsController.current;
+    if (_isLocalTarget) {
+      final label = _localLabel.text.trim();
+      if (!_saveLocal) {
+        return registerAndActivateLocal(
+          ref,
+          dest: dest,
+          label: label,
+          save: false,
+        );
+      }
+      final saved = await saveLocalRepo(
+        ref,
+        id: DateTime.now().microsecondsSinceEpoch.toString(),
+        dest: dest,
+        label: label,
+      );
+      if (saved == null) return false;
+      if (tabs == null) {
+        // No tab host: open in place, as the landing page does.
+        await own
+            .read(connectionProvider.notifier)
+            .connectLocal(
+              dest,
+              label: label.isEmpty ? null : label,
+              id: saved.id,
+            );
+        return own.read(connectionProvider).isConnected;
+      }
+      final access = CreateRepositorySheet.scopedAccess;
+      var path = dest;
+      if (saved.bookmarkData.isNotEmpty) {
+        path = await access.acquire(saved.bookmarkData) ?? dest;
+      }
+      final opened = await openLocalRepoInTab(
+        tabs: tabs,
+        repo: saved,
+        grants: LocalOpenGrants(path),
+        scopedAccess: access,
+      );
+      return opened != null;
+    }
+    final conn = await connectionById(_destConnectionId);
+    final token = provisionToken;
+    if (conn == null || token == null) return false;
+    if (tab == null) {
+      // No tab host: the sheet's own container dialled (landing behaviour).
+      return own
+          .read(connectionProvider.notifier)
+          .finalizeProvisioned(
+            token: token,
+            conn: conn,
+            repoPath: dest,
+            enableFsmonitor: _fsmonitor,
+            label: _remoteLabel.text.trim(),
+          );
+    }
+    return finalizeProvisionedInTab(
+      tab: tab,
+      conn: conn,
+      token: token,
+      dest: dest,
+      fsmonitor: _fsmonitor,
+      label: _remoteLabel.text.trim(),
+    );
+  }
 
   Future<void> _requestClose() async {
     // Escape / title-X while `git init` / forge publish is running must not
@@ -646,6 +811,10 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
   }
 
   Future<void> _browseRemoteFolder() async {
+    if (!await _ensureProvisionTab()) {
+      setState(() => _error = CreateRepositorySheet.capMessage);
+      return;
+    }
     if (!await ensureProvisioned()) return;
     if (!mounted) return;
     final picked = await browseRemoteDirectory(
@@ -661,6 +830,10 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
   }
 
   Future<void> _browseRemote() async {
+    if (!await _ensureProvisionTab()) {
+      setState(() => _error = CreateRepositorySheet.capMessage);
+      return;
+    }
     if (!await ensureProvisioned()) return;
     if (!mounted) return;
     final picked = await browseRemoteDirectory(
@@ -780,6 +953,9 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
       provisioning: provisioning,
       localHint: 'The repository is created on this Mac\'s own filesystem.',
       remoteHint: 'The repository is created on the selected host over SSH.',
+      selectedLabel: ref.watch(
+        connectionProvider.select((c) => c.connectionLabel),
+      ),
     );
   }
 
@@ -1288,7 +1464,14 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        if (_refusedAtTabCap)
+          WizardReviewRow('Cannot create', CreateRepositorySheet.capMessage),
         WizardReviewRow('Destination', destText),
+        if (_isLocalTarget && !_saveLocal)
+          const WizardReviewRow(
+            'Tab',
+            'Opens in this tab (not saved to Local Repositories)',
+          ),
         WizardReviewRow(
           existing ? 'Existing folder' : 'New folder',
           sourceText,

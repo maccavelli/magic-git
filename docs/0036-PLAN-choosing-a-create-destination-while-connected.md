@@ -613,6 +613,117 @@ expect=9316 -> 9340   testWidgets=1041 -> 1049
 git diff --cached --stat -- lib/  (empty)
 ```
 
+> **Deviation 2 (2026-09-08) — Browse… needs the host before submit.**
+> Decision 6B dials at submit, but the Source step's Browse… buttons call
+> `ensureProvisioned()` first (`create_repo_sheet.dart:649`, `:664`) so the
+> remote directory browser has a session. With `provisionTarget` unset before
+> submit that dial would land in the sheet's own container — claiming the
+> current tab, the hazard 1C exists to prevent — and every SSH destination now
+> takes the provisioning path, so it bites the current-session case too.
+> **Decision: option 1** — open the tab at the first commitment to the host,
+> Browse… or Create, whichever comes first (`_ensureProvisionTab()`), owned by
+> the sheet until submit succeeds or the sheet is abandoned; cancel, dismiss
+> and failure close it. Rejected: disabling Browse… for SSH destinations
+> (worse than today's landing page); dialling on selection (reintroduces the
+> before-commitment tab 6B removed). **Also settled while drafting:** no
+> `TabsController.adopt` is needed — `_create` (`tabs_controller.dart:376-400`)
+> syncs each tab's identity from its own `connectionProvider`, so a blank tab
+> takes its name from `finalizeProvisioned`. **Scope added to Phase 4:**
+> `dispose()` closes the provision tab; both Browse methods route through it.
+
+> **Deviation 3 (2026-09-08) — showing the Destination step shifts every
+> connected test by one.** The plan said Phase 3 edits one pre-existing test.
+> Applying it failed **36 of 37** in `create_repo_sheet_test.dart` and ~10 in
+> the namespace files — including tests that never create: Continue was
+> enabled where a test expected it disabled, because the wizard now opens on
+> the (always-valid) Destination step where the test believed it was on
+> Source. Every `nextStep` sequence (94 + 14 + 5 calls) assumed
+> `pumpConnected` landed on Source. Behind it: every connected SSH create now
+> provisions, and the connected `StubConnection` had no provisioning methods;
+> 21 assertions read `repoPathsSet`, which only the retired `sshActive` path
+> wrote. A plan error — decision 2A requires the step to appear first — not a
+> code bug. **Decision: option 1** — the harness absorbs the step
+> (`pumpConnected(pastDestination: true)` advances off it; Phase 3's own tests
+> pass `false`), `StubConnection` gains the recording provisioning trio and
+> its `finalizeProvisioned` appends to `repoPathsSet` (that field has always
+> meant "the path this session ended on"), and `RecordingTabs` gives every
+> spawned tab a stub connection and a fake executor so a create routed there
+> is recorded, never run. Exactly one existing assertion changes on purpose:
+> `store.updated…allRepoPaths` (the real `finalizeProvisioned` persists now,
+> not the sheet). Rejected: moving Destination before Review (two step orders
+> — the parity drift 0033 exists to prevent); a disclosure hiding the step
+> (contradicts 2A). **Scope added to Phase 3:** the harness, and the Phase 1
+> tests and `:1339`/`:1376`, which pinned dial-on-selection (6A) and invert
+> under 6B with the reason in the test.
+
+### Phases 3+4 — 2026-09-08 — *complete* (one commit, as the plan requires)
+
+**Phase 3, as planned:** the gate is gone (`applicable: () => true`), one
+target rule (`localMac` or `sshProvision` — `sshActive` no longer leaves this
+sheet), the wizard opens on the current session, the cap is refused up front
+with `CreateRepositorySheet.capMessage`, and an unsaved local create says
+*"Opens in this tab"* on Review.
+
+**Phase 4, as planned, with two refinements:**
+
+* `workspace_open_in_tab.dart` is three small functions, not one with a
+  `switch` — `openSshRepoInTab`, `openLocalRepoInTab` (with the switcher's
+  grant-release guard, now its only home), `finalizeProvisionedInTab` — one
+  per source they were moved from. Same scope, clearer provenance.
+* `registerAndActivateLocal` split into `saveLocalRepo` (bookmark + store)
+  plus the connect, so a create can bookmark without connecting here. Clone
+  and `AddExistingRepoSheet` keep the composed call.
+
+**One production bug in my own Phase 3 edit, caught by 36 failing tests.**
+Seeding `_destConnectionId` from the live session put a value in the
+Destination popup before `savedConnectionsProvider` had loaded, and
+`MacosPopupButton` asserts its value is among its items. The landing page
+never hit this (its value starts null). `WorkspaceDestinationSection` now
+carries a fallback row from the current session's label until the list
+arrives — which also covers a connected session whose profile is no longer
+in the store.
+
+**Three deviations, each recorded in place above:** the local pins needed
+`file_selector_platform_interface` (D1); Browse… needs the host before submit,
+so the tab opens at the first commitment (D2); and showing the step shifted
+every connected test by one (D3) — absorbed by `pumpConnected(pastDestination:
+true)`, with the two pre-existing dial-on-selection tests (`:1339`, F4) and
+the two Phase 2 pins inverted **with the decision named in each**.
+
+**Tests that only looked like coverage, and what the run taught:**
+
+* *Two dropdown tests broke without the dropdown changing.* The wizard header
+  grew **12 px** (five breadcrumb chips; body viewport 263→275 top, same
+  bottom), and `scrollUntilVisible` drags from a widget's *center* — which
+  for a dropdown hanging below the body's viewport slid just past the clip,
+  where a pointer hits nothing. Bisected against HEAD's `lib/` to be sure:
+  drags and wheel ticks scroll the list there and not here, at the same
+  center. The tests now drag from a point inside the visible rows, with a
+  fresh finder per step. The dropdown is unchanged.
+* *The bisect itself was wrong the first time* — it ran the new harness
+  against old `lib/`, where `pastDestination` skipped Source instead. Nine
+  failures that meant nothing. Re-run with the default flipped.
+* *`find.byTooltip` matches Material's Tooltip*; this app's is `MacosTooltip`,
+  and two carried "Close" once the remote browser was up.
+* *A closed tab's stub is gone with its container* — `RecordingTabs.spawned`
+  keeps them.
+
+**Breadcrumb, measured.** Five chips no longer fit the sheet's 376 px content
+width: `Destination › Source › Remote › Details` fill the first row and
+**Review wraps alone onto a second row** 12 px below (`Wrap(runSpacing: 2)`,
+`wizard.dart:65`). Visible in the app; left as-is for the maintainer to judge
+— shorter labels or tighter spacing would un-wrap it.
+
+**Verification:**
+
+```
+flutter analyze (whole project)   No issues found!
+dart format                       0 changed
+affected files                    +124: All tests passed!
+flutter test (full suite)         03:21 +3725 ~3: All tests passed!
+tool/mutate.py (18 mutations)     18 killed, 0 survived, 0 did not apply (17 in one run; the 18th repointed after Phase 4 renamed its target, then killed)
+```
+
 ## Rollout and Rollback
 
 **Rollout.** Six commits: Phase 1, Phase 2, **Phases 3+4 together**, Phase 5,

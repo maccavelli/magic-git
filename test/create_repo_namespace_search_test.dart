@@ -56,6 +56,27 @@ List<String> _rowOrder(WidgetTester tester) => tester
     .whereType<String>()
     .toList();
 
+/// Scrolls the dropdown until [label] is a built row, dragging from a point
+/// 20 px below the list's top edge.
+///
+/// Not `scrollUntilVisible`: that drags from the widget's *center*, and the
+/// dropdown hangs below the wizard body's viewport, so its center can sit in
+/// clipped space where a pointer hits nothing — which is exactly what happened
+/// when the wizard gained a step (MADR 0036) and its header grew 12 px. The
+/// top rows are always inside the viewport while the field is. A fresh finder
+/// per iteration also sidesteps flutter_test's finder caching.
+Future<void> _scrollDropdownTo(WidgetTester tester, String label) async {
+  Finder row() =>
+      find.descendant(of: find.byType(ListView), matching: find.text(label));
+  for (var i = 0; i < 20 && row().evaluate().isEmpty; i++) {
+    final from =
+        tester.getTopLeft(find.byType(ListView)) + const Offset(100, 20);
+    await tester.dragFrom(from, const Offset(0, -60));
+    await tester.pump();
+  }
+  await tester.pumpAndSettle();
+}
+
 /// The dropdown's section headers, in order.
 List<String> _sections(WidgetTester tester) => tester
     .widgetList<Text>(
@@ -186,18 +207,7 @@ void main() {
         many.take(visible.length),
         reason: 'a prefix of the list, in order — the count is row height',
       );
-      await tester.scrollUntilVisible(
-        find.descendant(
-          of: find.byType(ListView),
-          matching: find.text('group-23'),
-        ),
-        60,
-        scrollable: find.descendant(
-          of: find.byType(ListView),
-          matching: find.byType(Scrollable),
-        ),
-      );
-      await tester.pumpAndSettle();
+      await _scrollDropdownTo(tester, 'group-23');
       expect(_row('group-23'), findsOneWidget, reason: 'the tail is reachable');
     });
 
@@ -263,18 +273,7 @@ void main() {
 
       await tester.tap(_namespaceField());
       await tester.pumpAndSettle();
-      await tester.scrollUntilVisible(
-        find.descendant(
-          of: find.byType(ListView),
-          matching: find.text('recent-9'),
-        ),
-        60,
-        scrollable: find.descendant(
-          of: find.byType(ListView),
-          matching: find.byType(Scrollable),
-        ),
-      );
-      await tester.pumpAndSettle();
+      await _scrollDropdownTo(tester, 'recent-9');
 
       expect(_row('recent-9'), findsOneWidget);
     });

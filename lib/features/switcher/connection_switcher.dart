@@ -2,7 +2,6 @@ import 'package:flutter/cupertino.dart' hide ConnectionState;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
 
-import '../../core/local/scoped_access.dart';
 import '../../core/output/output_log.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/storage/saved_connection.dart';
@@ -24,6 +23,7 @@ import '../tabs/saved_workspaces_sheet.dart';
 import '../tabs/tabs_controller.dart';
 import '../workspace/clone_sheet.dart';
 import '../workspace/create_repo_sheet.dart';
+import '../workspace/workspace_open_in_tab.dart';
 import 'edit_entry_sheets.dart';
 
 /// Bottom-of-sidebar control: a single Connections button that opens the
@@ -1137,36 +1137,10 @@ class _ConnectionsPanelState extends ConsumerState<ConnectionsPanel> {
           );
       return;
     }
-    var connected = false;
-    tabs.openOrFocus(
-      connectionId: repo.id,
-      repoPath: path,
-      savedKind: SavedRepositoryKind.local,
-      savedReferencePath: repo.repoPath,
-      connect: (container) {
-        connected = true;
-        container
-            .read(connectionProvider.notifier)
-            .connectLocal(
-              path,
-              label: label,
-              id: repo.id,
-              mainRepoPath: grants.mainRepoPath,
-              gitDir: repo.isScoped ? repo.gitDir : null,
-            );
-      },
-    );
-    if (!connected) {
-      // openOrFocus did NOT start a new session: it either focused a tab a
-      // racing double-open just created (its `connect` runs there, not here) or
-      // declined at the tab cap. Either way the access acquired above by
-      // resolveSavedLocalRepo isn't backing a session, so release it —
-      // otherwise the native security-scoped grant leaks for the app's lifetime.
-      // A linked worktree acquired TWO grants; both leak if only one is freed.
-      await ScopedAccess.instance.release(path);
-      final main = grants.mainRepoPath;
-      if (main != null) await ScopedAccess.instance.release(main);
-    }
+    // One implementation of "open a saved local repo in its own tab, and
+    // release the grants if no session started" — shared with the create
+    // sheet (MADR 0036), which is where the guard's rationale now lives.
+    await openLocalRepoInTab(tabs: tabs, repo: repo, grants: grants);
   }
 
   Future<void> _deleteLocalRepo(

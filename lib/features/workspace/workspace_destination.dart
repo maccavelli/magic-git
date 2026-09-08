@@ -32,6 +32,13 @@ class WorkspaceDestinationSection extends ConsumerWidget {
   final String localHint;
   final String remoteHint;
 
+  /// The label to show for [selectedConnectionId] while the saved-connection
+  /// list has not loaded, or if that id is not in it. A connected sheet seeds
+  /// its selection from the live session (MADR 0036, 2A) **before** the async
+  /// list arrives, and `MacosPopupButton` asserts its value is among its
+  /// items — so the seeded row must exist from the first frame.
+  final String? selectedLabel;
+
   const WorkspaceDestinationSection({
     super.key,
     required this.selectedConnectionId,
@@ -39,12 +46,16 @@ class WorkspaceDestinationSection extends ConsumerWidget {
     required this.provisioning,
     required this.localHint,
     required this.remoteHint,
+    this.selectedLabel,
   });
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final typography = MacosTheme.of(context).typography;
     final conns = ref.watch(savedConnectionsProvider).value ?? const [];
+    final selected = selectedConnectionId;
+    final selectedKnown =
+        selected == null || conns.any((c) => c.id == selected);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -62,6 +73,11 @@ class WorkspaceDestinationSection extends ConsumerWidget {
               MacosPopupMenuItem<String?>(
                 value: c.id,
                 child: Text(c.displayName),
+              ),
+            if (!selectedKnown)
+              MacosPopupMenuItem<String?>(
+                value: selected,
+                child: Text(selectedLabel ?? 'Saved connection'),
               ),
           ],
         ),
