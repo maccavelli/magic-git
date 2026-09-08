@@ -1,5 +1,5 @@
 ---
-status: "in-progress"
+status: "complete"
 date: 2026-09-08
 associated-madr: "0036-MADR-choosing-a-create-destination-while-connected.md"
 ---
@@ -723,6 +723,55 @@ affected files                    +124: All tests passed!
 flutter test (full suite)         03:21 +3725 ~3: All tests passed!
 tool/mutate.py (18 mutations)     18 killed, 0 survived, 0 did not apply (17 in one run; the 18th repointed after Phase 4 renamed its target, then killed)
 ```
+
+### Phase 5 — 2026-09-08 — *complete*
+
+**Clone follows create, with the one difference the MADR named.** The gate,
+the target rule, the seeded default, the cap gate, the Review copy, the
+tab lifecycle (`_ensureProvisionTab` / `_abandonProvisionTab`, Browse… as the
+first commitment, Cancel abandoning a tab kept for a retry) and `_openResult`
+are the create sheet's, clone-shaped. The difference: **the clone job runs in
+the target container**, so progress, cancel and reset go through `_jobScope`
+— the dialled tab's container when routed, the sheet's own otherwise — and a
+`ProviderSubscription` on the target's `cloneJobProvider` drives `setState`
+for the progress bar. A failed clone keeps its tab, as it always kept its
+provisioning, for a retry without re-handshaking; cancelling the sheet
+abandons both.
+
+**The connected clone's own stub** gained `finalizeProvisioned` (recording,
+appending to `repoPathsSet`), `connectLocal` and the same `pastDestination`
+advance as the create harness; `RecordingTabs` gained `tabExecutor`, because
+the clone tests' streaming fake is the executor a routed job must run on.
+
+**Pins inverted, with the decision in each:** the SSH clone now provisions in
+its own tab; the sheet shows the Destination step; the progress bar counts
+four steps; and the pre-existing H4 (UI half) and F4 tests adopt their session
+through Browse… rather than on selection (6B). **Deferred in Phase 2 and still
+not written:** the clone *local* pin — the streaming local double it needs was
+judged not worth building for a pin Phase 5 inverts; the local routing is the
+create sheet's code, tested there.
+
+**New:** *a clone refuses at the tab cap and runs nothing*; *cancelling a
+routed clone reaches the tab running the job* — the assertion that
+distinguishes Phase 5 from a copy of Phase 4.
+
+**Verification:**
+
+```
+flutter analyze (whole project)   No issues found!
+dart format                       0 changed
+flutter test (full suite)         03:25 +3727 ~3: All tests passed!
+tool/mutate.py (24 mutations)     24 killed, 0 survived, 0 did not apply
+```
+
+### Phase 6 — 2026-09-08 — *complete*
+
+`tool/mutations/0036-destination.json` carries all 24 mutations (3 + 15 + 6)
+and is run from the committed catalogue above. `docs/README.md` gained the
+0036 row. MADR `verified:` set. **Acceptance criteria:** 1–11 met — 3 (no
+prior connection) by the Phase 1 landing test and the Phase 4 routed create;
+10 (the switcher's local-open tests unedited after its block moved) by
+`connection_switcher_test.dart` passing throughout.
 
 ## Rollout and Rollback
 
