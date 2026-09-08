@@ -1424,6 +1424,103 @@ void main() {
       );
     },
   );
+
+  // -------------------------------------------------------------------------
+  // MADR 0036 Phase 1 — a create on a chosen saved host, end to end.
+  //
+  // Before this group, the only landing-mode tests dialled (1339) or guarded
+  // a mid-hang-up dispose (1376); none pressed Create. The `sshProvision`
+  // branch of `registerAndActivate` had never been driven by a test.
+  // -------------------------------------------------------------------------
+  group('landing: a create on a chosen saved host (MADR 0036 Phase 1)', () {
+    testWidgets(
+      'creates on the chosen host and finalizes the provisioned session',
+      (tester) async {
+        final (stub, exec, _) = await pumpLanding(tester);
+        await chooseDestination(tester, 'Prod');
+        expect(stub.dialed.single.id, 'c1', reason: 'dials on selection');
+
+        await nextStep(tester); // Destination → Source
+        await tester.enterText(parentField(), '/srv/git');
+        await tester.pumpAndSettle();
+        await nextStep(tester); // Source → Remote (None)
+        await nextStep(tester); // Remote → Details
+        await tester.enterText(nameField(), 'new-proj');
+        await tester.pumpAndSettle();
+        await nextStep(tester); // Details → Review
+
+        exec.results.add(okResult('absent')); // probe
+        await tester.tap(createButton());
+        await tester.pumpAndSettle();
+
+        // `exec.calls` is a List<List<String>>: `contains([...])` would compare
+        // the inner lists by identity, so assert the last call by value as the
+        // connected test does — and the probe's path first, which is what
+        // proves the parent came from the field, not from This Mac.
+        expect(
+          exec.calls.first.join(' '),
+          contains("p='/srv/git/new-proj'"),
+          reason: 'the existence probe targets the chosen host path',
+        );
+        expect(exec.calls.last, [
+          'git',
+          'init',
+          '-b',
+          'main',
+          '--',
+          'new-proj',
+        ]);
+        expect(stub.finalized.single.repoPath, '/srv/git/new-proj');
+        expect(stub.finalized.single.token, 7);
+        expect(
+          find.byType(CreateRepositorySheet),
+          findsNothing,
+          reason: 'popped',
+        );
+      },
+    );
+
+    testWidgets(
+      'a failed dial keeps the sheet open, shows the error, and runs nothing',
+      (tester) async {
+        final (stub, exec, _) = await pumpLanding(tester, dialResult: null);
+        await chooseDestination(tester, 'Prod');
+
+        expect(find.text('Could not connect to host.'), findsOneWidget);
+        expect(find.byType(CreateRepositorySheet), findsOneWidget);
+
+        // "Runs nothing" has to survive the user pressing on regardless: the
+        // steps stay navigable after a failed dial, so drive all the way to
+        // Create. A create that ran here would be a create on no host.
+        await nextStep(tester); // Destination → Source
+        await tester.enterText(parentField(), '/srv/git');
+        await tester.pumpAndSettle();
+        await nextStep(tester); // Source → Remote
+        await nextStep(tester); // Remote → Details
+        await tester.enterText(nameField(), 'new-proj');
+        await tester.pumpAndSettle();
+        await nextStep(tester); // Details → Review
+        await tester.tap(createButton());
+        await tester.pumpAndSettle();
+
+        expect(stub.dialed.length, 2, reason: 'submit re-dials, and fails');
+        expect(exec.calls, isEmpty, reason: 'nothing ran on any executor');
+        expect(stub.finalized, isEmpty);
+        expect(find.byType(CreateRepositorySheet), findsOneWidget);
+      },
+    );
+
+    testWidgets('the parent path comes from the chosen host, not This Mac', (
+      tester,
+    ) async {
+      await pumpLanding(tester);
+      await chooseDestination(tester, 'Prod');
+      await nextStep(tester); // Destination → Source
+
+      expect(parentField(), findsOneWidget);
+      expect(find.text('Parent folder on this Mac'), findsNothing);
+    });
+  });
 }
 
 /// Parks `beginProvisioning` so a test can observe the in-flight dial.

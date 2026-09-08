@@ -279,3 +279,99 @@ Future<void> nextStep(WidgetTester tester) async {
   await tester.tap(continueButton());
   await tester.pumpAndSettle();
 }
+
+// ---------------------------------------------------------------------------
+// MADR 0036 Phase 1 — the landing twin of [pumpConnected].
+// ---------------------------------------------------------------------------
+
+/// A connection controller for the landing page: no session until a saved
+/// host is chosen, then a dial that resolves to [dialResult] (a token, or
+/// null for a failed dial). Records what the sheet asked of it so a test can
+/// assert the provisioned create really ran on the chosen host and was
+/// finalized there — the path MADR 0036 found no test had ever driven.
+class ProvisionStub extends ConnectionController {
+  ProvisionStub({this.dialResult = 7});
+
+  final int? dialResult;
+  final List<SavedConnection> dialed = [];
+  final List<({int token, String repoPath, String label})> finalized = [];
+  int aborts = 0;
+
+  @override
+  ConnectionState build() => const ConnectionState();
+
+  @override
+  Future<int?> beginProvisioning(SavedConnection conn) async {
+    dialed.add(conn);
+    return dialResult;
+  }
+
+  @override
+  Future<bool> finalizeProvisioned({
+    required int token,
+    required SavedConnection conn,
+    required String repoPath,
+    bool enableFsmonitor = false,
+    String label = '',
+    String gitDir = '',
+  }) async {
+    finalized.add((token: token, repoPath: repoPath, label: label));
+    return true;
+  }
+
+  @override
+  Future<void> abortProvisioning(int token) async {
+    aborts++;
+  }
+}
+
+/// Pumps `CreateRepositorySheet.landing()` — no session, a Destination step —
+/// with the same executor and store doubles as [pumpConnected], so the two
+/// helpers cannot drift apart.
+Future<(ProvisionStub, FakeCreateExecutor, FakeConnectionStore)> pumpLanding(
+  WidgetTester tester, {
+  List<SavedConnection> connections = const [testConn],
+  int? dialResult = 7,
+  List<Override> extraOverrides = const [],
+}) async {
+  SharedPreferences.setMockInitialValues({});
+  await tester.binding.setSurfaceSize(const Size(1200, 900));
+  final stub = ProvisionStub(dialResult: dialResult);
+  final exec = FakeCreateExecutor();
+  final store = FakeConnectionStore();
+  await tester.pumpWidget(
+    appProviderScope(
+      overrides: [
+        connectionProvider.overrideWith(() => stub),
+        activeExecutorProvider.overrideWithValue(exec),
+        connectionStoreProvider.overrideWithValue(store),
+        savedConnectionsProvider.overrideWith((ref) async => connections),
+        gitServiceProvider.overrideWithValue(GitService(FakeCreateExecutor())),
+        ...extraOverrides,
+      ],
+      child: const MacosApp(
+        debugShowCheckedModeBanner: false,
+        home: CreateRepositorySheet.landing(),
+      ),
+    ),
+  );
+  await tester.pumpAndSettle();
+  return (stub, exec, store);
+}
+
+/// The Destination step's popup (This Mac + every saved connection).
+Finder destinationPopup() => find.byType(MacosPopupButton<String?>);
+
+/// Chooses [displayName] in the Destination popup and settles the dial the
+/// selection triggers.
+Future<void> chooseDestination(WidgetTester tester, String displayName) async {
+  await tester.tap(destinationPopup());
+  await tester.pumpAndSettle();
+  await tester.tap(find.text(displayName).last);
+  await tester.pumpAndSettle();
+}
+
+/// The "Parent folder on the host" field an SSH destination shows.
+Finder parentField() => find.byWidgetPredicate(
+  (w) => w is MacosTextField && w.placeholder == '/srv/git',
+);

@@ -1,0 +1,23 @@
+[
+  {
+    "label": "phase1: registration's sshProvision branch always fails",
+    "file": "lib/features/workspace/workspace_registration.dart",
+    "find": "      if (conn == null || provisionToken == null) return false;",
+    "replace": "      if (conn == null || provisionToken == null || true) return false;",
+    "tests": ["test/create_repo_sheet_test.dart"]
+  },
+  {
+    "label": "phase1: a failed dial reports no error",
+    "file": "lib/features/workspace/workspace_provisioning.dart",
+    "find": "    if (token == null) {\n      onProvisioningError(\n        ref.read(connectionProvider).error ?? 'Could not connect to host.',\n      );\n    }",
+    "replace": "    // error reporting removed",
+    "tests": ["test/create_repo_sheet_test.dart"]
+  },
+  {
+    "label": "phase1: a failed dial is treated as provisioned",
+    "file": "lib/features/workspace/workspace_provisioning.dart",
+    "find": "    return token != null;",
+    "replace": "    return true;",
+    "tests": ["test/create_repo_sheet_test.dart"]
+  }
+]
