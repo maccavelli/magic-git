@@ -88,5 +88,77 @@
     "tests": [
       "test/namespace_open_recording_test.dart"
     ]
+  },
+  {
+    "label": "phase3: the SSH half dials a host with no live session",
+    "file": "lib/core/forge/namespace_backfill.dart",
+    "find": "    if (!state.isConnected || state.isLocal) continue;",
+    "replace": "    if (state.isLocal) continue;",
+    "tests": [
+      "test/namespace_backfill_test.dart"
+    ]
+  },
+  {
+    "label": "phase3: any connected tab answers for any connection",
+    "file": "lib/core/forge/namespace_backfill.dart",
+    "find": "    if (state.connectionId != recent.id) continue;",
+    "replace": "    if (false) continue;",
+    "tests": [
+      "test/namespace_backfill_test.dart"
+    ]
+  },
+  {
+    "label": "phase3: a held grant is not released when a later step throws",
+    "file": "lib/core/forge/namespace_backfill.dart",
+    "find": "    for (final path in held) {\n      await grants.release(path);\n    }",
+    "replace": "    for (final path in held.skip(held.length)) {\n      await grants.release(path);\n    }",
+    "tests": [
+      "test/namespace_backfill_test.dart"
+    ]
+  },
+  {
+    "label": "phase3: the linked worktree's main-repo grant is skipped",
+    "file": "lib/core/forge/namespace_backfill.dart",
+    "find": "    if (repo.mainRepoBookmarkData.isNotEmpty) {",
+    "replace": "    if (repo.mainRepoBookmarkData.isEmpty) {",
+    "tests": [
+      "test/namespace_backfill_test.dart"
+    ]
+  },
+  {
+    "label": "phase3: the scoped work tree's GIT_DIR is not registered",
+    "file": "lib/core/forge/namespace_backfill.dart",
+    "find": "    if (repo.gitDir.isNotEmpty) {",
+    "replace": "    if (repo.gitDir.isEmpty) {",
+    "tests": [
+      "test/namespace_backfill_test.dart"
+    ]
+  },
+  {
+    "label": "phase3: the scan is timed by when it ran, not by the open",
+    "file": "lib/core/forge/namespace_backfill.dart",
+    "find": "            at: recent.openedAt,",
+    "replace": "            at: DateTime.now(),",
+    "tests": [
+      "test/namespace_backfill_test.dart"
+    ]
+  },
+  {
+    "label": "phase3: one unreadable repo abandons the whole scan",
+    "file": "lib/core/forge/namespace_backfill.dart",
+    "find": "    } catch (_) {\n      // One repository that will not read is not a reason",
+    "replace": "    } catch (_) {\n      return;\n      // One repository that will not read is not a reason",
+    "tests": [
+      "test/namespace_backfill_test.dart"
+    ]
+  },
+  {
+    "label": "phase3: the local half is skipped entirely",
+    "file": "lib/core/forge/namespace_backfill.dart",
+    "find": "      final url = recent.isLocal\n          ? await _localOriginUrl(container, localById[recent.id], grants)",
+    "replace": "      final url = recent.isLocal\n          ? null",
+    "tests": [
+      "test/namespace_backfill_test.dart"
+    ]
   }
 ]

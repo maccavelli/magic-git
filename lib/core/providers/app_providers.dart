@@ -2269,6 +2269,32 @@ class ConnectionController extends Notifier<ConnectionState> {
     try {
       final url = await ref.read(gitServiceProvider).originUrl(repoPath);
       if (url == null || !ref.mounted) return;
+      await recordNamespaceFromOrigin(
+        url: url,
+        isLocal: isLocal,
+        connectionId: connectionId,
+        at: at,
+      );
+    } catch (_) {
+      // An open is never failed by the bookkeeping that follows it.
+    }
+  }
+
+  /// The half of [_recordOpenedNamespace] that runs once an origin URL is in
+  /// hand: forge, host, namespace, the creatable check, the write.
+  ///
+  /// Public because the backfill scan (`namespace_backfill.dart`, MADR 0037
+  /// Phase 3) reads origins from repositories this tab never opened, and must
+  /// apply **the same** decision-1 rule and reuse **the same** per-session
+  /// [_creatableByHost] memo. Two copies of this rule would drift, and would
+  /// cost a second creatable lookup per host.
+  Future<void> recordNamespaceFromOrigin({
+    required String url,
+    required bool isLocal,
+    required String? connectionId,
+    DateTime? at,
+  }) async {
+    try {
       final forge = forgeFromRemoteUrl(url);
       if (forge != Forge.github && forge != Forge.gitlab) return;
       final host = forgeHostFromRemoteUrl(url);

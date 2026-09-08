@@ -45,7 +45,7 @@ Read-only. Run all before Phase 1 and paste the output into the record.
 | --- | --- | --- |
 | 1 | `GitService.originUrl` — public, cached, scope-aware | `lib/core/git/git_service.dart`, `test/git_service_*_test.dart` (new group) |
 | 2 | Record the namespace at open (1C half) | `lib/core/providers/app_providers.dart`, `test/namespace_history_test.dart` or a new `test/namespace_open_recording_test.dart` |
-| 3 | The backfill scan (1D half) | new `lib/core/forge/namespace_backfill.dart`, new `test/namespace_backfill_test.dart` |
+| 3 | The backfill scan (1D half) | new `lib/core/forge/namespace_backfill.dart`, new `test/namespace_backfill_test.dart`, **+ `lib/core/providers/app_providers.dart`, `test/namespace_open_recording_test.dart` (deviation 1, 2026-09-08)** |
 | 4 | Run it when the create sheet opens (4B) | `lib/features/workspace/create_repo_steps/namespace_field.dart`, `test/create_repo_namespace_search_test.dart` |
 | 5 | Docs, catalogue, index | `docs/README.md`, `tool/mutations/0037-open-recency.json`, this plan |
 
@@ -168,7 +168,10 @@ New `lib/core/forge/namespace_backfill.dart`, one entry point:
 ///
 /// Idempotent by construction — `NamespaceHistory` de-duplicates and bounds —
 /// so it needs no "already backfilled" flag and self-heals a changed origin.
-Future<void> backfillNamespacesFromRecents(Ref ref, {ScopedAccess? access});
+Future<void> backfillNamespacesFromRecents(
+  ProviderContainer container, {  // was `Ref ref` — see deviation 2
+  ScopedAccess? access,
+});
 ```
 
 Steps per `RecentRepoRef`, over at most `_maxEntries` (30):
@@ -195,7 +198,8 @@ running twice changes nothing; one unreadable repo does not stop the rest.
 ### Phase 4 — Run it when the create sheet opens
 
 1. `NamespaceField.initState` fires it once per mount:
-   `unawaited(backfillNamespacesFromRecents(ref))` — never awaited, so the
+   `unawaited(backfillNamespacesFromRecents(ProviderScope.containerOf(
+   context, listen: false)))` (deviation 2) — never awaited, so the
    field renders immediately (MADR 0032: nothing on the wizard's path waits).
 2. On completion, invalidate `namespaceSuggestionsProvider` so a namespace the
    scan learned appears without reopening the sheet.
@@ -412,6 +416,156 @@ flutter test (full suite)         03:31 +3747 ~3: All tests passed!
 tool/mutate.py (10 mutations)     10 killed, 0 survived, 0 did not apply
 expect=9432 testWidgets=1066
 ```
+
+### Phase 3 — 2026-09-08 — *complete*
+
+**`backfillNamespacesFromRecents`** walks the recents log (30 entries) and
+records the namespace of every repository reachable **without a handshake**: a
+saved local repo, read offline under its own security-scoped bookmark; and an
+SSH repo whose host a tab already holds a live session on, read through *that
+tab's* `GitService`. A host with no session is skipped and never dialled — the
+MADR's central limit, and the reason the scan can run while the sheet is
+opening. It records through Phase 2's `recordNamespaceFromOrigin`, so decision
+1 and the per-(forge, host) memo apply to the scan exactly as they do to an
+open, with no second copy of either.
+
+Each namespace is timed by the ref's `openedAt`, not by when the scan ran —
+otherwise the first backfill would stamp thirty stale repositories with the
+current time and rank them all above a repository genuinely opened yesterday.
+
+**Both sandbox details the local half needs are handled.** A linked worktree
+acquires its main repository's grant as well as its own, because `git remote
+get-url` in a worktree reads the main repo's `.git`; and a scoped work tree
+(the dotfiles pattern) gets `registerRepoScope`, without which it has no `.git`
+to discover and the read fails as "not a git repository". Grants are released
+in a `finally`, including when a later acquire throws.
+
+**Three survivors, all three test defects.** The first run was 15 killed / 3
+survived, and not one survivor was a hole in the production code:
+
+* *the SSH half dials a host with no live session* — the disconnected tab in
+  the test had `connectionId: null`, so the **connection-id guard rejected it
+  first** and the `isConnected` check was never reached. The same masking
+  Phase 2 hit with the bare-path test. Fixed by giving the dropped tab the
+  connection identity a real dropped tab keeps.
+* *a held grant is not released when the read throws* — and *one unreadable
+  repo abandons the whole scan*. Both rested on `localExec.throwOnRead`, and
+  **neither throw ever escaped**: `GitService.originUrl` swallows every failure
+  and answers null (Phase 1), so a failing `git remote get-url` is not an
+  exception anywhere in this file's control flow. Two tests that named a throw
+  were exercising the null path. Fixed by throwing from `ScopedAccess.acquire`,
+  which is upstream of the swallow, and by splitting out a separate test that
+  asserts the *ordinary* failed-read case honestly: it records nothing.
+
+**A mutation that was itself inert.** The first *"grants are not released"*
+edit was `if (held.isEmpty) return null;` inside the `finally` — `held` is
+never empty on that path, so it changed nothing and would have read as a pass.
+Replaced with `held.skip(held.length)`, which compiles and actually skips every
+release.
+
+**Sabotage — 18 mutations (5 Phase 1, 5 Phase 2, 8 Phase 3), all killed.**
+Phase 2's five were re-run because deviation 1 moved a guard behind a new call
+boundary, which is exactly where a previously-killed mutation starts surviving;
+they still kill.
+
+```
+phase3: the SSH half dials a host with no live session
+      -> a host with no live session is skipped, and never dialled
+phase3: any connected tab answers for any connection
+      -> a tab on a different connection is not read
+phase3: a held grant is not released when a later step throws
+      -> a grant already held is released when a later one throws
+phase3: the linked worktree's main-repo grant is skipped
+      -> a linked worktree acquires and releases both grants
+phase3: the scoped work tree's GIT_DIR is not registered
+      -> a scoped work tree carries its GIT_DIR into the read
+phase3: the scan is timed by when it ran, not by the open
+      -> a saved local repo is read offline and its namespace recorded
+phase3: one unreadable repo abandons the whole scan
+      -> a repo that will not read does not stop the rest
+phase3: the local half is skipped entirely
+      -> a saved local repo is read offline and its namespace recorded
+```
+
+**Verification:**
+
+```
+flutter analyze (whole project)   No issues found!
+dart format                       0 changed
+flutter test (full suite)         03:30 +3762 ~3: All tests passed!
+tool/mutate.py (18 mutations)     18 killed, 0 survived, 0 did not apply
+expect=9461 testWidgets=1066
+```
+
+#### Deviation 1 — 2026-09-08 — the creatable check is unreachable from a new file
+
+**Found.** Phase 3's file list named only the two new files, but its body
+requires the scan to check each namespace "against the creatable list for its
+(forge, host) — the same memo". Every part of that is private to
+`ConnectionController`: `_creatableByHost` (`app_providers.dart:910`),
+`_creatableFor` (`:2316`), and the back half of `_recordOpenedNamespace`
+(`:2262`) that splits the namespace, checks it and records it. A top-level
+`backfillNamespacesFromRecents(Ref)` in `lib/core/forge/` can reach none of
+them.
+
+**Decision — extract a public method.** `_recordOpenedNamespace` keeps the
+`originUrl` fetch and delegates the rest to a new public
+`ConnectionController.recordNamespaceFromOrigin({url, isLocal, connectionId,
+at})`; the backfill reads its own origins and calls the same method through
+`ref.read(connectionProvider.notifier)`. One implementation of decision 1
+serves both halves, and the memo the open path already warmed is the memo the
+scan uses.
+
+**Rejected.** *Lifting the memo into its own provider* would share it across
+tabs (strictly better caching) but moves ownership of a session cache the
+controller currently clears on connection-identity change, for a benefit the
+per-tab memo already mostly delivers. *Duplicating the lookup in the new file*
+would keep the file list intact at the price of a second implementation of the
+same rule and a second forge round trip per host — the drift 0036 Phase 7
+existed to remove.
+
+**Scope added to Phase 3.** `lib/core/providers/app_providers.dart` and
+`test/namespace_open_recording_test.dart`. Phase 2's five mutations are
+re-run after the split: an extraction that moves a guard behind a new call
+boundary is exactly where a previously-killed mutation can start surviving.
+
+#### Deviation 2 — 2026-09-08 — the scan cannot take a `Ref`
+
+**Found.** Phase 3 specified `backfillNamespacesFromRecents(Ref ref, …)` and
+Phase 4 called it from `NamespaceField.initState` as
+`unawaited(backfillNamespacesFromRecents(ref))`. That does not compile:
+`NamespaceField` is a `ConsumerStatefulWidget`, so its `ref` is a `WidgetRef`,
+and `Ref` is `sealed` (`riverpod-3.4.2/lib/src/core/ref.dart:43`) — `WidgetRef`
+is not a subtype and cannot be made one. The plan step is wrong as written,
+and it fixes Phase 3's signature, so it was settled at Phase 3 rather than
+deferred.
+
+**Decision — take a `ProviderContainer`.** ~~`backfillNamespacesFromRecents(Ref
+ref, {ScopedAccess? access})`~~ → `backfillNamespacesFromRecents(ProviderContainer
+container, {ScopedAccess? access})`. Every call the scan makes (`read`,
+`read(…future)`) is on `ProviderContainer` already. Phase 4 reaches it with
+`ProviderScope.containerOf(context, listen: false)`, a seam this codebase
+already uses, and Phase 3's tests drive a bare container with no widgets,
+exactly as planned.
+
+**The liveness guard needed a second correction.** `!container.disposed` was
+the obvious replacement for `ref.mounted`, but `disposed` is declared inside an
+`@internal` extension (`provider_container.dart:1340-1342`) and is not part of
+the public API. Reading a disposed container throws `StateError` instead, so
+the scan's per-repository handler catches `on StateError` and **returns** —
+abandoning the scan when the tab closes rather than grinding through the
+remaining refs throwing on each. Safe because the scan is idempotent: the next
+mount starts over.
+
+**Rejected.** *Wrapping the scan in a `FutureProvider`* would keep a real
+`Ref` and is the more idiomatic Riverpod shape, but adds a provider to
+`app_providers.dart` and rewrites Phase 4 from a fire-and-forget call into a
+`watch` — including how "renders before the scan completes" is proven. A
+larger change to buy back a parameter type.
+
+**No behaviour changes.** Phase 4 still fires once per mount, still never
+awaits, still invalidates `namespaceSuggestionsProvider` on completion; only
+the step's wording changes.
 
 ## Rollout and Rollback
 
