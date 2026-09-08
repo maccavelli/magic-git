@@ -160,5 +160,32 @@
     "tests": [
       "test/namespace_backfill_test.dart"
     ]
+  },
+  {
+    "label": "phase4: the scan is never started on mount",
+    "file": "lib/features/workspace/create_repo_steps/namespace_field.dart",
+    "find": "    _focus.addListener(_onFocusChanged);\n    _backfillRecency();",
+    "replace": "    _focus.addListener(_onFocusChanged);",
+    "tests": [
+      "test/namespace_backfill_wiring_test.dart"
+    ]
+  },
+  {
+    "label": "phase4: the suggestions are not invalidated when the scan finishes",
+    "file": "lib/features/workspace/create_repo_steps/namespace_field.dart",
+    "find": "      if (mounted) ref.invalidate(namespaceSuggestionsProvider);",
+    "replace": "      if (!mounted) ref.invalidate(namespaceSuggestionsProvider);",
+    "tests": [
+      "test/namespace_backfill_wiring_test.dart"
+    ]
+  },
+  {
+    "label": "phase4: the scan is awaited, so the field waits on it",
+    "file": "lib/features/workspace/create_repo_steps/namespace_field.dart",
+    "find": "  void _backfillRecency() {\n    final container = ProviderScope.containerOf(context, listen: false);",
+    "replace": "  Future<void> _backfillRecency() async {\n    final container = ProviderScope.containerOf(context, listen: false);\n    await backfillNamespacesFromRecents(container);",
+    "tests": [
+      "test/namespace_backfill_wiring_test.dart"
+    ]
   }
 ]

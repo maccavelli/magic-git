@@ -44,6 +44,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
 
 import '../../../core/forge/forge.dart';
+import '../../../core/forge/namespace_backfill.dart';
 import '../../../core/forge/namespace_suggestions.dart';
 import '../../../core/providers/app_providers.dart';
 import '../../../core/utils/match_tier.dart';
@@ -122,6 +123,37 @@ class _NamespaceFieldState extends ConsumerState<NamespaceField> {
   void initState() {
     super.initState();
     _focus.addListener(_onFocusChanged);
+    _backfillRecency();
+  }
+
+  /// Learns namespaces from the repositories already in the recents list, once
+  /// per mount (MADR 0037 Phase 4).
+  ///
+  /// **Never awaited.** Nothing on the wizard's path waits on a suggestion
+  /// (MADR 0032), and the scan reads git for each reachable repository — the
+  /// field renders on the first frame regardless of how long that takes, or
+  /// whether it finishes at all.
+  ///
+  /// A `ProviderContainer`, not this widget's `ref`: the scan outlives no
+  /// element and needs no rebuild, and `WidgetRef` is not a `Ref` (see the
+  /// plan's deviation 2). `listen: false` is what makes reading it legal here.
+  ///
+  /// Idempotent by construction (`NamespaceHistory` de-duplicates and bounds),
+  /// so a remount simply re-learns the same set and self-heals a moved
+  /// origin — there is no "already scanned" flag to keep in sync.
+  void _backfillRecency() {
+    final container = ProviderScope.containerOf(context, listen: false);
+    unawaited(() async {
+      try {
+        await backfillNamespacesFromRecents(container);
+      } catch (_) {
+        // The scan swallows its own failures; this is the belt for anything
+        // that escapes. A field with fewer suggestions is the whole cost.
+      }
+      // Whatever it learned should show up without reopening the sheet. Cheap:
+      // the provider is autoDispose and refetches only while this field lives.
+      if (mounted) ref.invalidate(namespaceSuggestionsProvider);
+    }());
   }
 
   @override

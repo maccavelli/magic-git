@@ -497,6 +497,71 @@ tool/mutate.py (18 mutations)     18 killed, 0 survived, 0 did not apply
 expect=9461 testWidgets=1066
 ```
 
+### Phase 4 — 2026-09-08 — *complete*
+
+**`NamespaceField.initState` fires the scan once per mount**, never awaited,
+and invalidates `namespaceSuggestionsProvider` when it settles. The container
+comes from `ProviderScope.containerOf(context, listen: false)` — which is the
+*active tab's* container, because `TabsHost` provides it above the root
+Navigator the sheet is pushed on (`tabs_host.dart:500-505`).
+
+**The invalidate is load-bearing for exactly one of the two stores, and the
+sabotage is what established which.** The mutation *"the suggestions are not
+invalidated when the scan finishes"* **survived** its first run, and the reason
+is a real asymmetry:
+
+* an **SSH** namespace is written onto a `SavedConnection`; the real
+  `ConnectionStore` fires `StoreBus` on every write
+  (`connection_store.dart:121`), `TabsController` turns that into a
+  `savedConnectionsProvider` invalidate in each tab
+  (`tabs_controller.dart:54`), and `namespaceSuggestionsProvider` **watches**
+  that provider — so it recomputes with no help from the field;
+* a **This-Mac** namespace goes straight to SharedPreferences, which the
+  suggestion provider reads inside its own body with nothing to watch. Without
+  the field's invalidate it would not appear until the sheet was reopened.
+
+The first test file used the SSH half throughout — deliberately, to stay off
+the bookmark platform channel — and so could not see the difference. A
+This-Mac arm was added, driving the local half with a mock handler on
+`magicgit/bookmarks`, and it kills the mutation.
+
+**A fake that was not faithful.** The SSH arm failed at first because
+`FakeConnectionStore` does not fire `StoreBus`, unlike the store it stands in
+for. Fixed in the test by a subclass that notifies, plus an
+`UncontrolledProviderScope` over an explicit container subscribed the way
+`TabsController` subscribes — reproducing the app's wiring rather than
+asserting against wiring the app does not have.
+
+**Two seams, not one.** The recording failed silently until both
+`activeExecutorProvider` **and** `executorProvider` were overridden:
+`ConnectionController._activeExecutor` reads `executorProvider` directly
+(`app_providers.dart:1127-1130`) while the suggestion providers read
+`activeExecutorProvider`, so stubbing only the latter left the creatable check
+talking to a real, session-less SSH executor and answering "unknown" — which
+decision 1 correctly treats as not creatable.
+
+**Sabotage — 21 mutations (5 Phase 1, 5 Phase 2, 8 Phase 3, 3 Phase 4), all
+killed:**
+
+```
+phase4: the scan is never started on mount
+      -> the scan runs once on mount
+phase4: the suggestions are not invalidated when the scan finishes
+      -> a This-Mac namespace appears, which needs the invalidate
+phase4: the scan is awaited, so the field waits on it
+      -> the scan runs once on mount
+```
+
+**Verification:**
+
+```
+flutter analyze (whole project)   No issues found!
+dart format                       0 changed
+flutter test (full suite)         03:29 +3768 ~3: All tests passed!
+tool/mutate.py (21 mutations)     21 killed, 0 survived, 0 did not apply
+expect=9471 testWidgets=1072
+```
+
 #### Deviation 1 — 2026-09-08 — the creatable check is unreachable from a new file
 
 **Found.** Phase 3's file list named only the two new files, but its body
