@@ -23,22 +23,34 @@ import '../tabs/tabs_controller.dart';
 
 /// Opens [conn]'s [repoPath] in its own tab, dialling a fresh session there.
 /// A matching open tab is focused instead (`openOrFocus`'s dedupe).
-RepoTab openSshRepoInTab({
+Future<RepoTab> openSshRepoInTab({
   required TabsController tabs,
   required SavedConnection conn,
   required String repoPath,
-}) => tabs.openOrFocus(
-  connectionId: conn.id,
-  repoPath: repoPath,
-  savedKind: SavedRepositoryKind.ssh,
-  connect: (container) => container
-      .read(connectionProvider.notifier)
-      .connectToSaved(conn, repoPath: repoPath),
-);
+}) async {
+  Future<void>? opening;
+  final tab = tabs.openOrFocus(
+    connectionId: conn.id,
+    repoPath: repoPath,
+    savedKind: SavedRepositoryKind.ssh,
+    connect: (container) => opening = container
+        .read(connectionProvider.notifier)
+        .connectToSaved(conn, repoPath: repoPath),
+  );
+  await opening;
+  return tab;
+}
 
 /// Opens saved local [repo] in its own tab, given [grants] the caller has
 /// already resolved (its bookmark acquired; a linked worktree's main repo
 /// granted). Returns the tab, or null when no session started.
+///
+/// **Awaits the connect.** `connectLocal` is where a folder that is not a
+/// repository, or one whose permission was revoked, actually fails — so a
+/// caller that must report that (the add-existing sheet reports it beside the
+/// folder the user picked) has to be able to read the tab's state afterwards.
+/// Returning before the connect settled would make `isConnected` a coin flip.
+/// The tab is returned either way: a failed session is the caller's to close.
 ///
 /// **If no session started, every grant is released.** `openOrFocus` declines
 /// at the tab cap and never runs `connect`, and a racing double-open can
@@ -55,6 +67,7 @@ Future<RepoTab?> openLocalRepoInTab({
   final access = scopedAccess ?? ScopedAccess.instance;
   final label = repo.label.isEmpty ? null : repo.label;
   var connected = false;
+  Future<void>? opening;
   final tab = tabs.openOrFocus(
     connectionId: repo.id,
     repoPath: grants.repoPath,
@@ -62,7 +75,7 @@ Future<RepoTab?> openLocalRepoInTab({
     savedReferencePath: repo.repoPath,
     connect: (container) {
       connected = true;
-      container
+      opening = container
           .read(connectionProvider.notifier)
           .connectLocal(
             grants.repoPath,
@@ -73,7 +86,10 @@ Future<RepoTab?> openLocalRepoInTab({
           );
     },
   );
-  if (connected) return tab;
+  if (connected) {
+    await opening;
+    return tab;
+  }
   await access.release(grants.repoPath);
   final main = grants.mainRepoPath;
   if (main != null) await access.release(main);
@@ -84,6 +100,11 @@ Future<RepoTab?> openLocalRepoInTab({
 /// whether it became the live workspace; on false the caller closes [tab],
 /// because a tab that exists only after submit has exactly one owner
 /// (MADR 0036, 6B).
+///
+/// [gitDir] is the external git-dir of a **scoped (dotfiles) repo**, whose
+/// work tree is [dest]; empty for an ordinary repo. Forwarded because the
+/// add-existing sheet opens exactly that shape on a host, and dropping it
+/// would open the work tree with no git-dir registered.
 Future<bool> finalizeProvisionedInTab({
   required RepoTab tab,
   required SavedConnection conn,
@@ -91,6 +112,7 @@ Future<bool> finalizeProvisionedInTab({
   required String dest,
   bool fsmonitor = false,
   String label = '',
+  String gitDir = '',
 }) => tab.container
     .read(connectionProvider.notifier)
     .finalizeProvisioned(
@@ -99,4 +121,5 @@ Future<bool> finalizeProvisionedInTab({
       repoPath: dest,
       enableFsmonitor: fsmonitor,
       label: label,
+      gitDir: gitDir,
     );

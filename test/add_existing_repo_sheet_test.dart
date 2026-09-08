@@ -18,27 +18,45 @@ library;
 import 'dart:io';
 
 import 'package:flutter/services.dart';
-import 'package:flutter/widgets.dart';
+import 'package:flutter/widgets.dart' hide ConnectionState;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/features/common/buttons.dart';
+import 'package:remote_magic_git/core/storage/saved_connection.dart';
 import 'package:remote_magic_git/features/connection/local_repo_form.dart';
+
+import 'helpers/create_repo_harness.dart'
+    show
+        CountingScopedAccess,
+        RecordingTabs,
+        StubConnection,
+        installTabs,
+        testConn;
 
 /// The MacosSwitch sitting in the same Row as the label [text] — the switches
 /// carry no semantics of their own, so the row label is the stable handle.
+Finder _openButton() => find.widgetWithText(AppPushButton, 'Open');
+
 Finder _switchNear(String text) => find.descendant(
   of: find.ancestor(of: find.textContaining(text), matching: find.byType(Row)),
   matching: find.byType(MacosSwitch),
 );
 
-Future<void> _pump(WidgetTester tester, {String? initialPickedPath}) async {
+Future<void> _pump(
+  WidgetTester tester, {
+  String? initialPickedPath,
+  List<SavedConnection> connections = const [],
+  StubConnection? connection,
+}) async {
   await tester.pumpWidget(
     ProviderScope(
       overrides: [
-        savedConnectionsProvider.overrideWith((ref) async => const []),
+        savedConnectionsProvider.overrideWith((ref) async => connections),
         savedLocalReposProvider.overrideWith((ref) async => const []),
+        if (connection != null)
+          connectionProvider.overrideWith(() => connection),
       ],
       child: MacosApp(
         debugShowCheckedModeBanner: false,
@@ -213,5 +231,111 @@ void main() {
       isTrue,
       reason: 'the git-dir field should be pre-filled with the probed git-dir',
     );
+  });
+  // -------------------------------------------------------------------------
+  // MADR 0036 Phase 7 — the third sheet joins the shared provisioning and the
+  // tab routing. It already offered every saved host; what it lacked were this
+  // record's decisions, and it carried the third hand-rolled copy of the dial.
+  // -------------------------------------------------------------------------
+  group('opening lands in its own tab (MADR 0036 Phase 7)', () {
+    testWidgets('choosing a host does not dial (6B)', (tester) async {
+      final stub = StubConnection(const ConnectionState());
+      final tabs = RecordingTabs();
+      installTabs(tabs);
+      await _pump(tester, connections: [testConn], connection: stub);
+
+      await tester.tap(find.byType(MacosPopupButton<String?>));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Prod').last);
+      await tester.pumpAndSettle();
+
+      expect(
+        stub.dialed,
+        isEmpty,
+        reason: 'the dial waits for the first commitment — Browse…',
+      );
+      expect(tabs.opened, isEmpty, reason: 'and no tab yet');
+    });
+
+    testWidgets('Browse… dials in a new tab, leaving this one alone', (
+      tester,
+    ) async {
+      final stub = StubConnection(const ConnectionState());
+      final tabs = RecordingTabs();
+      installTabs(tabs);
+      await _pump(tester, connections: [testConn], connection: stub);
+      await tester.tap(find.byType(MacosPopupButton<String?>));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Prod').last);
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.widgetWithText(AppPushButton, 'Browse…'));
+      await tester.pumpAndSettle();
+
+      expect(tabs.opened, hasLength(1), reason: 'dialled in its own tab');
+      expect(tabs.spawned.single.dialed.single.id, 'c1');
+      expect(
+        stub.dialed,
+        isEmpty,
+        reason: 'the tab the sheet was opened from never dialled',
+      );
+    });
+
+    testWidgets('it refuses at the tab cap and dials nothing', (tester) async {
+      final stub = StubConnection(const ConnectionState());
+      final tabs = RecordingTabs()..capReached = true;
+      installTabs(tabs);
+      await _pump(
+        tester,
+        initialPickedPath: '/srv/repo',
+        connections: [testConn],
+        connection: stub,
+      );
+
+      expect(
+        tester.widget<AppPushButton>(_openButton()).onPressed,
+        isNull,
+        reason: 'refused up front (7A)',
+      );
+      expect(find.textContaining('tabs are open'), findsOneWidget);
+      expect(stub.dialed, isEmpty);
+      expect(tabs.connectRan, 0);
+    });
+
+    testWidgets('an unsaved local open stays in this tab (5B)', (tester) async {
+      final stub = StubConnection(
+        const ConnectionState(
+          phase: ConnectionPhase.connected,
+          backend: ConnectionBackend.local,
+          repoPath: '/Users/me/other',
+        ),
+      );
+      final tabs = RecordingTabs();
+      installTabs(tabs);
+      final counting = CountingScopedAccess();
+      final previous = AddExistingRepoSheet.scopedAccess;
+      AddExistingRepoSheet.scopedAccess = counting.access;
+      addTearDown(() => AddExistingRepoSheet.scopedAccess = previous);
+      await _pump(
+        tester,
+        initialPickedPath: '/Users/me/repo',
+        connection: stub,
+      );
+
+      // Turn "Save to Local Repositories" off.
+      await tester.tap(_switchNear('Save repository'));
+      await tester.pumpAndSettle();
+      // The sheet is taller than the default surface and Open sits below the
+      // fold, where a tap dispatches to nothing at all — silently, which is
+      // why this read as "the code did not run" rather than a miss.
+      await tester.ensureVisible(_openButton());
+      await tester.pumpAndSettle();
+      await tester.tap(_openButton());
+      await tester.pumpAndSettle();
+
+      expect(stub.localConnects, ['/Users/me/repo'], reason: 'opened here');
+      expect(tabs.opened, isEmpty, reason: 'no bookmark, so no tab to reopen');
+      expect(counting.acquired, isEmpty);
+    });
   });
 }

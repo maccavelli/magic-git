@@ -92,8 +92,8 @@
   {
     "label": "phase4: grant-release guard removed from the local open",
     "file": "lib/features/workspace/workspace_open_in_tab.dart",
-    "find": "  if (connected) return tab;\n",
-    "replace": "  return tab;\n",
+    "find": "  if (connected) {\n    await opening;\n    return tab;\n  }",
+    "replace": "  await opening;\n  return tab;",
     "tests": [
       "test/create_repo_sheet_test.dart"
     ]
@@ -213,6 +213,51 @@
     "replace": "    if (_target == WorkspaceTarget.sshProvision) {\n      await ensureProvisioned();\n    }\n  }",
     "tests": [
       "test/clone_sheet_test.dart"
+    ]
+  },
+  {
+    "label": "phase7: add-existing dials in the current tab (the hand-rolled copy's behaviour)",
+    "file": "lib/features/workspace/workspace_provisioning.dart",
+    "find": "      provisionTarget ?? ProviderScope.containerOf(context, listen: false);",
+    "replace": "      ProviderScope.containerOf(context, listen: false);",
+    "tests": [
+      "test/add_existing_repo_sheet_test.dart"
+    ]
+  },
+  {
+    "label": "phase7: add-existing cap gate removed",
+    "file": "lib/features/connection/local_repo_form.dart",
+    "find": "    if (_refusedAtTabCap) return false;\n",
+    "replace": "",
+    "tests": [
+      "test/add_existing_repo_sheet_test.dart"
+    ]
+  },
+  {
+    "label": "phase7: add-existing dials on selection again (6A)",
+    "file": "lib/features/connection/local_repo_form.dart",
+    "find": "    // No eager dial (MADR 0036, 6B). Browse\u2026 is the only way to choose a\n    // folder on a host, so the dial still happens before Open can enable \u2014\n    // just at the commitment rather than on selection.\n  }",
+    "replace": "    if (!_isLocal) await ensureProvisioned();\n  }",
+    "tests": [
+      "test/add_existing_repo_sheet_test.dart"
+    ]
+  },
+  {
+    "label": "phase7: Browse\u2026 dials without opening a tab",
+    "file": "lib/features/connection/local_repo_form.dart",
+    "find": "      if (!await _ensureProvisionTab()) {\n        setState(() => _saveWarning = AddExistingRepoSheet.capMessage);\n        return;\n      }\n      if (!await ensureProvisioned() || !mounted) return;\n      final picked = await showMacosSheet<String>(",
+    "replace": "      if (!await ensureProvisioned() || !mounted) return;\n      final picked = await showMacosSheet<String>(",
+    "tests": [
+      "test/add_existing_repo_sheet_test.dart"
+    ]
+  },
+  {
+    "label": "phase7: an unsaved local open is routed to a tab",
+    "file": "lib/features/connection/local_repo_form.dart",
+    "find": "      if (!_save || tabs == null) {",
+    "replace": "      if (tabs == null) {",
+    "tests": [
+      "test/add_existing_repo_sheet_test.dart"
     ]
   }
 ]

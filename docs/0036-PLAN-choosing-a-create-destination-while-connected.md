@@ -63,6 +63,7 @@ first (Phase 1) and nothing in `lib/` changes until it has.
 | 4 | Open the result in its own tab | new `lib/features/workspace/workspace_open_in_tab.dart`; `create_repo_sheet.dart`; `workspace_provisioning.dart`; `connection_switcher.dart` (its local-open block moves, not copied) |
 | 5 | Clone: same routing, progress watched in the target container | `lib/features/workspace/clone_sheet.dart`, `workspace_open_in_tab.dart` |
 | 6 | Docs, mutation catalogue, index | `docs/README.md`, `tool/mutations/0036-destination.json`, this plan |
+| 7 | The third sheet: open-existing joins the shared provisioning and tab routing | `lib/features/connection/local_repo_form.dart`, `test/add_existing_repo_sheet_test.dart` |
 
 ### Out of scope
 
@@ -73,7 +74,9 @@ first (Phase 1) and nothing in `lib/` changes until it has.
 * **`registerAndActivateSshActive`.** Stays as-is for clone's current-session
   case and `AddExistingRepoSheet`; the create sheet stops calling it.
 * **The forge side** (MADR 0031/0032). Untouched.
-* **`AddExistingRepoSheet`.** Different gating; not in the report.
+* ~~**`AddExistingRepoSheet`.** Different gating; not in the report.~~
+  **Brought into scope 2026-09-08 as Phase 7** — see below. It already offers
+  every saved host; what it lacks is this record's *decisions*.
 
 ### Preconditions
 
@@ -431,6 +434,104 @@ must be intro strings and hint verbs only (MADR 0033).
 * MADR `verified:` date.
 
 **Commit.**
+
+### Phase 7 — the third sheet: open-existing
+
+> **Added 2026-09-08 at the maintainer's request**, after Phase 5 shipped:
+> *"we need to wire up open existing and clone to support the same remote
+> functionality"* — and, on being shown what the tree actually holds:
+> *"sharing code is way better than doing the same thing 3 times
+> differently"*.
+
+**Clone needed nothing** — Phase 5 gave it `title: 'Target'` (`:124`),
+`applicable: () => true` (`:129`), `_refusedAtTabCap` (`:303`),
+`_ensureProvisionTab` (`:317`) and `_openResult` (`:417`).
+
+**And open-existing already targets remote hosts.** `AddExistingRepoSheet`
+carries `_connectionId` (*"null = this Mac (local), else a saved SSH
+connection's id"*), an always-visible **Location** popup listing
+`Local (this Mac)` plus every saved connection, its own provisioning
+lifecycle, and `_openRemote()` finalizing through `finalizeProvisioned`. It
+even carries the mid-dial guard MADR 0022 H4 is about.
+
+**So "remote support" is not the gap. The gap is this record's decisions**, and
+one duplication:
+
+| Decision | create / clone | open-existing |
+| --- | --- | --- |
+| Offers every saved host (2A) | yes | **yes, already** |
+| Result opens in its own tab (3B) | yes | **no** — `connectLocal` / `finalizeProvisioned` on the *current* tab |
+| Dial happens in that tab (1C) | yes | **no** — claims the current tab's session |
+| Refuses at the tab cap (7A) | yes | **no** |
+| Shared provisioning mixin | yes | **no — the third hand-rolled copy** |
+
+`workspace_provisioning.dart`'s own header names that last row: the mixin
+exists because clone and create each carried a byte-for-byte copy, *"which is
+how the mid-dial destination-switch bug (0022 H4) came to exist in both while
+the third caller — `AddExistingRepoSheet` — had already been fixed."* That
+third copy is still hand-rolled, and is now the only one of the three that can
+silently take over the workspace the user is in.
+
+**No new decisions.** 1C, 3B, 5B, 6B and 7A already cover "a sheet that opens
+a workspace"; this is the third such sheet. 2A needs nothing — the picker
+exists and is always shown, so there is no step to un-gate, no breadcrumb to
+renumber, and no `pastDestination` shift.
+
+**Steps.**
+
+1. **Adopt the mixin.** `with WorkspaceProvisioning`; delete
+   `_provisionToken`, `_provisioning`, `_notifier`, `_resetProvisioning`,
+   `_ensureProvisioned`, `_connectionById` in favour of the mixin's
+   `provisionToken` / `provisioning` / `resetProvisioning` /
+   `ensureProvisioned` / `connectionById`, and implement its three hooks
+   (`destConnectionId`, `needsProvisioning`, `onProvisioningError`). The
+   Location popup's `onChanged` gate and the dispose hang-up keep their
+   current meaning, now against the shared fields.
+2. **Open in a tab (3B).** `_ensureProvisionTab` / `_abandonProvisionTab`,
+   copied in shape from the create sheet, and both submit paths routed through
+   `workspace_open_in_tab.dart`:
+   * `_openRemote` → dial in the new tab, then `finalizeProvisionedInTab`.
+   * `_openLocal`, **saved** → `openLocalRepoInTab` with the grants it already
+     resolves, and its release-on-decline guard.
+   * `_openLocal`, **unsaved** (`_save` off, 5B's twin) → opens in place as
+     today; the sheet says so.
+3. **Cap (7A).** `_canSubmit` gains the same gate, with the same message,
+   exempting the unsaved-local case.
+4. **Browse… (Deviation 2).** Its remote folder browser dials, so it goes
+   through `_ensureProvisionTab` first, exactly as the other two sheets do.
+
+> **Deviation 4 (2026-09-08) — `_openLocal` uses `connectLocal` as its
+> validation.** Step 2's "`_openLocal`, saved → `openLocalRepoInTab`" is wrong
+> as written. The sheet opens the folder and then checks the result inline —
+> *"connectLocal surfaced an error (not a git repo, permission denied, …) —
+> stay open so the user sees it"* — which is the whole point of a sheet that
+> **adds an existing** repository. Routing that open into a new tab would land
+> the error in the tab instead of beside the folder the user picked. (The
+> remote half has no such problem: `finalizeProvisioned` returns a bool and
+> throws, and `_openRemote` already surfaces both inline.)
+> **Decision: option 1** — `openLocalRepoInTab` captures the `connectLocal`
+> future and awaits it, so a caller can check the new tab's `isConnected`,
+> close the tab on failure and show the error inline exactly as today. The
+> precedent is `saved_workspace_actions.dart:190-205`, which already captures
+> `operation = container.read(...).connectLocal(...)` for this reason.
+> Rejected: a separate pre-validation via `GitService(localExecutor)`
+> (a second path duplicating what `connectLocal` does, needing its own
+> environment probe — the near-duplicate this phase exists to remove); and
+> local-opens-in-place (this sheet would then disagree with create and clone
+> about 3B for the local case alone). **Scope added:**
+> `workspace_open_in_tab.dart` becomes awaiting, which also lets the create
+> sheet and the switcher notice a failed open — neither does today.
+
+**Acceptance.** The Phase 4 table, re-pointed at this sheet: the current
+session is untouched (log intact, same repo) for every routed open; an unsaved
+local open stays in place and opens no tab; a failed dial or open closes the
+tab it opened; no grant leaks when `openOrFocus` declines; the cap refuses up
+front. Plus: **`workspace_provisioning.dart` has exactly three users and no
+fourth copy** — a source scan, in the spirit of MADR 0033's own guards.
+
+**Sabotage.** The Phase 4 mutations re-pointed at this file, plus one that
+matters only here: *the mixin's `provisionTarget` ignored*, which is what a
+regression to the hand-rolled copy would look like.
 
 ## Verification
 
@@ -816,6 +917,73 @@ flutter test (full suite)         03:22 +3727 ~3: All tests passed!
 tool/mutate.py (24 mutations)     24 killed, 0 survived, 0 did not apply
 breadcrumb, measured in-sheet     rows=1, span=370.2/376
 ```
+
+### Phase 7 — 2026-09-08 — *complete*
+
+**The third hand-rolled provisioning copy is gone.** `AddExistingRepoSheet`
+now uses `WorkspaceProvisioning`; its private `_provisionToken`,
+`_provisioning`, `_notifier`, `_resetProvisioning`, `_ensureProvisioned` and
+`_connectionById` are deleted in favour of the mixin's, with the three hooks
+(`destConnectionId`, `needsProvisioning`, `onProvisioningError`) implemented.
+**Three sheets, one implementation**, verified structurally: `beginProvisioning`
+outside the mixin and the controller now matches only a doc comment.
+
+**And it gained this record's decisions:** the tab lifecycle
+(`_ensureProvisionTab` / `_abandonProvisionTab`), the dial at the first
+commitment rather than on selection (6B — for this sheet the commitment is
+always Browse…, the only way to choose a folder on a host, so Open still
+cannot enable before the dial lands), the cap refusal (7A), and both submit
+paths routed: `_openRemote` through `finalizeProvisionedInTab`, `_openLocal`
+through `openLocalRepoInTab` when saved and in place when not (5B).
+
+**A real defect caught while routing the remote half.** `finalizeProvisionedInTab`
+did not forward `gitDir`. This sheet's primary remote case is a **scoped
+(dotfiles) repo** — work tree plus an external git-dir — so the analyzer's
+"named parameter `gitDir` isn't defined" was a silent wrong-open waiting to
+happen: the work tree would have opened with no git-dir registered. Forwarded,
+with the reason in the doc comment.
+
+**A splice error of mine, and how it was caught.** The `_openLocal` rewrite used
+`_autoDetectScope` as its end anchor — a declaration that appears *before*
+`_openLocal`, so the slice duplicated ~230 lines and left the old method in
+place. `flutter analyze` named it immediately (`duplicate_definition` ×2,
+plus six "isn't referenced"). Repaired by deleting the duplicated span after
+`diff`-ing the two `_openRemote` copies to confirm they were identical — not
+by `git checkout`, which would have destroyed the rest of the phase.
+
+**`tester.tap` below the fold dispatches to nothing — silently.** The
+add-existing sheet is taller than the default 800×600 surface and Open sits
+under it, so the tap produced no exception, no warning, and no `_submit`. It
+read as "the code never ran", and was traced through `_openLocal` and then
+`_submit` before the tap itself turned out to be the problem. No existing test
+had hit this: they submit via Enter, or tap `Browse…`, which is higher up.
+`ensureVisible` first.
+
+**Two catalogue entries fixed rather than trusted:**
+
+* `phase4: grant-release guard removed` came back **DID NOT APPLY** — Deviation
+  4 changed the code it targets (`if (connected) return tab;` → awaiting).
+  Repointed; it kills.
+* `phase7: an unsaved local open is routed to a tab` was **killing via a
+  compile error** (`if (false)` left the code uncompilable), which proves
+  nothing about the tests — the kill line pointed at *loading* the test file,
+  not at an assertion. Rewritten to route the unsaved case to a tab, which
+  compiles; it now fails *"an unsaved local open stays in this tab (5B)"*.
+
+**Verification:**
+
+```
+flutter analyze (whole project)   No issues found!
+dart format                       0 changed
+flutter test (full suite)         03:22 +3731 ~3: All tests passed!
+tool/mutate.py (29 mutations)     29 killed, 0 survived, 0 did not apply
+```
+
+**Acceptance.** The Phase 4 table holds for this sheet: no dial on selection;
+Browse… dials in its own tab and leaves the current one untouched; the cap
+refuses up front and dials nothing; an unsaved local open stays in place and
+opens no tab. Plus the structural claim above — one provisioning
+implementation, three users, no fourth copy.
 
 ## Rollout and Rollback
 

@@ -10,7 +10,6 @@ import '../../core/local/linked_worktree_probe.dart';
 import '../../core/local/scoped_access.dart';
 import '../../core/local/security_scoped_bookmark.dart';
 import '../../core/providers/app_providers.dart';
-import '../../core/storage/saved_connection.dart';
 import '../../core/storage/saved_local_repo.dart';
 import '../common/actions.dart';
 import '../common/buttons.dart';
@@ -18,7 +17,10 @@ import '../common/escape_dismissible.dart';
 import '../common/field_styles.dart';
 import '../common/sized_sheet.dart';
 import '../common/tool_icon_button.dart';
+import '../tabs/tabs_controller.dart';
 import '../workspace/remote_directory_browser.dart';
+import '../workspace/workspace_open_in_tab.dart';
+import '../workspace/workspace_provisioning.dart';
 
 /// The sandbox grants needed to open one local repo.
 ///
@@ -199,12 +201,24 @@ class AddExistingRepoSheet extends ConsumerStatefulWidget {
 
   const AddExistingRepoSheet({super.key, this.initialPickedPath});
 
+  /// The sandbox-grant registry a saved local open acquires through — the same
+  /// test seam `CreateRepositorySheet.scopedAccess` exposes. On the public
+  /// class because the State is private and a test cannot reach it there.
+  static ScopedAccess scopedAccess = ScopedAccess.instance;
+
+  /// Shown when an open that would need a tab is refused at the cap
+  /// (MADR 0036, 7A).
+  static String get capMessage =>
+      'All ${TabsController.maxTabs} tabs are open — close one to open a '
+      'repository.';
+
   @override
   ConsumerState<AddExistingRepoSheet> createState() =>
       _AddExistingRepoSheetState();
 }
 
-class _AddExistingRepoSheetState extends ConsumerState<AddExistingRepoSheet> {
+class _AddExistingRepoSheetState extends ConsumerState<AddExistingRepoSheet>
+    with WorkspaceProvisioning {
   final _label = TextEditingController();
   final _gitDir = TextEditingController();
 
@@ -230,21 +244,24 @@ class _AddExistingRepoSheetState extends ConsumerState<AddExistingRepoSheet> {
   bool _submitting = false;
   String? _saveWarning;
 
-  // Provisioning lifecycle for a chosen SSH connection: dialed on demand so its
-  // filesystem can be browsed and the repo opened on it. Mirrors the clone /
-  // create landing sheets. Torn down in [dispose] if the sheet closes before a
-  // successful finalize (which nulls the token so the now-live session stays).
-  int? _provisionToken;
-  bool _provisioning = false;
+  // Provisioning comes from `WorkspaceProvisioning` (MADR 0036 Phase 7).
+  // This sheet carried the third hand-rolled copy of it — the one that mixin's
+  // own header cites as already-fixed while clone and create still shared the
+  // 0022 H4 bug. `provisionToken` / `provisioning` / `ensureProvisioned` /
+  // `resetProvisioning` / `connectionById` now come from there, including the
+  // notifier capture that makes a dispose-time hang-up safe.
 
-  /// The controller, captured when a dial starts.
-  ///
-  /// [_resetProvisioning] runs from [dispose], where `ref` is already unsafe
-  /// ("Using \"ref\" when a widget is about to or has been unmounted"), so
-  /// reading the provider there threw instead of hanging up — stranding the
-  /// dialed session at `phase: connecting`. The controller outlives this
-  /// sheet, so holding it is safe. (0022 deviation (c).)
-  ConnectionController? _notifier;
+  @override
+  String? get destConnectionId => _connectionId;
+
+  @override
+  bool get needsProvisioning => !_isLocal;
+
+  @override
+  void onProvisioningError(String? message) {
+    if (!mounted) return;
+    setState(() => _saveWarning = message);
+  }
 
   bool get _isLocal => _connectionId == null;
 
@@ -253,40 +270,59 @@ class _AddExistingRepoSheetState extends ConsumerState<AddExistingRepoSheet> {
     // Hang up a connection we dialed only to browse, unless a finalize already
     // promoted it to the live session (token nulled). Fire-and-forget: dispose
     // can't await, and the token capture inside is synchronous.
-    _resetProvisioning();
+    unawaited(_abandonProvisionTab());
     _label.dispose();
     _gitDir.dispose();
     super.dispose();
   }
 
-  Future<void> _resetProvisioning() async {
-    final token = _provisionToken;
-    _provisionToken = null;
-    if (token == null) return;
-    // Never `ref` here — see [_notifier]. A null notifier means no dial ever
-    // started, so there is nothing to hang up.
-    await _notifier?.abortProvisioning(token);
+  /// The tab an SSH open dials in (MADR 0036, 1C/6B). Opened at the first
+  /// commitment to the host — which for this sheet is always Browse…, the only
+  /// way to choose a folder on a host — and owned here until the open succeeds
+  /// or the sheet is abandoned.
+  RepoTab? _provisionTab;
+  String? _originTabId;
+
+  Future<bool> _ensureProvisionTab() async {
+    if (_provisionTab != null) return true;
+    final tabs = TabsController.current;
+    if (tabs == null) return true;
+    if (!tabs.canOpenTab) return false;
+    _originTabId = tabs.activeId;
+    final tab = tabs.newTab();
+    _provisionTab = tab;
+    provisionTarget = tab.container;
+    return true;
   }
 
-  /// Resolves the chosen saved connection through the provider *future* — the
-  /// sync `.value` is null unless something is already watching it.
-  Future<SavedConnection?> _connectionById(String? id) async {
-    if (id == null) return null;
-    try {
-      for (final c in await ref.read(savedConnectionsProvider.future)) {
-        if (c.id == id) return c;
-      }
-    } catch (_) {
-      // Store unreadable — treat as "no such connection".
-    }
-    return null;
+  Future<void> _abandonProvisionTab() async {
+    final tab = _provisionTab;
+    _provisionTab = null;
+    provisionTarget = null;
+    await resetProvisioning();
+    if (tab == null) return;
+    final tabs = TabsController.current;
+    if (tabs == null || tab.id == _originTabId) return;
+    await tabs.close(tab.id);
+    final origin = _originTabId;
+    if (origin != null) tabs.activate(origin);
   }
+
+  /// Whether this open ends by opening a tab (MADR 0036, 3B). The exception is
+  /// an unsaved local open: with no bookmark to reopen from it opens in place,
+  /// as it always did (decision 5B).
+  bool get _opensNewTab => !_isLocal || _save;
+
+  bool get _refusedAtTabCap =>
+      _opensNewTab &&
+      _provisionTab == null &&
+      !(TabsController.current?.canOpenTab ?? true);
 
   Future<void> _onLocationChanged(String? id) async {
     if (id == _connectionId || _submitting) return;
     // Switching location abandons any in-flight provisioning, and a path picked
     // on one host is meaningless on another.
-    await _resetProvisioning();
+    await _abandonProvisionTab();
     if (!mounted) return;
     setState(() {
       _connectionId = id;
@@ -299,41 +335,9 @@ class _AddExistingRepoSheetState extends ConsumerState<AddExistingRepoSheet> {
       _scopedManual = false;
       _gitDir.clear();
     });
-    if (!_isLocal) await _ensureProvisioned();
-  }
-
-  /// Dials the chosen saved connection (once) so its filesystem can be browsed
-  /// and the repo opened on it. Returns whether the session is ready; a failure
-  /// lands `phase: error` on the connection state, shown by [build].
-  Future<bool> _ensureProvisioned() async {
-    if (_isLocal) return true;
-    if (_provisionToken != null) return true;
-    if (_provisioning) return false;
-    final conn = await _connectionById(_connectionId);
-    if (conn == null || !mounted) return false;
-    setState(() => _provisioning = true);
-    // Capture the notifier BEFORE the (seconds-long) dial so the guard below can
-    // still tear the session down if the widget is disposed mid-dial — `ref` is
-    // unusable after dispose, but the controller outlives the sheet.
-    final ConnectionController notifier =
-        _notifier ?? ref.read(connectionProvider.notifier);
-    _notifier = notifier;
-    final token = await notifier.beginProvisioning(conn);
-    if (!mounted || _connectionId != conn.id) {
-      // The sheet closed, or the Location switched to a different host, while
-      // this host was still dialing. Don't adopt the session: adopting it under
-      // a now-different `_connectionId` would finalize this host's repo into the
-      // OTHER connection, and leaving it un-adopted strands a live client at
-      // phase:connecting (a buttonless "Connecting…" tab). Abort it instead.
-      if (token != null) await notifier.abortProvisioning(token);
-      if (mounted) setState(() => _provisioning = false);
-      return false;
-    }
-    setState(() {
-      _provisioning = false;
-      _provisionToken = token;
-    });
-    return token != null;
+    // No eager dial (MADR 0036, 6B). Browse… is the only way to choose a
+    // folder on a host, so the dial still happens before Open can enable —
+    // just at the commitment rather than on selection.
   }
 
   Future<void> _pickFolder() async {
@@ -359,7 +363,11 @@ class _AddExistingRepoSheetState extends ConsumerState<AddExistingRepoSheet> {
     if (_picking) return;
     setState(() => _picking = true);
     try {
-      if (!await _ensureProvisioned() || !mounted) return;
+      if (!await _ensureProvisionTab()) {
+        setState(() => _saveWarning = AddExistingRepoSheet.capMessage);
+        return;
+      }
+      if (!await ensureProvisioned() || !mounted) return;
       final picked = await showMacosSheet<String>(
         context: context,
         builder: (_) => EscapeDismissible(
@@ -477,23 +485,44 @@ class _AddExistingRepoSheetState extends ConsumerState<AddExistingRepoSheet> {
       _saveWarning = null;
     });
     try {
-      if (!await _ensureProvisioned() || !mounted) return;
-      final conn = await _connectionById(_connectionId);
-      final token = _provisionToken;
+      if (!await _ensureProvisionTab()) {
+        setState(() => _saveWarning = AddExistingRepoSheet.capMessage);
+        return;
+      }
+      if (!await ensureProvisioned() || !mounted) return;
+      final conn = await connectionById(_connectionId);
+      final token = provisionToken;
       if (conn == null || token == null || !mounted) return;
-      final ok = await ref
-          .read(connectionProvider.notifier)
-          .finalizeProvisioned(
-            token: token,
-            conn: conn,
-            repoPath: path,
-            enableFsmonitor: _fsmonitor,
-            label: _label.text.trim(),
-            gitDir: _scoped ? _gitDir.text.trim() : '',
-          );
+      final tab = _provisionTab;
+      // The session lives in the tab that dialled it, so it is promoted into a
+      // workspace there — the tab this sheet was opened from is untouched
+      // (MADR 0036, 3B). With no tab host the sheet's own container dialled.
+      final ok = tab == null
+          ? await ref
+                .read(connectionProvider.notifier)
+                .finalizeProvisioned(
+                  token: token,
+                  conn: conn,
+                  repoPath: path,
+                  enableFsmonitor: _fsmonitor,
+                  label: _label.text.trim(),
+                  gitDir: _scoped ? _gitDir.text.trim() : '',
+                )
+          : await finalizeProvisionedInTab(
+              tab: tab,
+              conn: conn,
+              token: token,
+              dest: path,
+              fsmonitor: _fsmonitor,
+              label: _label.text.trim(),
+              gitDir: _scoped ? _gitDir.text.trim() : '',
+            );
       if (!mounted) return;
       if (!ok) return; // superseded by a concurrent connect/disconnect
-      _provisionToken = null; // finalized — the session is live; don't abort it
+      // Finalized — the tab IS the workspace now; nothing to abort or close.
+      provisionToken = null;
+      _provisionTab = null;
+      provisionTarget = null;
       final nav = Navigator.of(context);
       if (nav.canPop()) nav.pop();
     } catch (e) {
@@ -514,10 +543,10 @@ class _AddExistingRepoSheetState extends ConsumerState<AddExistingRepoSheet> {
     if (path == null || _submitting) return;
     setState(() => _submitting = true);
     try {
-      // Generated upfront (not after saving) so `connectLocal`'s `id` matches
-      // the `SavedLocalRepo.id` persisted below — otherwise the just-opened
-      // session wouldn't read as "active" against its own freshly-saved
-      // entry in the switcher panel.
+      // Generated upfront (not after saving) so the session's `id` matches the
+      // `SavedLocalRepo.id` persisted below — otherwise the just-opened
+      // session wouldn't read as "active" against its own freshly-saved entry
+      // in the switcher panel.
       final id = DateTime.now().microsecondsSinceEpoch.toString();
       final label = _label.text.trim();
       final gitDir = _scoped ? _gitDir.text.trim() : '';
@@ -527,67 +556,81 @@ class _AddExistingRepoSheetState extends ConsumerState<AddExistingRepoSheet> {
       // git and would otherwise fail with a raw permission error.
       final grants = await ensureLocalRepoGrants(context, path);
       if (!mounted || grants == null) return;
-      await ref
-          .read(connectionProvider.notifier)
-          .connectLocal(
-            path,
-            label: label.isEmpty ? null : label,
-            id: _save ? id : null,
-            mainRepoPath: grants.mainRepoPath,
-            gitDir: gitDir.isEmpty ? null : gitDir,
-          );
+
+      final tabs = TabsController.current;
+      // An UNSAVED open has no bookmark to reopen from, so it opens in place,
+      // as it always did (MADR 0036, 5B) — and so does any open with no tab
+      // host at all.
+      if (!_save || tabs == null) {
+        await ref
+            .read(connectionProvider.notifier)
+            .connectLocal(
+              path,
+              label: label.isEmpty ? null : label,
+              id: _save ? id : null,
+              mainRepoPath: grants.mainRepoPath,
+              gitDir: gitDir.isEmpty ? null : gitDir,
+            );
+        if (!mounted) return;
+        // connectLocal surfaced an error (not a git repo, permission denied,
+        // …) — stay open so the user sees it rather than silently no-op-ing.
+        if (!ref.read(connectionProvider).isConnected) return;
+        await _applyFsmonitor(path);
+        if (!mounted) return;
+        if (_save) await _persistLocal(id, path, label, gitDir, grants, null);
+        if (!mounted) return;
+        final nav = Navigator.of(context);
+        if (nav.canPop()) nav.pop();
+        return;
+      }
+
+      // Saved: opens in its own tab (MADR 0036, 3B). The record is built
+      // before the bookmark so the tab can carry the right id and scope; the
+      // bookmark is minted only once the open is confirmed below, exactly as
+      // this sheet has always ordered it — never persist a folder that turned
+      // out not to be a repository.
+      final probe = SavedLocalRepo(
+        id: id,
+        label: label,
+        repoPath: path,
+        bookmarkData: '',
+        mainRepoPath: grants.mainRepoPath ?? '',
+        mainRepoBookmarkData: grants.newMainRepoBookmark ?? '',
+        fsmonitorEnabled: _fsmonitor,
+        gitDir: gitDir,
+      );
+      final tab = await openLocalRepoInTab(
+        tabs: tabs,
+        repo: probe,
+        grants: grants,
+        scopedAccess: AddExistingRepoSheet.scopedAccess,
+      );
       if (!mounted) return;
-      // connectLocal surfaced an error (not a git repo, permission denied,
-      // …) — stay open so the user sees it rather than silently no-op-ing.
-      if (!ref.read(connectionProvider).isConnected) return;
-
-      // Apply git fsmonitor live now that the open is confirmed. Persisted
-      // below when saving so a later reopen re-applies it (connectLocal reads
-      // it back from the store). Best-effort — status still works without it.
-      if (_fsmonitor) {
-        try {
-          await ref.read(gitServiceProvider).setFsmonitor(path, enabled: true);
-        } catch (_) {}
-        if (!mounted) return;
+      if (tab == null) {
+        setState(() => _saveWarning = AddExistingRepoSheet.capMessage);
+        return;
       }
-
-      if (_save) {
-        // Bookmark/persist only now that the open is confirmed to actually
-        // work — never save a folder that turned out not to be a valid repo.
-        final bookmark = await SecurityScopedBookmark.create(path);
+      // `openLocalRepoInTab` awaits the connect (Deviation 4), so this is the
+      // settled result — the same check the in-place path makes, just read
+      // from the tab that ran it. A folder that is not a repository closes its
+      // tab again and reports here, beside the folder the user picked.
+      if (!tab.container.read(connectionProvider).isConnected) {
+        final error = tab.container.read(connectionProvider).error;
+        await tabs.close(tab.id);
+        final origin = _originTabId;
+        if (origin != null) tabs.activate(origin);
         if (!mounted) return;
-        try {
-          await ref
-              .read(localRepoStoreProvider)
-              .save(
-                SavedLocalRepo(
-                  id: id,
-                  label: label,
-                  repoPath: path,
-                  bookmarkData: bookmark ?? '',
-                  // Both empty for an ordinary repo. For a linked worktree these
-                  // persist the main repository's grant, so reopening it later
-                  // doesn't prompt for the folder a second time.
-                  mainRepoPath: grants.mainRepoPath ?? '',
-                  mainRepoBookmarkData: grants.newMainRepoBookmark ?? '',
-                  fsmonitorEnabled: _fsmonitor,
-                  // Empty for an ordinary repo; the external git-dir for a
-                  // scoped (dotfiles) repo, so reopening re-registers the scope.
-                  gitDir: gitDir,
-                ),
-              );
-          if (!mounted) return;
-          ref.invalidate(savedLocalReposProvider);
-        } catch (e) {
-          if (mounted) {
-            setState(() {
-              _saveWarning =
-                  'Could not save this repository — it stays open for this '
-                  "session, but won't appear in Local Repositories. ($e)";
-            });
-          }
-        }
+        setState(
+          () => _saveWarning =
+              error ??
+              "Couldn't open this folder as a repository — make sure it "
+                  'contains a Git repository.',
+        );
+        return;
       }
+      await _applyFsmonitorIn(tab, path);
+      if (!mounted) return;
+      await _persistLocal(id, path, label, gitDir, grants, tab);
       if (!mounted) return;
       final nav = Navigator.of(context);
       if (nav.canPop()) nav.pop();
@@ -596,13 +639,81 @@ class _AddExistingRepoSheetState extends ConsumerState<AddExistingRepoSheet> {
     }
   }
 
+  /// Applies git fsmonitor to the session in the current tab. Best-effort —
+  /// status still works without it.
+  Future<void> _applyFsmonitor(String path) async {
+    if (!_fsmonitor) return;
+    try {
+      await ref.read(gitServiceProvider).setFsmonitor(path, enabled: true);
+    } catch (_) {}
+  }
+
+  /// The same, against the tab the repository actually opened in.
+  Future<void> _applyFsmonitorIn(RepoTab tab, String path) async {
+    if (!_fsmonitor) return;
+    try {
+      await tab.container
+          .read(gitServiceProvider)
+          .setFsmonitor(path, enabled: true);
+    } catch (_) {}
+  }
+
+  /// Bookmarks and persists the now-confirmed repository. Best-effort: an
+  /// unwritable store leaves it open for the session with a warning, never a
+  /// failed open.
+  Future<void> _persistLocal(
+    String id,
+    String path,
+    String label,
+    String gitDir,
+    LocalOpenGrants grants,
+    RepoTab? tab,
+  ) async {
+    // Bookmark only now that the open is confirmed to actually work — never
+    // save a folder that turned out not to be a valid repo.
+    final bookmark = await SecurityScopedBookmark.create(path);
+    if (!mounted) return;
+    try {
+      await ref
+          .read(localRepoStoreProvider)
+          .save(
+            SavedLocalRepo(
+              id: id,
+              label: label,
+              repoPath: path,
+              bookmarkData: bookmark ?? '',
+              // Both empty for an ordinary repo. For a linked worktree these
+              // persist the main repository's grant, so reopening it later
+              // doesn't prompt for the folder a second time.
+              mainRepoPath: grants.mainRepoPath ?? '',
+              mainRepoBookmarkData: grants.newMainRepoBookmark ?? '',
+              fsmonitorEnabled: _fsmonitor,
+              // Empty for an ordinary repo; the external git-dir for a scoped
+              // (dotfiles) repo, so reopening re-registers the scope.
+              gitDir: gitDir,
+            ),
+          );
+      if (!mounted) return;
+      ref.invalidate(savedLocalReposProvider);
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _saveWarning =
+              'Could not save this repository — it stays open for this '
+              "session, but won't appear in Local Repositories. ($e)";
+        });
+      }
+    }
+  }
+
   /// Whether Open can fire. Both modes need a folder (and a git-dir when
   /// scoped); remote additionally needs its connection dialed and ready.
   bool get _canSubmit {
     if (_pickedPath == null || _submitting) return false;
     if (_scoped && _gitDir.text.trim().isEmpty) return false;
+    if (_refusedAtTabCap) return false;
     if (_isLocal) return true;
-    return !_provisioning && _provisionToken != null;
+    return !provisioning && provisionToken != null;
   }
 
   /// First field that keeps Open disabled (0009 L18) — shown as a caption
@@ -612,7 +723,8 @@ class _AddExistingRepoSheetState extends ConsumerState<AddExistingRepoSheet> {
     if (_scoped && _gitDir.text.trim().isEmpty) {
       return 'Git directory is required';
     }
-    if (!_isLocal && (_provisioning || _provisionToken == null)) {
+    if (_refusedAtTabCap) return AddExistingRepoSheet.capMessage;
+    if (!_isLocal && (provisioning || provisionToken == null)) {
       return 'Connecting to the host…';
     }
     return null;
@@ -676,9 +788,9 @@ class _AddExistingRepoSheetState extends ConsumerState<AddExistingRepoSheet> {
                 // Disabled while a host is still dialing: switching mid-dial
                 // otherwise adopts the in-flight session under the newly
                 // selected connection. The post-await guard in
-                // [_ensureProvisioned] is the backstop; this removes the race
+                // [ensureProvisioned] is the backstop; this removes the race
                 // at the UI level so it can't be triggered at all.
-                onChanged: (_submitting || _provisioning)
+                onChanged: (_submitting || provisioning)
                     ? null
                     : _onLocationChanged,
                 items: [
@@ -700,7 +812,7 @@ class _AddExistingRepoSheetState extends ConsumerState<AddExistingRepoSheet> {
                     : 'The repository already exists on the selected SSH host — '
                           'browse its filesystem to pick it.',
               ),
-              if (_provisioning)
+              if (provisioning)
                 Padding(
                   padding: const EdgeInsets.only(top: 6),
                   child: Row(
@@ -747,7 +859,7 @@ class _AddExistingRepoSheetState extends ConsumerState<AddExistingRepoSheet> {
                   AppPushButton(
                     controlSize: ControlSize.regular,
                     secondary: true,
-                    onPressed: (_picking || (!_isLocal && _provisioning))
+                    onPressed: (_picking || (!_isLocal && provisioning))
                         ? null
                         : (_isLocal ? _pickFolder : _browseRemote),
                     child: Text(_isLocal ? 'Choose…' : 'Browse…'),
