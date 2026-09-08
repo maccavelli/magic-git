@@ -341,9 +341,11 @@ expect=9424 testWidgets=1066
 ### Phase 2 — 2026-09-08 — *complete*
 
 **`_recordOpenedNamespace`** hangs off `_recordRecentOpen` in
-`app_providers.dart`, so all three ways a repository is opened — an SSH
-connect, a local connect, a repo switch within a tab — are covered by
-construction rather than by three call sites kept in step by hand. It resolves
+`app_providers.dart`, so ~~all three ways~~ **three of the four ways** a
+repository is opened — an SSH connect, a local connect, a repo switch within a
+tab — are covered by construction rather than by three call sites kept in step
+by hand. **See the amendment below: there is a fourth, and this phase missed
+it.** It resolves
 the origin through Phase 1's `originUrl`, maps the host to a forge, splits the
 namespace off the project path, checks the namespace against the account's
 creatable list, and records it through `NamespaceHistory` — the same store the
@@ -591,6 +593,37 @@ nothing preventing a fifth. A scan test over the index and frontmatter is still
 unwritten; it is not part of this plan, and is recorded here so the next
 maintainer does not mistake its absence for an oversight.
 
+
+#### Amendment — 2026-09-08 — the coverage claim was wrong: there are four open paths
+
+Phase 2 asserted that hanging the recorder off `_recordRecentOpen` covered
+"all three opens … by construction". The premise was that there are three. The
+MADR 0038 debugging pass found a **fourth**:
+`ConnectionController.finalizeProvisioned` (`app_providers.dart:2672-2833`)
+promotes a provisioned session into a workspace and called neither
+`_recordRecentOpen` nor `_recordOpenedNamespace`.
+
+It is not an obscure path. It is the one taken by **every remote create, clone
+and open-existing** — `create_repo_sheet.dart:765`, `clone_sheet.dart:581`,
+`local_repo_form.dart:511` — so the namespaces this plan set out to learn were
+never learned for a repository created on a host, which is the single most
+direct evidence of where a user works.
+
+**What went wrong in the reasoning, not the code.** "By construction" was
+claimed from the shape of the fix (one recorder, one hook) without enumerating
+the callers that could reach the state it hooks. Three call sites were found by
+searching for the existing recency write; nothing checked whether a *fourth*
+place published a connected `ConnectionState` without one. The correct
+verification was a search for writers of `state = ConnectionState(phase:
+connected…)`, not for readers of `_recordRecentOpen`.
+
+**Fixed in MADR 0038 Phase 1** (`0038-PLAN-workspace-entry-points-debugging-pass.md`),
+which adds the call after the state publish and pins it with four mutations,
+including one that asserts the write cannot move ahead of the publish.
+
+This plan's status stays `complete`: its phases shipped and its acceptance
+criteria hold as written. The claim above is corrected rather than the work
+reopened.
 #### Deviation 1 — 2026-09-08 — the creatable check is unreachable from a new file
 
 **Found.** Phase 3's file list named only the two new files, but its body

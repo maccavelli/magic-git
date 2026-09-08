@@ -10,12 +10,14 @@ import 'dart:typed_data';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:remote_magic_git/core/forge/forge.dart';
+import 'package:remote_magic_git/core/forge/namespace_history.dart';
 import 'package:remote_magic_git/core/git/git_service.dart';
 import 'package:remote_magic_git/core/output/output_log.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 import 'package:remote_magic_git/core/storage/connection_store.dart';
+import 'package:remote_magic_git/core/storage/recent_repos_store.dart';
 import 'package:remote_magic_git/core/storage/saved_connection.dart';
 
 /// A manager whose connect() blocks until the test releases a gate.
@@ -107,6 +109,86 @@ class _FakeStore extends ConnectionStore {
   Future<void> updateMetadata(SavedConnection conn) async => updated.add(conn);
   @override
   Future<void> touch(String id, {DateTime? when}) async => touched.add(id);
+}
+
+/// Records what the finalize writes into the per-repo MRU, without touching
+/// SharedPreferences. MADR 0038 F1: until it was fixed, nothing here was ever
+/// called by [ConnectionController.finalizeProvisioned].
+class _RecordingRecents extends RecentReposStore {
+  final List<({bool isLocal, String id, String repoPath})> records = [];
+
+  @override
+  Future<void> record({
+    required bool isLocal,
+    required String id,
+    required String repoPath,
+    DateTime? when,
+  }) async => records.add((isLocal: isLocal, id: id, repoPath: repoPath));
+
+  @override
+  Future<List<RecentRepoRef>> list() async => const [];
+}
+
+/// A [GitService] whose `originUrl` answers a fixed forge URL, so the namespace
+/// half of the recording has something to read. Everything else behaves like
+/// the recording executor it wraps.
+class _OriginGitService extends GitService {
+  _OriginGitService(this.url) : super(_RecordingExecutor());
+  final String? url;
+
+  @override
+  Future<String?> originUrl(
+    String repoPath, {
+    String remote = 'origin',
+  }) async => url;
+}
+
+/// The recording executor plus the two GitLab API answers the creatable-
+/// namespace lookup needs (`api user`, `api groups`).
+class _ForgeAwareExecutor extends _RecordingExecutor {
+  @override
+  Future<SSHCommandResult> execute({
+    required String repoPath,
+    required List<String> gitArgs,
+    Map<String, String>? extraEnv,
+    String? stdin,
+    Duration timeout = SSHCommandExecutor.defaultTimeout,
+    int retries = 0,
+    ExecLane lane = ExecLane.exclusive,
+    bool compress = false,
+    Duration? activityIdle,
+    OperationDescriptor? operation,
+    OperationEventCallback? onOperationEvent,
+    CommandOutputCallback? onOutput,
+  }) async {
+    final joined = gitArgs.join(' ');
+    if (joined.contains('api') && joined.contains('user')) {
+      return _headers('{"username":"me"}');
+    }
+    if (joined.contains('groups')) {
+      return _headers('[{"full_path":"team/subgroup"}]');
+    }
+    return super.execute(
+      repoPath: repoPath,
+      gitArgs: gitArgs,
+      extraEnv: extraEnv,
+      stdin: stdin,
+      timeout: timeout,
+      retries: retries,
+      lane: lane,
+      compress: compress,
+      activityIdle: activityIdle,
+      operation: operation,
+      onOperationEvent: onOperationEvent,
+      onOutput: onOutput,
+    );
+  }
+
+  static SSHCommandResult _headers(String body) => SSHCommandResult(
+    exitCode: 0,
+    stdout: 'HTTP/2.0 200 OK\r\n\r\n$body',
+    stderr: '',
+  );
 }
 
 SavedConnection _conn() => const SavedConnection(
@@ -387,5 +469,133 @@ void main() {
     await begin();
     await controller.ensureForgeHostLogin(Forge.github, 'github.com');
     expect(executor.loginCallsFor('gh'), 0);
+  });
+
+  // ---------------------------------------------------------------------
+  // MADR 0038 F1 — a provisioned open is an open.
+  //
+  // `finalizeProvisioned` is the FOURTH path by which a repository becomes the
+  // live workspace (after connect, connectLocal and setRepoPath), and the one
+  // every remote create, clone and open-existing takes. Until this phase it
+  // recorded nothing, so those three never reached the recent list and never
+  // taught the create sheet's namespace field anything (MADR 0037).
+  //
+  // `touch` is NOT the same signal: it is per-connection, and cannot say which
+  // repo on a multi-repo connection was used — the reason RecentReposStore
+  // exists at all.
+  // ---------------------------------------------------------------------
+  group('a finalized session is recorded as an open (MADR 0038 F1)', () {
+    late _RecordingRecents recents;
+
+    ProviderContainer buildRecording({
+      String? originUrl = 'https://gitlab.example/team/subgroup/newrepo.git',
+    }) {
+      manager = _GatedManager();
+      executor = _ForgeAwareExecutor();
+      store = _FakeStore();
+      recents = _RecordingRecents();
+      final c = ProviderContainer(
+        overrides: [
+          sshClientManagerProvider.overrideWithValue(manager),
+          executorProvider.overrideWithValue(executor),
+          gitServiceProvider.overrideWithValue(_OriginGitService(originUrl)),
+          connectionStoreProvider.overrideWithValue(store),
+          recentReposStoreProvider.overrideWithValue(recents),
+          // Required: `_recordOpenedNamespace` resolves the SavedConnection to
+          // choose which of NamespaceHistory's two stores to write to. Without
+          // this the lookup falls through to the real store, whose
+          // SharedPreferences call throws under a plain `test()`, and the
+          // namespace silently goes to the This-Mac store instead.
+          savedConnectionsProvider.overrideWith((ref) async => [_conn()]),
+        ],
+      );
+      addTearDown(c.dispose);
+      return c;
+    }
+
+    test(
+      'the repo lands in the per-repo MRU, not just the connection',
+      () async {
+        container = buildRecording();
+        controller = container.read(connectionProvider.notifier);
+        final token = await begin();
+
+        final ok = await controller.finalizeProvisioned(
+          token: token,
+          conn: _conn(),
+          repoPath: '/existing/newrepo',
+        );
+
+        expect(ok, isTrue);
+        expect(recents.records, hasLength(1));
+        expect(recents.records.single.isLocal, isFalse);
+        expect(recents.records.single.id, 'c1');
+        expect(recents.records.single.repoPath, '/existing/newrepo');
+        expect(
+          store.touched,
+          contains('c1'),
+          reason:
+              'per-connection recency still happens; it is not a substitute',
+        );
+      },
+    );
+
+    test('the namespace it was created in is learned', () async {
+      container = buildRecording();
+      controller = container.read(connectionProvider.notifier);
+      final token = await begin();
+
+      await controller.finalizeProvisioned(
+        token: token,
+        conn: _conn(),
+        repoPath: '/existing/newrepo',
+      );
+      await pump();
+
+      // Written onto the SavedConnection, which is where an SSH target's
+      // history lives (NamespaceHistory's two-store split).
+      final namespaces = store.updated.last.namespacesFor(
+        namespaceHistoryKey(Forge.gitlab, 'gitlab.example'),
+      );
+      expect(namespaces, ['team/subgroup']);
+    });
+
+    test('a repo with no origin records the open but no namespace', () async {
+      container = buildRecording(originUrl: null);
+      controller = container.read(connectionProvider.notifier);
+      final token = await begin();
+
+      await controller.finalizeProvisioned(
+        token: token,
+        conn: _conn(),
+        repoPath: '/existing/newrepo',
+      );
+      await pump();
+
+      expect(recents.records, hasLength(1));
+      expect(
+        store.updated.last.namespacesFor(
+          namespaceHistoryKey(Forge.gitlab, 'gitlab.example'),
+        ),
+        isEmpty,
+      );
+    });
+
+    test('a superseded finalize records nothing', () async {
+      container = buildRecording();
+      controller = container.read(connectionProvider.notifier);
+      final token = await begin();
+      // Supersede the attempt the token was minted under.
+      await controller.disconnect();
+
+      final ok = await controller.finalizeProvisioned(
+        token: token,
+        conn: _conn(),
+        repoPath: '/existing/newrepo',
+      );
+
+      expect(ok, isFalse);
+      expect(recents.records, isEmpty);
+    });
   });
 }

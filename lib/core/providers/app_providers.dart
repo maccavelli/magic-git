@@ -2826,6 +2826,26 @@ class ConnectionController extends Notifier<ConnectionState> {
       // GitService rebuild re-registers every scope from ConnectionState.
       scopedGitDirs: updated.scopedGitDirs,
     );
+
+    // Per-repo recency, exactly as [connect] and [connectLocal] record it.
+    //
+    // **This is the fourth way a repository becomes the live workspace**, and
+    // until MADR 0038 F1 it was the only one that recorded nothing — so the
+    // three most deliberate workspaces a user can produce (a create, a clone or
+    // an open on a host) were the three least likely to appear in their recent
+    // list, and the namespace they went into was never learned (MADR 0037).
+    // The `touch` above is per-CONNECTION recency, which cannot tell which repo
+    // on a multi-repo connection was used; that is the whole reason
+    // [RecentReposStore] exists.
+    //
+    // After the state publish, not before: [_recordOpenedNamespace] reads the
+    // origin through `originUrl`, which needs this session's scope registry and
+    // credential cache live. Before [_watchForDrop], which does not depend on
+    // it. Awaited like the other three call sites — the writer swallows its own
+    // failures, so a finalize can never fail because remembering it did not
+    // work.
+    await _recordRecentOpen(isLocal: false, id: conn.id, repoPath: repoPath);
+
     _watchForDrop(token);
     return true;
   }

@@ -1,0 +1,38 @@
+[
+  {
+    "label": "phase1: finalizeProvisioned records no per-repo recency",
+    "file": "lib/core/providers/app_providers.dart",
+    "find": "    await _recordRecentOpen(isLocal: false, id: conn.id, repoPath: repoPath);",
+    "replace": "    if (repoPath.isEmpty) {\n      await _recordRecentOpen(isLocal: false, id: conn.id, repoPath: repoPath);\n    }",
+    "tests": [
+      "test/connection_provisioning_test.dart"
+    ]
+  },
+  {
+    "label": "phase1: a provisioned open is recorded as a LOCAL open",
+    "file": "lib/core/providers/app_providers.dart",
+    "find": "    await _recordRecentOpen(isLocal: false, id: conn.id, repoPath: repoPath);",
+    "replace": "    await _recordRecentOpen(isLocal: true, id: conn.id, repoPath: repoPath);",
+    "tests": [
+      "test/connection_provisioning_test.dart"
+    ]
+  },
+  {
+    "label": "phase1: the recency write runs BEFORE the state publish",
+    "file": "lib/core/providers/app_providers.dart",
+    "find": "    _invalidateRepoState(); // NB: does not clear the output log\n    state = ConnectionState(",
+    "replace": "    _invalidateRepoState(); // NB: does not clear the output log\n    await _recordRecentOpen(isLocal: false, id: conn.id, repoPath: repoPath);\n    state = ConnectionState(",
+    "tests": [
+      "test/connection_provisioning_test.dart"
+    ]
+  },
+  {
+    "label": "phase1: a superseded finalize records anyway",
+    "file": "lib/core/providers/app_providers.dart",
+    "find": "    if (token != _attempt || conn.id != _lastConnectionId || !ref.mounted) {\n      return false;\n    }",
+    "replace": "    if (token != _attempt || conn.id != _lastConnectionId || !ref.mounted) {\n      await _recordRecentOpen(\n        isLocal: false,\n        id: conn.id,\n        repoPath: repoPath,\n      );\n      return false;\n    }",
+    "tests": [
+      "test/connection_provisioning_test.dart"
+    ]
+  }
+]
