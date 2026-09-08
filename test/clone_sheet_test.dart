@@ -15,6 +15,7 @@ import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 import 'package:remote_magic_git/core/storage/connection_store.dart';
 import 'package:remote_magic_git/core/storage/saved_connection.dart';
+import 'package:remote_magic_git/core/workspace/clone_controller.dart';
 import 'package:remote_magic_git/features/common/buttons.dart';
 import 'package:remote_magic_git/features/workspace/clone_sheet.dart';
 
@@ -120,6 +121,38 @@ class _StubConnection extends ConnectionController {
     aborted.add(token);
     await abortGate?.future;
   }
+
+  /// Recorded, never run (MADR 0036: every SSH clone provisions; without a
+  /// tab host it finalizes here). `repoPathsSet` is "the path this session
+  /// ended on", whichever call set it.
+  final List<({int token, String repoPath})> finalized = [];
+
+  @override
+  Future<bool> finalizeProvisioned({
+    required int token,
+    required SavedConnection conn,
+    required String repoPath,
+    bool enableFsmonitor = false,
+    String label = '',
+    String gitDir = '',
+  }) async {
+    finalized.add((token: token, repoPath: repoPath));
+    repoPathsSet.add(repoPath);
+    return true;
+  }
+
+  final List<String> localConnects = [];
+
+  @override
+  Future<void> connectLocal(
+    String repoPath, {
+    String? label,
+    String? id,
+    String? mainRepoPath,
+    String? gitDir,
+  }) async {
+    localConnects.add(repoPath);
+  }
 }
 
 class _FakeStore extends ConnectionStore {
@@ -143,9 +176,12 @@ const _conn = SavedConnection(
   repoPaths: ['/srv/repo'],
 );
 
+/// [pastDestination] advances off the Destination step the connected wizard
+/// now opens on (MADR 0036, 2A) — see the create harness's twin.
 Future<(_StubConnection, _FakeExecutor, _FakeStore)> _pumpConnected(
-  WidgetTester tester,
-) async {
+  WidgetTester tester, {
+  bool pastDestination = true,
+}) async {
   final stub = _StubConnection(
     const ConnectionState(
       phase: ConnectionPhase.connected,
@@ -174,6 +210,7 @@ Future<(_StubConnection, _FakeExecutor, _FakeStore)> _pumpConnected(
     ),
   );
   await tester.pumpAndSettle();
+  if (pastDestination) await _next(tester);
   return (stub, exec, store);
 }
 
@@ -242,18 +279,22 @@ void main() {
   testWidgets('the progress bar tracks the current step left to right', (
     tester,
   ) async {
-    await _pumpConnected(tester);
-    expect(find.text('Step 1 of 3 — Source'), findsOneWidget);
+    // Deliberately renumbered: the connected wizard gained a Destination step
+    // in front of Source (MADR 0036, 2A), so it is four steps, not three.
+    await _pumpConnected(tester, pastDestination: false);
+    expect(find.text('Step 1 of 4 — Destination'), findsOneWidget);
+    await _next(tester);
+    expect(find.text('Step 2 of 4 — Source'), findsOneWidget);
 
     await tester.tap(find.text('URL'));
     await tester.pumpAndSettle();
     await tester.enterText(_urlField(), 'https://example.com/my-repo.git');
     await tester.pumpAndSettle();
     await _next(tester);
-    expect(find.text('Step 2 of 3 — Location'), findsOneWidget);
+    expect(find.text('Step 3 of 4 — Location'), findsOneWidget);
 
     await _next(tester);
-    expect(find.text('Step 3 of 3 — Review'), findsOneWidget);
+    expect(find.text('Step 4 of 4 — Review'), findsOneWidget);
   });
 
   testWidgets('a successful URL clone persists the repo and activates it', (
@@ -283,10 +324,11 @@ void main() {
       'my-repo',
     ]);
     expect(stub.repoPathsSet, ['/srv/my-repo']);
-    expect(
-      store.updated.single.allRepoPaths,
-      containsAll(['/srv/repo', '/srv/my-repo']),
-    );
+    // Deliberately dropped: `store.updated…allRepoPaths`. The sheet no longer
+    // persists the path; the real `finalizeProvisioned` does (MADR 0036, 3B).
+    // Without a tab host this stub IS that tab, and `repoPathsSet` above is
+    // its finalize.
+    expect(stub.finalized.single.repoPath, '/srv/my-repo');
     expect(find.byType(CloneRepositorySheet), findsNothing, reason: 'popped');
   });
 
@@ -392,29 +434,85 @@ void main() {
   // MADR 0036 Phase 2 — today's connected behaviour, pinned (clone).
   // Phase 5 inverts the first two on purpose and must say so.
   // -------------------------------------------------------------------------
-  testWidgets('pinned: a connected SSH clone lands in the current tab', (
+  testWidgets(
+    'a connected SSH clone provisions in its own tab and leaves the current '
+    'tab alone',
+    (tester) async {
+      // Deliberately inverted from the Phase 2 pin "lands in the current
+      // tab": MADR 0036 decision 3B.
+      final (stub, exec, _) = await _pumpConnected(tester);
+      final tabs = RecordingTabs(tabExecutor: exec);
+      installTabs(tabs);
+      await _toReviewViaUrl(tester, 'https://example.com/my-repo.git');
+      exec.results.add(_ok('absent')); // probe, on the shared executor
+      await tester.tap(_cloneButton());
+      await tester.pump();
+      await tester.pump();
+
+      // Progress is read from the tab running the job: Cancel is offered.
+      expect(find.widgetWithText(AppPushButton, 'Cancel'), findsOneWidget);
+      expect(tabs.opened, hasLength(1), reason: 'one tab was opened');
+      final spawned = tabs.spawned.single;
+      expect(spawned.dialed.single.id, 'c1', reason: 'dialled there');
+
+      await exec.handle.finish(0);
+      await tester.pumpAndSettle();
+
+      expect(exec.streamCalls.single.take(2), ['git', 'clone']);
+      expect(spawned.finalized.single.repoPath, '/srv/my-repo');
+      expect(stub.repoPathsSet, isEmpty, reason: 'this tab did not switch');
+      expect(stub.dialed, isEmpty);
+      expect(find.byType(CloneRepositorySheet), findsNothing, reason: 'popped');
+    },
+  );
+
+  testWidgets('a connected clone sheet shows the Destination step', (
     tester,
   ) async {
-    final tabs = RecordingTabs();
-    installTabs(tabs);
+    // Deliberately inverted from the Phase 2 pin: MADR 0036 decision 2A.
+    await _pumpConnected(tester, pastDestination: false);
+    expect(destinationPopup(), findsOneWidget);
+  });
+
+  testWidgets('a clone refuses at the tab cap and runs nothing', (
+    tester,
+  ) async {
     final (stub, exec, _) = await _pumpConnected(tester);
+    final tabs = RecordingTabs(tabExecutor: exec)..capReached = true;
+    installTabs(tabs);
     await _toReviewViaUrl(tester, 'https://example.com/my-repo.git');
-    exec.results.add(_ok('absent')); // probe
+
+    expect(tester.widget<AppPushButton>(_cloneButton()).onPressed, isNull);
+    expect(find.text(CloneRepositorySheet.capMessage), findsOneWidget);
+    expect(exec.streamCalls, isEmpty);
+    expect(stub.dialed, isEmpty);
+    expect(tabs.connectRan, 0);
+  });
+
+  testWidgets('cancelling a routed clone reaches the tab running the job', (
+    tester,
+  ) async {
+    final (_, exec, _) = await _pumpConnected(tester);
+    final tabs = RecordingTabs(tabExecutor: exec);
+    installTabs(tabs);
+    await _toReviewViaUrl(tester, 'https://example.com/my-repo.git');
+    exec.results.add(_ok('absent'));
+    exec.results.add(_ok('absent')); // cleanup probe after cancel
     await tester.tap(_cloneButton());
     await tester.pump();
     await tester.pump();
-    await exec.handle.finish(0);
+    final runningIn = tabs.tabs.single.container;
+    expect(runningIn.read(cloneJobProvider).isRunning, isTrue);
+
+    await tester.tap(find.widgetWithText(AppPushButton, 'Cancel'));
     await tester.pumpAndSettle();
 
-    expect(stub.repoPathsSet, ['/srv/my-repo'], reason: 'this tab');
-    expect(tabs.opened, isEmpty, reason: 'no tab was opened');
-  });
-
-  testWidgets('pinned: a connected clone sheet shows no Destination step', (
-    tester,
-  ) async {
-    await _pumpConnected(tester);
-    expect(destinationPopup(), findsNothing);
+    expect(
+      runningIn.read(cloneJobProvider).isRunning,
+      isFalse,
+      reason: 'the cancel went to the container running the job',
+    );
+    expect(find.byType(CloneRepositorySheet), findsOneWidget);
   });
 
   testWidgets('a failed clone keeps the sheet open with the error', (
@@ -539,6 +637,10 @@ void main() {
     // WorkspaceProvisioning and the controller's own conn-id check are the
     // backstops, covered in connection_provisioning_test.)
     //
+    // Re-pointed for MADR 0036 (6B): selection no longer dials. The dial
+    // starts at the first commitment to the host — Browse… on the Location
+    // step — and the user can walk Back to the Destination step meanwhile.
+    //
     // Note: no pumpAndSettle once the dial starts — the sheet shows an
     // indeterminate "Connecting…" spinner, which never settles.
     final stub = _StubConnection(const ConnectionState());
@@ -572,14 +674,30 @@ void main() {
       reason: 'enabled before any dial',
     );
 
-    // Select the saved connection: this starts the (gated) dial.
+    // Select the saved connection: no dial yet (6B).
     await tester.tap(find.text('This Mac'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Prod').last);
+    await tester.pumpAndSettle();
+    expect(stub.dialed, isEmpty, reason: 'selection does not dial');
+
+    // Commit to the host: Browse… on the Location step starts the (gated) dial.
+    await _next(tester); // Destination → Source
+    await tester.tap(find.text('URL'));
+    await tester.pumpAndSettle();
+    await tester.enterText(_urlField(), 'https://example.com/my-repo.git');
+    await tester.pumpAndSettle();
+    await _next(tester); // Source → Location
+    await tester.tap(find.widgetWithText(AppPushButton, 'Browse…').first);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 50));
     expect(stub.dialed, ['c1'], reason: 'the dial should have started');
 
+    // Walk back to Destination while it dials: the control is inert.
+    await tester.tap(find.widgetWithText(AppPushButton, 'Back'));
+    await tester.pump();
+    await tester.tap(find.widgetWithText(AppPushButton, 'Back'));
+    await tester.pump();
     expect(
       destination().onChanged,
       isNull,
@@ -590,6 +708,13 @@ void main() {
     stub.dialGate!.complete(7);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 50));
+    // The dial's continuation opened the directory browser; dismiss it.
+    await tester.tap(
+      find
+          .byWidgetPredicate((w) => w is MacosTooltip && w.message == 'Close')
+          .last,
+    );
+    await tester.pumpAndSettle();
     expect(
       destination().onChanged,
       isNotNull,
@@ -623,13 +748,34 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      // Adopt a session, so resetProvisioning has a token to hang up.
+      // Adopt a session, so resetProvisioning has a token to hang up. Under
+      // MADR 0036 (6B) selection no longer dials: Browse… on the Location
+      // step is the first commitment to the host.
       await tester.tap(find.byType(MacosPopupButton<String?>));
       await tester.pumpAndSettle();
       await tester.tap(find.text(_conn.displayName).last);
       await tester.pumpAndSettle();
+      await _next(tester); // Destination → Source
+      await tester.tap(find.text('URL'));
+      await tester.pumpAndSettle();
+      await tester.enterText(_urlField(), 'https://example.com/my-repo.git');
+      await tester.pumpAndSettle();
+      await _next(tester); // Source → Location
+      await tester.tap(find.widgetWithText(AppPushButton, 'Browse…').first);
+      await tester.pumpAndSettle();
+      expect(stub.dialed, ['c1'], reason: 'Browse… adopted a session');
+      await tester.tap(
+        find
+            .byWidgetPredicate((w) => w is MacosTooltip && w.message == 'Close')
+            .last,
+      );
+      await tester.pumpAndSettle();
 
-      // Switch back to This Mac: the hang-up parks.
+      // Back to Destination, switch to This Mac: the hang-up parks.
+      await tester.tap(find.widgetWithText(AppPushButton, 'Back'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(AppPushButton, 'Back'));
+      await tester.pumpAndSettle();
       await tester.tap(find.byType(MacosPopupButton<String?>));
       await tester.pumpAndSettle();
       await tester.tap(find.text('This Mac').last);

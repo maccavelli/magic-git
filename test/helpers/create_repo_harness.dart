@@ -492,7 +492,7 @@ SSHCommandResult? localCreateOk(List<String> args) =>
 /// exactly: `openOrFocus` returns the active tab and never runs `connect`
 /// (`tabs_controller.dart:289-292`).
 class RecordingTabs extends TabsController {
-  RecordingTabs({FakeCreateExecutor? exec})
+  RecordingTabs({FakeCreateExecutor? exec, this.tabExecutor})
     : exec = exec ?? FakeCreateExecutor(),
       super(containerFactory: _factory);
 
@@ -500,7 +500,11 @@ class RecordingTabs extends TabsController {
   /// containers all share it, so a test can queue results and assert argv.
   final FakeCreateExecutor exec;
 
-  static late FakeCreateExecutor _tabExec;
+  /// A different executor for the spawned tabs, when a test's own double is
+  /// the one that must see the work — the clone tests' streaming fake.
+  final CommandExecutor? tabExecutor;
+
+  static late CommandExecutor _tabExec;
   static int? _spawnedDial = 7;
   static Completer<int?>? _spawnedDialGate;
 
@@ -593,7 +597,7 @@ class RecordingTabs extends TabsController {
 /// `TabsController.current`, and undoes it when the test ends — the same
 /// pair `tabs_host.dart:126` / `:166-167` performs.
 void installTabs(RecordingTabs tabs) {
-  RecordingTabs._tabExec = tabs.exec;
+  RecordingTabs._tabExec = tabs.tabExecutor ?? tabs.exec;
   RecordingTabs._spawnedDial = tabs.spawnedDialResult;
   RecordingTabs._spawnedDialGate = tabs.spawnedDialGate;
   TabsController.current = tabs;

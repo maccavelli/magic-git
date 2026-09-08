@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/cupertino.dart' hide ConnectionState;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
@@ -5,6 +7,7 @@ import 'package:macos_ui/macos_ui.dart';
 import '../../core/forge/forge.dart';
 import '../../core/forge/forge_repo_summary.dart';
 import '../../core/git/host_fs_service.dart';
+import '../../core/local/scoped_access.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/utils/display_error.dart';
 import '../../core/utils/posix_path.dart';
@@ -16,8 +19,11 @@ import '../common/field_styles.dart';
 import '../common/sized_sheet.dart';
 import '../common/tappable.dart';
 import '../common/tool_icon_button.dart';
+import '../connection/local_repo_form.dart' show LocalOpenGrants;
+import '../tabs/tabs_controller.dart';
 import 'wizard.dart';
 import 'workspace_destination.dart';
+import 'workspace_open_in_tab.dart';
 import 'workspace_pickers.dart';
 import 'workspace_provisioning.dart';
 import 'workspace_registration.dart';
@@ -46,6 +52,15 @@ class CloneRepositorySheet extends ConsumerStatefulWidget {
   /// sheet pops on success. Overridable so tests don't wait it out.
   @visibleForTesting
   static Duration successPopDelay = const Duration(milliseconds: 600);
+
+  /// See `CreateRepositorySheet.scopedAccess` — the same test seam.
+  static ScopedAccess scopedAccess = ScopedAccess.instance;
+
+  /// Shown when a clone that would open a tab is refused at the tab cap
+  /// (MADR 0036, 7A).
+  static String get capMessage =>
+      'All ${TabsController.maxTabs} tabs are open — close one to '
+      'clone a repository.';
 
   @override
   ConsumerState<CloneRepositorySheet> createState() =>
@@ -111,7 +126,7 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet>
           'Choose where the clone will live: on this Mac, or on one of your '
           'saved SSH hosts. Picking a host connects to it on demand — the '
           'clone runs there and nothing is copied to this Mac.',
-      applicable: () => widget.landing,
+      applicable: () => true,
       valid: () => !provisioning,
       body: _destinationSection,
     ),
@@ -192,6 +207,11 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet>
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) ref.read(cloneJobProvider.notifier).reset();
     });
+    if (!widget.landing) {
+      // Open on the destination the user is in (MADR 0036, 2A).
+      final conn = ref.read(connectionProvider);
+      _destConnectionId = conn.isLocal ? null : conn.connectionId;
+    }
     _recomputeTarget();
   }
 
@@ -201,7 +221,8 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet>
     // A barrier-dismiss / route teardown skips _requestClose — hang up any
     // still-provisioned session instead of leaking it (0009 M29; same
     // fire-and-forget pattern as AddExistingRepoSheet's dispose).
-    resetProvisioning();
+    unawaited(_abandonProvisionTab());
+    _routedJob?.close();
     _host.dispose();
     _filter.dispose();
     _url.dispose();
@@ -222,22 +243,16 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet>
   /// prefills the SSH parent path when connected.
   void _recomputeTarget() {
     final conn = ref.read(connectionProvider);
-    final WorkspaceTarget target;
-    if (!widget.landing) {
-      target = conn.isLocal
-          ? WorkspaceTarget.localMac
-          : WorkspaceTarget.sshActive;
-      if (target == WorkspaceTarget.sshActive &&
-          _parent.text.isEmpty &&
-          conn.repoPath != null) {
-        _parent.text = dirname(conn.repoPath!);
-      }
-    } else {
-      target = _destConnectionId == null
-          ? WorkspaceTarget.localMac
-          : WorkspaceTarget.sshProvision;
+    // One rule for both variants (MADR 0036, 3B) — see the create sheet.
+    _target = _destConnectionId == null
+        ? WorkspaceTarget.localMac
+        : WorkspaceTarget.sshProvision;
+    if (_target == WorkspaceTarget.sshProvision &&
+        _destConnectionId == conn.connectionId &&
+        _parent.text.isEmpty &&
+        conn.repoPath != null) {
+      _parent.text = dirname(conn.repoPath!);
     }
-    _target = target;
   }
 
   bool get _isLocalTarget => _target == WorkspaceTarget.localMac;
@@ -260,8 +275,9 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet>
       _target != WorkspaceTarget.sshProvision || provisionToken != null;
 
   Future<void> _onDestChanged(String? connectionId) async {
-    // Switching destination abandons any in-flight provisioning.
-    await resetProvisioning();
+    // Switching destination abandons any in-flight provisioning, and the tab
+    // it was dialled in.
+    await _abandonProvisionTab();
     // The hang-up above is a real network round trip once a session has been
     // adopted, and the sheet can be dismissed inside that window (MADR 0034
     // F4) — so `mounted` is re-checked on THIS side of the await, not only
@@ -272,14 +288,58 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet>
       _error = null;
       _recomputeTarget();
     });
-    if (_target == WorkspaceTarget.sshProvision) {
-      await ensureProvisioned();
-    }
+    // No dial here (MADR 0036, 6B): dialled — in its own tab — at the first
+    // commitment to the host, Browse… or Clone.
   }
 
   bool get _canSubmit {
     if (_submitting || _finished) return false;
+    if (_refusedAtTabCap) return false;
     return _activeSteps.every((s) => s.valid());
+  }
+
+  /// See the create sheet's twin (MADR 0036, 3B/5B/7A).
+  bool get _opensNewTab => !_isLocalTarget || _saveLocal;
+  bool get _refusedAtTabCap =>
+      _opensNewTab &&
+      _provisionTab == null &&
+      !(TabsController.current?.canOpenTab ?? true);
+
+  /// The tab an SSH clone dials in and runs its job in — see the create
+  /// sheet's `_provisionTab` (MADR 0036, 1C/6B, Deviation 2).
+  RepoTab? _provisionTab;
+  String? _originTabId;
+
+  /// The container the clone job runs in, when routed; null for this tab.
+  ProviderContainer? _jobContainer;
+  ProviderSubscription<CloneJobState>? _routedJob;
+
+  Future<bool> _ensureProvisionTab() async {
+    if (_provisionTab != null) return true;
+    final tabs = TabsController.current;
+    if (tabs == null) return true;
+    if (!tabs.canOpenTab) return false;
+    _originTabId = tabs.activeId;
+    final tab = tabs.newTab();
+    _provisionTab = tab;
+    provisionTarget = tab.container;
+    return true;
+  }
+
+  Future<void> _abandonProvisionTab() async {
+    final tab = _provisionTab;
+    _provisionTab = null;
+    provisionTarget = null;
+    _routedJob?.close();
+    _routedJob = null;
+    _jobContainer = null;
+    await resetProvisioning();
+    if (tab == null) return;
+    final tabs = TabsController.current;
+    if (tabs == null || tab.id == _originTabId) return;
+    await tabs.close(tab.id);
+    final origin = _originTabId;
+    if (origin != null) tabs.activate(origin);
   }
 
   Future<void> _submit() async {
@@ -288,11 +348,30 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet>
       _submitting = true;
       _error = null;
     });
+    // Captured once — `ref` follows the active tab (see the create sheet).
+    final own = ProviderScope.containerOf(context, listen: false);
+    RepoTab? tab;
     try {
-      // Ensure the destination session is live (landing → connection).
-      if (!await ensureProvisioned()) {
-        return; // _error already set by ensureProvisioned
+      if (!_isLocalTarget) {
+        if (!await _ensureProvisionTab()) {
+          setState(() => _error = CloneRepositorySheet.capMessage);
+          return;
+        }
+        tab = _provisionTab;
+        if (!await ensureProvisioned()) {
+          await _abandonProvisionTab();
+          return; // _error already set by ensureProvisioned
+        }
+        if (!mounted) return;
       }
+      final runIn = tab?.container ?? own;
+      _jobContainer = tab == null ? null : runIn;
+      _routedJob?.close();
+      _routedJob = tab == null
+          ? null
+          : runIn.listen(cloneJobProvider, (_, _) {
+              if (mounted) setState(() {});
+            });
 
       final name = _name.text.trim();
       final parentDir = _isLocalTarget ? _pickedParent! : _parent.text.trim();
@@ -320,20 +399,22 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet>
         local: _isLocalTarget,
       );
 
-      final ok = await ref.read(cloneJobProvider.notifier).run(request);
+      final ok = await runIn.read(cloneJobProvider.notifier).run(request);
       if (!mounted) return;
       if (!ok) {
-        // Clone failed/cancelled — surface it; keep any provisioning alive so
-        // the user can fix the input and retry without re-handshaking.
+        // Clone failed/cancelled — surface it; keep any provisioning alive
+        // (and the tab it was dialled in) so the user can fix the input and
+        // retry without re-handshaking.
         setState(() {
           _error =
-              ref.read(cloneJobProvider).error ?? 'The clone did not complete.';
+              runIn.read(cloneJobProvider).error ??
+              'The clone did not complete.';
         });
         return;
       }
 
       final dest = HostFsService.joinPath(parentDir, name);
-      final registered = await _register(dest);
+      final registered = await _openResult(dest, own: own, tab: tab);
       if (!mounted) return;
       if (!registered) {
         // The clone landed on disk but never became the live workspace —
@@ -344,8 +425,13 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet>
         });
         return;
       }
-      // Provisioning (if any) has been finalized by _register; don't abort it.
+      // The dialled tab is the workspace now: nothing left to abort or close.
       provisionToken = null;
+      _provisionTab = null;
+      provisionTarget = null;
+      _routedJob?.close();
+      _routedJob = null;
+      _jobContainer = null;
       // The repository is on disk and open — remember the namespace it came
       // from, so the next create offers it (MADR 0032 Phase 7).
       await _rememberNamespace(source);
@@ -425,25 +511,91 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet>
   String? _effectiveConnectionId(String? activeId) =>
       _isLocalTarget ? null : (_destConnectionId ?? activeId);
 
-  Future<bool> _register(String dest) => registerAndActivate(
-    ref,
-    target: _target,
-    dest: dest,
-    localLabel: _localLabel.text.trim(),
-    saveLocal: _saveLocal,
-    remoteLabel: _remoteLabel.text.trim(),
-    fsmonitor: _fsmonitor,
-    connection: () => connectionById(_destConnectionId),
-    provisionToken: provisionToken,
-  );
+  /// The container the clone job runs in: the dialled tab's when routed,
+  /// else this sheet's. Progress, cancel and reset all go through it.
+  ProviderContainer get _jobScope =>
+      _jobContainer ?? ProviderScope.containerOf(context, listen: false);
+
+  /// Where the cloned repository opens (MADR 0036, 3B) — the create sheet's
+  /// `_openResult`, clone-shaped.
+  Future<bool> _openResult(
+    String dest, {
+    required ProviderContainer own,
+    required RepoTab? tab,
+  }) async {
+    final tabs = TabsController.current;
+    if (_isLocalTarget) {
+      final label = _localLabel.text.trim();
+      if (!_saveLocal) {
+        return registerAndActivateLocal(
+          ref,
+          dest: dest,
+          label: label,
+          save: false,
+        );
+      }
+      final saved = await saveLocalRepo(
+        ref,
+        id: DateTime.now().microsecondsSinceEpoch.toString(),
+        dest: dest,
+        label: label,
+      );
+      if (saved == null) return false;
+      if (tabs == null) {
+        await own
+            .read(connectionProvider.notifier)
+            .connectLocal(
+              dest,
+              label: label.isEmpty ? null : label,
+              id: saved.id,
+            );
+        return own.read(connectionProvider).isConnected;
+      }
+      final access = CloneRepositorySheet.scopedAccess;
+      var path = dest;
+      if (saved.bookmarkData.isNotEmpty) {
+        path = await access.acquire(saved.bookmarkData) ?? dest;
+      }
+      final opened = await openLocalRepoInTab(
+        tabs: tabs,
+        repo: saved,
+        grants: LocalOpenGrants(path),
+        scopedAccess: access,
+      );
+      return opened != null;
+    }
+    final conn = await connectionById(_destConnectionId);
+    final token = provisionToken;
+    if (conn == null || token == null) return false;
+    if (tab == null) {
+      return own
+          .read(connectionProvider.notifier)
+          .finalizeProvisioned(
+            token: token,
+            conn: conn,
+            repoPath: dest,
+            enableFsmonitor: _fsmonitor,
+            label: _remoteLabel.text.trim(),
+          );
+    }
+    return finalizeProvisionedInTab(
+      tab: tab,
+      conn: conn,
+      token: token,
+      dest: dest,
+      fsmonitor: _fsmonitor,
+      label: _remoteLabel.text.trim(),
+    );
+  }
 
   Future<void> _requestClose() async {
-    final job = ref.read(cloneJobProvider);
+    final job = _jobScope.read(cloneJobProvider);
     if (job.isRunning) {
-      await ref.read(cloneJobProvider.notifier).cancel();
+      await _jobScope.read(cloneJobProvider.notifier).cancel();
     }
-    ref.read(cloneJobProvider.notifier).reset();
-    await resetProvisioning();
+    _jobScope.read(cloneJobProvider.notifier).reset();
+    // Cancelling the sheet abandons a tab kept open for a retry (6B).
+    await _abandonProvisionTab();
     if (mounted) Navigator.of(context).pop();
   }
 
@@ -460,6 +612,10 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet>
   }
 
   Future<void> _browseRemote() async {
+    if (!await _ensureProvisionTab()) {
+      setState(() => _error = CloneRepositorySheet.capMessage);
+      return;
+    }
     if (!await ensureProvisioned()) return;
     if (!mounted) return;
     final picked = await browseRemoteDirectory(
@@ -477,7 +633,9 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet>
   @override
   Widget build(BuildContext context) {
     final typography = MacosTheme.of(context).typography;
-    final job = ref.watch(cloneJobProvider);
+    final CloneJobState job = _jobContainer == null
+        ? ref.watch(cloneJobProvider)
+        : _jobContainer!.read(cloneJobProvider);
     final running = job.isRunning || _submitting;
     final forge = _forge;
     if (forge != null) {
@@ -564,6 +722,9 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet>
       remoteHint:
           'The repository is cloned on the selected host over SSH — '
           'its own git and forge sign-ins are used.',
+      selectedLabel: ref.watch(
+        connectionProvider.select((c) => c.connectionLabel),
+      ),
     );
   }
 
@@ -959,7 +1120,14 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet>
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        if (_refusedAtTabCap)
+          WizardReviewRow('Cannot clone', CloneRepositorySheet.capMessage),
         WizardReviewRow('Destination', destText),
+        if (_isLocalTarget && !_saveLocal)
+          const WizardReviewRow(
+            'Tab',
+            'Opens in this tab (not saved to Local Repositories)',
+          ),
         WizardReviewRow('Source', sourceText),
         WizardReviewRow('Folder', '${_name.text.trim()} in $parentText'),
         if (!_isLocalTarget && _remoteLabel.text.trim().isNotEmpty)
@@ -1002,7 +1170,7 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet>
           AppPushButton(
             controlSize: ControlSize.large,
             secondary: true,
-            onPressed: () => ref.read(cloneJobProvider.notifier).cancel(),
+            onPressed: () => _jobScope.read(cloneJobProvider.notifier).cancel(),
             child: const Text('Cancel'),
           )
         else ...[

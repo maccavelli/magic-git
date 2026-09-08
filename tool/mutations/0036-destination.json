@@ -160,5 +160,59 @@
     "tests": [
       "test/create_repo_sheet_test.dart"
     ]
+  },
+  {
+    "label": "phase5: clone's Destination step gated to landing again",
+    "file": "lib/features/workspace/clone_sheet.dart",
+    "find": "      applicable: () => true,\n",
+    "replace": "      applicable: () => widget.landing,\n",
+    "tests": [
+      "test/clone_sheet_test.dart"
+    ]
+  },
+  {
+    "label": "phase5: clone cap gate removed",
+    "file": "lib/features/workspace/clone_sheet.dart",
+    "find": "    if (_refusedAtTabCap) return false;\n",
+    "replace": "",
+    "tests": [
+      "test/clone_sheet_test.dart"
+    ]
+  },
+  {
+    "label": "phase5: clone job runs in the sheet's own container",
+    "file": "lib/features/workspace/clone_sheet.dart",
+    "find": "      final ok = await runIn.read(cloneJobProvider.notifier).run(request);",
+    "replace": "      final ok = await ref.read(cloneJobProvider.notifier).run(request);",
+    "tests": [
+      "test/clone_sheet_test.dart"
+    ]
+  },
+  {
+    "label": "phase5: clone progress read from the sheet's own container",
+    "file": "lib/features/workspace/clone_sheet.dart",
+    "find": "    final CloneJobState job = _jobContainer == null\n        ? ref.watch(cloneJobProvider)\n        : _jobContainer!.read(cloneJobProvider);",
+    "replace": "    final CloneJobState job = ref.watch(cloneJobProvider);",
+    "tests": [
+      "test/clone_sheet_test.dart"
+    ]
+  },
+  {
+    "label": "phase5: clone cancel sent to the sheet's own container",
+    "file": "lib/features/workspace/clone_sheet.dart",
+    "find": "            onPressed: () => _jobScope.read(cloneJobProvider.notifier).cancel(),",
+    "replace": "            onPressed: () => ref.read(cloneJobProvider.notifier).cancel(),",
+    "tests": [
+      "test/clone_sheet_test.dart"
+    ]
+  },
+  {
+    "label": "phase5: clone dials on selection again (6A)",
+    "file": "lib/features/workspace/clone_sheet.dart",
+    "find": "    // No dial here (MADR 0036, 6B): dialled \u2014 in its own tab \u2014 at the first\n    // commitment to the host, Browse\u2026 or Clone.\n  }",
+    "replace": "    if (_target == WorkspaceTarget.sshProvision) {\n      await ensureProvisioned();\n    }\n  }",
+    "tests": [
+      "test/clone_sheet_test.dart"
+    ]
   }
 ]
