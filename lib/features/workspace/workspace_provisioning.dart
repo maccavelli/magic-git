@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/providers/app_providers.dart';
 import '../../core/storage/saved_connection.dart';
+import 'workspace_flow.dart';
 
 /// The "dial a saved SSH connection so this sheet can work on its host" step,
 /// shared by the clone and create-repo sheets.
@@ -26,15 +27,21 @@ mixin WorkspaceProvisioning<T extends ConsumerStatefulWidget>
   /// this (see the class doc), and their wizard steps treat it as invalid.
   bool provisioning = false;
 
-  /// The container the dial runs in. Null means the sheet's own — the landing
-  /// page, whose tab is blank and free to claim. A connected sheet sets this
-  /// to a **new** tab's container before dialling, so `beginProvisioning`'s
-  /// session takeover lands on a tab nobody is working in (MADR 0036, 1C).
-  ProviderContainer? provisionTarget;
+  /// The tab lifecycle this sheet's work runs in — claiming a tab, giving it
+  /// back (MADR 0038 F7). Supplied by the host sheet, which builds it once.
+  ///
+  /// The **session** stays here rather than moving into it: [ensureProvisioned]
+  /// interleaves `mounted` checks and `setState` with a mid-dial guard that
+  /// re-reads live sheet state after an await (the 0022 H4 fix), so it is not
+  /// splittable — and, being one implementation already, is not duplication.
+  WorkspaceFlow get flow;
 
-  /// The container to dial in: [provisionTarget] when set, else this sheet's.
-  ProviderContainer get _dialContainer =>
-      provisionTarget ?? ProviderScope.containerOf(context, listen: false);
+  /// The container to dial in: the flow's claimed tab when it has one, else
+  /// this sheet's own — the landing page, whose tab is blank and free to
+  /// claim. A connected sheet claims a **new** tab before dialling, so
+  /// `beginProvisioning`'s session takeover lands on a tab nobody is working
+  /// in (MADR 0036, 1C).
+  ProviderContainer get _dialContainer => flow.container;
 
   /// The saved connection currently chosen as the destination, or null for
   /// "This Mac".

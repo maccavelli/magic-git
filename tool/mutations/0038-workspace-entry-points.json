@@ -34,5 +34,77 @@
     "tests": [
       "test/connection_provisioning_test.dart"
     ]
+  },
+  {
+    "label": "phase2: the flow re-resolves its container instead of keeping the captured one",
+    "file": "lib/features/workspace/workspace_flow.dart",
+    "find": "  ProviderContainer get container => _tab?.container ?? origin;",
+    "replace": "  ProviderContainer get container =>\n      tabs?.active?.container ?? _tab?.container ?? origin;",
+    "tests": [
+      "test/workspace_flow_test.dart"
+    ]
+  },
+  {
+    "label": "phase2: abandon does not close the dialled tab",
+    "file": "lib/features/workspace/workspace_flow.dart",
+    "find": "    await controller.close(claimed.id);",
+    "replace": "    if (claimed.id.isEmpty) await controller.close(claimed.id);",
+    "tests": [
+      "test/workspace_flow_test.dart"
+    ]
+  },
+  {
+    "label": "phase2: abandon does not return to the origin tab",
+    "file": "lib/features/workspace/workspace_flow.dart",
+    "find": "    final origin = _originTabId;\n    if (origin != null) controller.activate(origin);",
+    "replace": "    final origin = _originTabId;\n    if (origin == null) controller.activate('nope');",
+    "tests": [
+      "test/workspace_flow_test.dart"
+    ]
+  },
+  {
+    "label": "phase2: abandon closes a reused blank tab too",
+    "file": "lib/features/workspace/workspace_flow.dart",
+    "find": "    if (controller == null || claimed.id == _originTabId) return;",
+    "replace": "    if (controller == null) return;",
+    "tests": [
+      "test/workspace_flow_test.dart"
+    ]
+  },
+  {
+    "label": "phase2: the session is released AFTER the tab is closed",
+    "file": "lib/features/workspace/workspace_flow.dart",
+    "find": "    final claimed = _tab;\n    _tab = null;\n    await releaseSession();",
+    "replace": "    final claimed = _tab;\n    _tab = null;",
+    "tests": [
+      "test/workspace_flow_test.dart"
+    ]
+  },
+  {
+    "label": "phase2: the tab cap is ignored, so a ninth session is spun up",
+    "file": "lib/features/workspace/workspace_flow.dart",
+    "find": "    if (!controller.canOpenTab) return false;",
+    "replace": "    if (false) return false;",
+    "tests": [
+      "test/workspace_flow_test.dart"
+    ]
+  },
+  {
+    "label": "phase2: refusedAtTabCap ignores a tab already held",
+    "file": "lib/features/workspace/workspace_flow.dart",
+    "find": "      opensNewTab && _tab == null && !(tabs?.canOpenTab ?? true);",
+    "replace": "      opensNewTab && !(tabs?.canOpenTab ?? true);",
+    "tests": [
+      "test/workspace_flow_test.dart"
+    ]
+  },
+  {
+    "label": "phase2: keep() closes the tab instead of handing it over",
+    "file": "lib/features/workspace/workspace_flow.dart",
+    "find": "  void keep() {\n    _tab = null;\n    _originTabId = null;\n  }",
+    "replace": "  void keep() {\n    _originTabId = null;\n  }",
+    "tests": [
+      "test/workspace_flow_test.dart"
+    ]
   }
 ]

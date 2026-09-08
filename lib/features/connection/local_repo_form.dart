@@ -19,6 +19,7 @@ import '../common/sized_sheet.dart';
 import '../common/tool_icon_button.dart';
 import '../tabs/tabs_controller.dart';
 import '../workspace/remote_directory_browser.dart';
+import '../workspace/workspace_flow.dart';
 import '../workspace/workspace_open_in_tab.dart';
 import '../workspace/workspace_provisioning.dart';
 
@@ -266,6 +267,17 @@ class _AddExistingRepoSheetState extends ConsumerState<AddExistingRepoSheet>
   bool get _isLocal => _connectionId == null;
 
   @override
+  void initState() {
+    super.initState();
+    // See [_flow]: built here rather than lazily, because `dispose()` reaches
+    // for it and a deactivated element cannot be looked up.
+    _flow = WorkspaceFlow(
+      origin: ProviderScope.containerOf(context, listen: false),
+      accessOverride: AddExistingRepoSheet.scopedAccess,
+    );
+  }
+
+  @override
   void dispose() {
     // Hang up a connection we dialed only to browse, unless a finalize already
     // promoted it to the live session (token nulled). Fire-and-forget: dispose
@@ -280,43 +292,30 @@ class _AddExistingRepoSheetState extends ConsumerState<AddExistingRepoSheet>
   /// commitment to the host — which for this sheet is always Browse…, the only
   /// way to choose a folder on a host — and owned here until the open succeeds
   /// or the sheet is abandoned.
-  RepoTab? _provisionTab;
-  String? _originTabId;
+  /// See the create sheet's `_flow` — one lifecycle, three sheets
+  /// (MADR 0038 F7). This sheet uses the tab half only: its own opens
+  /// (`_openRemote`/`_openLocal`) are differently shaped from the wizards'
+  /// `_openResult`, carrying fsmonitor, persistence and the scoped git-dir as
+  /// separate steps.
+  /// Built in [initState], never lazily: `dispose()` calls
+  /// [_abandonProvisionTab], and a `late final` initialiser reached for the
+  /// first time from there would call `ProviderScope.containerOf` on a
+  /// deactivated element — "Looking up a deactivated widget's ancestor is
+  /// unsafe". Same hazard `WorkspaceProvisioning._notifier` exists to avoid.
+  late final WorkspaceFlow _flow;
 
-  Future<bool> _ensureProvisionTab() async {
-    if (_provisionTab != null) return true;
-    final tabs = TabsController.current;
-    if (tabs == null) return true;
-    if (!tabs.canOpenTab) return false;
-    _originTabId = tabs.activeId;
-    final tab = tabs.newTab();
-    _provisionTab = tab;
-    provisionTarget = tab.container;
-    return true;
-  }
+  @override
+  WorkspaceFlow get flow => _flow;
 
-  Future<void> _abandonProvisionTab() async {
-    final tab = _provisionTab;
-    _provisionTab = null;
-    provisionTarget = null;
-    await resetProvisioning();
-    if (tab == null) return;
-    final tabs = TabsController.current;
-    if (tabs == null || tab.id == _originTabId) return;
-    await tabs.close(tab.id);
-    final origin = _originTabId;
-    if (origin != null) tabs.activate(origin);
-  }
+  Future<void> _abandonProvisionTab() =>
+      _flow.abandon(releaseSession: resetProvisioning);
 
   /// Whether this open ends by opening a tab (MADR 0036, 3B). The exception is
   /// an unsaved local open: with no bookmark to reopen from it opens in place,
   /// as it always did (decision 5B).
   bool get _opensNewTab => !_isLocal || _save;
 
-  bool get _refusedAtTabCap =>
-      _opensNewTab &&
-      _provisionTab == null &&
-      !(TabsController.current?.canOpenTab ?? true);
+  bool get _refusedAtTabCap => _flow.refusedAtTabCap(opensNewTab: _opensNewTab);
 
   Future<void> _onLocationChanged(String? id) async {
     if (id == _connectionId || _submitting) return;
@@ -363,7 +362,7 @@ class _AddExistingRepoSheetState extends ConsumerState<AddExistingRepoSheet>
     if (_picking) return;
     setState(() => _picking = true);
     try {
-      if (!await _ensureProvisionTab()) {
+      if (!await _flow.ensureTab()) {
         setState(() => _saveWarning = AddExistingRepoSheet.capMessage);
         return;
       }
@@ -485,7 +484,7 @@ class _AddExistingRepoSheetState extends ConsumerState<AddExistingRepoSheet>
       _saveWarning = null;
     });
     try {
-      if (!await _ensureProvisionTab()) {
+      if (!await _flow.ensureTab()) {
         setState(() => _saveWarning = AddExistingRepoSheet.capMessage);
         return;
       }
@@ -493,7 +492,7 @@ class _AddExistingRepoSheetState extends ConsumerState<AddExistingRepoSheet>
       final conn = await connectionById(_connectionId);
       final token = provisionToken;
       if (conn == null || token == null || !mounted) return;
-      final tab = _provisionTab;
+      final tab = _flow.tab;
       // The session lives in the tab that dialled it, so it is promoted into a
       // workspace there — the tab this sheet was opened from is untouched
       // (MADR 0036, 3B). With no tab host the sheet's own container dialled.
@@ -521,8 +520,7 @@ class _AddExistingRepoSheetState extends ConsumerState<AddExistingRepoSheet>
       if (!ok) return; // superseded by a concurrent connect/disconnect
       // Finalized — the tab IS the workspace now; nothing to abort or close.
       provisionToken = null;
-      _provisionTab = null;
-      provisionTarget = null;
+      _flow.keep();
       final nav = Navigator.of(context);
       if (nav.canPop()) nav.pop();
     } catch (e) {
@@ -617,7 +615,7 @@ class _AddExistingRepoSheetState extends ConsumerState<AddExistingRepoSheet>
       if (!tab.container.read(connectionProvider).isConnected) {
         final error = tab.container.read(connectionProvider).error;
         await tabs.close(tab.id);
-        final origin = _originTabId;
+        final origin = _flow.originTabId;
         if (origin != null) tabs.activate(origin);
         if (!mounted) return;
         setState(

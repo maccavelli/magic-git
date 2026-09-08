@@ -29,6 +29,7 @@ import 'create_repo_steps/namespace_field.dart';
 import 'create_repo_steps/segmented_choice.dart';
 import 'wizard.dart';
 import 'workspace_destination.dart';
+import 'workspace_flow.dart';
 import 'workspace_open_in_tab.dart';
 import 'workspace_pickers.dart';
 import 'workspace_provisioning.dart';
@@ -352,6 +353,10 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
   @override
   void initState() {
     super.initState();
+    _flow = WorkspaceFlow(
+      origin: ProviderScope.containerOf(context, listen: false),
+      accessOverride: CreateRepositorySheet.scopedAccess,
+    );
     _unregisterEscape = EscapeDismissRegistry.register(() {
       _requestClose();
       return true;
@@ -483,10 +488,7 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
   /// host with no session there is no current-tab fallback that does not
   /// destroy the workspace the user is in. Refuse up front, and say why
   /// (decision 7A).
-  bool get _refusedAtTabCap =>
-      _opensNewTab &&
-      _provisionTab == null &&
-      !(TabsController.current?.canOpenTab ?? true);
+  bool get _refusedAtTabCap => _flow.refusedAtTabCap(opensNewTab: _opensNewTab);
 
   Future<void> _submit() async {
     if (_submitting || !_canSubmit) return;
@@ -509,11 +511,11 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
         await own.read(localEnvironmentProvider).ensure();
         if (!mounted) return;
       } else {
-        if (!await _ensureProvisionTab()) {
+        if (!await _flow.ensureTab()) {
           setState(() => _error = CreateRepositorySheet.capMessage);
           return;
         }
-        tab = _provisionTab;
+        tab = _flow.tab;
         if (!await ensureProvisioned()) {
           await _abandonProvisionTab();
           return;
@@ -576,8 +578,7 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
       }
       // The dialled tab is the workspace now: nothing left to abort or close.
       provisionToken = null;
-      _provisionTab = null;
-      provisionTarget = null;
+      _flow.keep();
       final warning = outcome.warningText;
       if (warning != null) {
         setState(() => _completedWarning = warning);
@@ -654,47 +655,27 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
     authorEmail: _authorEmailText,
   );
 
-  /// The tab an SSH create dials in (MADR 0036, 1C/6B). Opened at the first
+  /// The tab an SSH create dials in (MADR 0036, 1C/6B), claimed at the first
   /// commitment to the host — Browse… or Create, whichever comes first
-  /// (Deviation 2) — and owned by this sheet until the create succeeds, when
-  /// it becomes the workspace, or the sheet is abandoned, when it is closed.
-  RepoTab? _provisionTab;
+  /// (Deviation 2) — and owned until the create succeeds, when it becomes the
+  /// workspace, or the sheet is abandoned, when it is closed.
+  ///
+  /// The lifecycle itself lives in [WorkspaceFlow]: this sheet, the clone
+  /// sheet and the add-existing sheet each carried a copy, byte-identical
+  /// between two of them (MADR 0038 F7).
+  ///
+  /// Built in [initState], never lazily: `dispose()` calls
+  /// [_abandonProvisionTab], and a `late final` initialiser reached for the
+  /// first time from there would call `ProviderScope.containerOf` on a
+  /// deactivated element — "Looking up a deactivated widget's ancestor is
+  /// unsafe". Same hazard `WorkspaceProvisioning._notifier` exists to avoid.
+  late final WorkspaceFlow _flow;
 
-  /// The tab the wizard was opened from, to return to after an abandon.
-  String? _originTabId;
+  @override
+  WorkspaceFlow get flow => _flow;
 
-  /// Makes sure there is a container to dial in. Returns false only when
-  /// refused at the tab cap. Without a tab host at all (no `TabsController`)
-  /// the sheet's own container is used — today's landing behaviour, which is
-  /// also what `newTab()` yields on the landing page: the active tab is blank
-  /// and is reused rather than duplicated.
-  Future<bool> _ensureProvisionTab() async {
-    if (_provisionTab != null) return true;
-    final tabs = TabsController.current;
-    if (tabs == null) return true;
-    if (!tabs.canOpenTab) return false;
-    _originTabId = tabs.activeId;
-    final tab = tabs.newTab();
-    _provisionTab = tab;
-    provisionTarget = tab.container;
-    return true;
-  }
-
-  /// Hangs up whatever was dialled and closes the tab this sheet opened. A
-  /// blank tab it merely reused (the landing page) is left as it was. Safe
-  /// from `dispose()`: nothing here touches `ref`.
-  Future<void> _abandonProvisionTab() async {
-    final tab = _provisionTab;
-    _provisionTab = null;
-    provisionTarget = null;
-    await resetProvisioning();
-    if (tab == null) return;
-    final tabs = TabsController.current;
-    if (tabs == null || tab.id == _originTabId) return;
-    await tabs.close(tab.id);
-    final origin = _originTabId;
-    if (origin != null) tabs.activate(origin);
-  }
+  Future<void> _abandonProvisionTab() =>
+      _flow.abandon(releaseSession: resetProvisioning);
 
   /// Where the created repository opens (MADR 0036, 3B): its own tab —
   /// except an unsaved local create, which has no bookmark to reopen from and
@@ -811,7 +792,7 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
   }
 
   Future<void> _browseRemoteFolder() async {
-    if (!await _ensureProvisionTab()) {
+    if (!await _flow.ensureTab()) {
       setState(() => _error = CreateRepositorySheet.capMessage);
       return;
     }
@@ -830,7 +811,7 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
   }
 
   Future<void> _browseRemote() async {
-    if (!await _ensureProvisionTab()) {
+    if (!await _flow.ensureTab()) {
       setState(() => _error = CreateRepositorySheet.capMessage);
       return;
     }

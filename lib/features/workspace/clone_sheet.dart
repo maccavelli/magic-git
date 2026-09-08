@@ -23,6 +23,7 @@ import '../connection/local_repo_form.dart' show LocalOpenGrants;
 import '../tabs/tabs_controller.dart';
 import 'wizard.dart';
 import 'workspace_destination.dart';
+import 'workspace_flow.dart';
 import 'workspace_open_in_tab.dart';
 import 'workspace_pickers.dart';
 import 'workspace_provisioning.dart';
@@ -198,6 +199,10 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet>
   @override
   void initState() {
     super.initState();
+    _flow = WorkspaceFlow(
+      origin: ProviderScope.containerOf(context, listen: false),
+      accessOverride: CloneRepositorySheet.scopedAccess,
+    );
     _unregisterEscape = EscapeDismissRegistry.register(() {
       _requestClose();
       return true;
@@ -300,47 +305,35 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet>
 
   /// See the create sheet's twin (MADR 0036, 3B/5B/7A).
   bool get _opensNewTab => !_isLocalTarget || _saveLocal;
-  bool get _refusedAtTabCap =>
-      _opensNewTab &&
-      _provisionTab == null &&
-      !(TabsController.current?.canOpenTab ?? true);
+  bool get _refusedAtTabCap => _flow.refusedAtTabCap(opensNewTab: _opensNewTab);
 
   /// The tab an SSH clone dials in and runs its job in — see the create
-  /// sheet's `_provisionTab` (MADR 0036, 1C/6B, Deviation 2).
-  RepoTab? _provisionTab;
-  String? _originTabId;
+  /// sheet's `_flow` (MADR 0036, 1C/6B, Deviation 2; MADR 0038 F7).
+  /// Built in [initState], never lazily: `dispose()` calls
+  /// [_abandonProvisionTab], and a `late final` initialiser reached for the
+  /// first time from there would call `ProviderScope.containerOf` on a
+  /// deactivated element — "Looking up a deactivated widget's ancestor is
+  /// unsafe". Same hazard `WorkspaceProvisioning._notifier` exists to avoid.
+  late final WorkspaceFlow _flow;
+
+  @override
+  WorkspaceFlow get flow => _flow;
 
   /// The container the clone job runs in, when routed; null for this tab.
   ProviderContainer? _jobContainer;
   ProviderSubscription<CloneJobState>? _routedJob;
 
-  Future<bool> _ensureProvisionTab() async {
-    if (_provisionTab != null) return true;
-    final tabs = TabsController.current;
-    if (tabs == null) return true;
-    if (!tabs.canOpenTab) return false;
-    _originTabId = tabs.activeId;
-    final tab = tabs.newTab();
-    _provisionTab = tab;
-    provisionTarget = tab.container;
-    return true;
-  }
-
-  Future<void> _abandonProvisionTab() async {
-    final tab = _provisionTab;
-    _provisionTab = null;
-    provisionTarget = null;
-    _routedJob?.close();
-    _routedJob = null;
-    _jobContainer = null;
-    await resetProvisioning();
-    if (tab == null) return;
-    final tabs = TabsController.current;
-    if (tabs == null || tab.id == _originTabId) return;
-    await tabs.close(tab.id);
-    final origin = _originTabId;
-    if (origin != null) tabs.activate(origin);
-  }
+  /// The routed-job teardown runs BEFORE the session is released, exactly as
+  /// the hand-rolled copy ordered it — which is why [WorkspaceFlow.abandon]
+  /// takes a callback rather than calling `resetProvisioning` itself.
+  Future<void> _abandonProvisionTab() => _flow.abandon(
+    releaseSession: () async {
+      _routedJob?.close();
+      _routedJob = null;
+      _jobContainer = null;
+      await resetProvisioning();
+    },
+  );
 
   Future<void> _submit() async {
     if (_submitting || !_canSubmit) return;
@@ -353,11 +346,11 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet>
     RepoTab? tab;
     try {
       if (!_isLocalTarget) {
-        if (!await _ensureProvisionTab()) {
+        if (!await _flow.ensureTab()) {
           setState(() => _error = CloneRepositorySheet.capMessage);
           return;
         }
-        tab = _provisionTab;
+        tab = _flow.tab;
         if (!await ensureProvisioned()) {
           await _abandonProvisionTab();
           return; // _error already set by ensureProvisioned
@@ -427,8 +420,7 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet>
       }
       // The dialled tab is the workspace now: nothing left to abort or close.
       provisionToken = null;
-      _provisionTab = null;
-      provisionTarget = null;
+      _flow.keep();
       _routedJob?.close();
       _routedJob = null;
       _jobContainer = null;
@@ -612,7 +604,7 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet>
   }
 
   Future<void> _browseRemote() async {
-    if (!await _ensureProvisionTab()) {
+    if (!await _flow.ensureTab()) {
       setState(() => _error = CloneRepositorySheet.capMessage);
       return;
     }

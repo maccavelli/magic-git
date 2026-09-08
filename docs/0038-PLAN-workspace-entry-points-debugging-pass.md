@@ -25,7 +25,7 @@ targetable again, and every remote create/clone/open lands in Recents.
 | --- | --- | --- |
 | 1 | F1 — record per-repo recency in `finalizeProvisioned` | `lib/core/providers/app_providers.dart`, `test/connection_provisioning_test.dart`, `docs/0037-PLAN-*` (amendment) |
 | 2 | F7/F8 — the flow object; port the 4 live registration tests | new `lib/features/workspace/workspace_flow.dart`, `workspace_provisioning.dart`, all three sheets, new `test/workspace_flow_test.dart` |
-| 3 | F3, F9 — container capture and namespace symmetry, on the single copy | `lib/features/workspace/workspace_flow.dart`, `create_repo_sheet.dart`, `clone_sheet.dart`, `test/workspace_flow_test.dart` |
+| 3 | F8, F3, F9 — move `_openResult` and the local registration into the flow (deviation 1); port the 4 live registration tests; container capture; namespace symmetry | `lib/features/workspace/workspace_flow.dart`, `workspace_registration.dart`, `create_repo_sheet.dart`, `clone_sheet.dart`, `test/workspace_flow_test.dart` |
 | 4 | F2, F6 — restore ad-hoc targeting; port the 4 remaining registration tests; delete the dead matrix | `workspace_targets.dart`, `workspace_destination.dart`, `workspace_registration.dart`, `workspace_flow.dart`, both sheets, `test/workspace_flow_test.dart`, **delete `test/workspace_registration_test.dart`**, `test/create_repo_sheet_test.dart`, `test/clone_sheet_test.dart` |
 | 5 | F4, F5 — add-existing seeding and path dedupe | `lib/features/connection/local_repo_form.dart`, `lib/core/storage/local_repo_store.dart`, `test/add_existing_repo_sheet_test.dart`, `test/local_repo_store_test.dart` |
 | 6 | Record | `docs/README.md`, `tool/mutations/0038-*.json`, this plan, the MADR's `verified:` date |
@@ -160,7 +160,7 @@ class WorkspaceFlow {
   bool refusedAtTabCap({required bool opensNewTab});
   Future<bool> ensureTab();
   Future<void> abandon({required Future<void> Function() releaseSession});
-  Future<bool> openResult(WorkspaceOpenRequest request);
+  // openResult arrives in Phase 3 — deviation 1.
 }
 ```
 
@@ -185,7 +185,7 @@ exercise.
 | --- | --- | --- |
 | `_provisionTab`, `_originTabId`, `_ensureProvisionTab`, `_abandonProvisionTab` | all three sheets | `diff` of the block, comments stripped: **byte-identical** create vs. add-existing; clone adds 3 lines of routed-job teardown |
 | `_refusedAtTabCap` | all three sheets | textually identical in all three |
-| `_openResult` | create, clone | `diff` of the exact method bodies: **one line differs**, `CreateRepositorySheet.scopedAccess` vs `CloneRepositorySheet.scopedAccess` |
+| ~~`_openResult`~~ | ~~create, clone~~ | **Deferred to Phase 3 — deviation 1, 2026-09-08.** The `diff` finding stands (the exact method bodies differ by **one line**, the `scopedAccess` static), but the move cannot be pure: see below. |
 
 **Does NOT move — and the first draft was wrong to say it would:**
 
@@ -213,19 +213,26 @@ exercise.
 
 | Sheet | Uses |
 | --- | --- |
-| create | tab lifecycle + `openResult` |
-| clone | tab lifecycle + `openResult` (+ its routed-job teardown via `abandon`'s callback) |
+| create | tab lifecycle (+ `openResult` from Phase 3) |
+| clone | tab lifecycle, with its routed-job teardown via `abandon`'s callback (+ `openResult` from Phase 3) |
 | add-existing | tab lifecycle **only** — it has no `_openResult`; `_openRemote`/`_openLocal` are differently shaped (fsmonitor and persistence are separate steps, and it carries the scoped git-dir) |
 
 Unifying add-existing's open path is **explicitly out of scope for this phase**.
 It is not proven identical to anything, and Phase 5 touches that sheet anyway.
 
-#### 2.2 The ported registration tests
+#### 2.2 The registration tests port later, not here
 
 New `test/workspace_flow_test.dart`, driving `WorkspaceFlow` over a bare
 `ProviderContainer` with no `pumpWidget`.
 
-**Ported in this phase — the four `registerAndActivateLocal` tests**
+**No registration test ports in this phase** — a second consequence of
+deviation 1 that its first write-up missed. Deviation 1 moved
+`workspace_registration.dart` onto Phase 3's file list, so
+`registerAndActivateLocal` still takes a `WidgetRef` here. "Porting" its four
+tests now would leave them driving the unchanged function through `_pumpWork` —
+copying a file, not porting a test. They move with the function.
+
+**Ported in Phase 3 — the four `registerAndActivateLocal` tests**
 (`workspace_registration_test.dart:176-286`), which cover **live** behaviour
 called from `create_repo_sheet.dart:712` and `clone_sheet.dart:530`:
 
@@ -234,7 +241,7 @@ called from `create_repo_sheet.dart:712` and `clone_sheet.dart:530`:
 * `save:true persists SavedLocalRepo with bookmark data`
 * `save:true with empty label passes null to connectLocal`
 
-**Deferred to Phase 4 — the four `registerAndActivateSshActive` tests**
+**Ported in Phase 4 — the four `registerAndActivateSshActive` tests**
 (`:287-407`). The first draft said they would be ported here "against the
 still-present function"; that contradicts the phase's own premise of driving
 `WorkspaceFlow`, and the flow has no active-session path until Phase 4 restores
@@ -242,9 +249,10 @@ it (F2). Porting them here would mean either testing the old function from the
 new file — which is not a port — or writing tests against a method that does not
 exist.
 
-`test/workspace_registration_test.dart` therefore **survives Phase 2 unchanged**
-and is deleted in Phase 4, once all 8 have green counterparts. The MADR's rule
-stands and is unchanged: never delete before that.
+`test/workspace_registration_test.dart` therefore **survives Phase 2
+untouched** and is deleted in Phase 4, once all 8 have green counterparts. The
+MADR's rule stands and is unchanged: never delete before that. What Phase 2
+delivers instead is §2.3 — new coverage rather than moved coverage.
 
 #### 2.3 The four invariants that have never been asserted
 
@@ -284,9 +292,13 @@ prompt**, do not adjust the test.
 
 ### Phase 3 — F3 and F9 on the single copy
 
-* **F3.** With `_openResult` inside the flow, `registerAndActivateLocal` and
-  `saveLocalRepo` read `flow.container`, not `ref`. Delete the now-unused
-  `WidgetRef` parameters. The comment at `create_repo_sheet.dart:499-501`
+* **F3 — and the `_openResult` move itself, deferred here by deviation 1.**
+  `_openResult` moves out of both sheets into `WorkspaceFlow.openResult`; the
+  two copies differ by exactly one line (the `scopedAccess` static), which
+  becomes a flow input. Because the flow has no `ref`, `registerAndActivateLocal`
+  and `saveLocalRepo` necessarily read `flow.container` — that *is* F3's fix,
+  and it is why this move belongs in a behavioural phase rather than a pure
+  one. Delete the now-unused `WidgetRef` parameters. The comment at `create_repo_sheet.dart:499-501`
   explaining why `own` is captured moves onto `WorkspaceFlow.container`, where
   it is now enforced rather than advisory.
 * **F9.1.** The flow records the namespace at one point — after the work
@@ -547,6 +559,135 @@ tool/mutate.py (4 mutations)      4 killed, 0 survived, 0 did not apply
 expect=9482 testWidgets=1072
 ```
 
+
+### Phase 2 — 2026-09-08 — *complete*
+
+**`WorkspaceFlow`** (`lib/features/workspace/workspace_flow.dart`) is a plain,
+widget-free object owning the tab half of the lifecycle: claim a tab, hand it
+over on success, give it back on abandon, refuse at the cap. All three sheets
+delegate to it; `WorkspaceProvisioning` is now an adapter whose
+`_dialContainer` is `flow.container`.
+
+**What did not move, and why it matters.** `ensureProvisioned` stayed in the
+mixin. It is one implementation already — not F7 duplication — and its mid-dial
+guard re-reads live sheet state after an await (the 0022 H4 fix), so moving it
+would have traded a real guard for a callback contract subtler than the
+duplication it removes. `workspace_open_in_tab.dart` also stayed: the flow
+calls it, because `connection_switcher.dart:1143` is a caller outside these
+sheets.
+
+**A `late final` that reintroduced the exact bug the mixin warns about.** The
+flow was first written as `late final _flow = WorkspaceFlow(origin:
+ProviderScope.containerOf(context, …))`. `dispose()` calls
+`_abandonProvisionTab`, so on a sheet that never touched `_flow` the
+initialiser ran *from dispose*, looking up an inherited widget on a deactivated
+element:
+
+```
+Looking up a deactivated widget's ancestor is unsafe.
+#3  ProviderScope.containerOf
+#6  _CloneRepositorySheetState._abandonProvisionTab
+#7  _CloneRepositorySheetState.dispose
+```
+
+**42 of the 120 acceptance tests failed**, which is exactly what acceptance
+criterion 2 is for — the failure said "not a pure move" and it was right.
+Fixed by building the flow in `initState`, which is what
+`WorkspaceProvisioning._notifier` already exists to do for the same reason.
+`AddExistingRepoSheet` gained its first `initState` for this.
+
+**Deviation 1 — `_openResult` could not move here.** The flow has no
+`WidgetRef`, so moving `_openResult` would have forced
+`registerAndActivateLocal`/`saveLocalRepo` onto the captured container — which
+*is* F3's fix. Deferred to Phase 3 so this phase stays a pure move and its
+acceptance criterion keeps its meaning. A follow-on the deviation's first
+write-up missed: the four `registerAndActivateLocal` tests move with their
+function, so **no registration test ported in this phase**; §2.2 is corrected.
+
+**Three test defects, all the same two traps.** The flow's own tests found them
+because `tabs_controller.dart:248-255` reuses a **blank active tab** rather
+than stacking a second one:
+
+* a test that filled tabs with `newTab()` to reach the cap **spun forever** —
+  every blank tab was the same tab. (First symptom: a 3m51s run.)
+* "abandon closes the claimed tab" and "the captured container never follows
+  the active tab" both silently got the landing case, where the flow correctly
+  reuses the blank tab and closes nothing. An `occupied()` helper now makes the
+  distinction explicit, and the second test occupies the *claimed* tab too,
+  since it is blank until a dial fills it in.
+
+And the self-activation trap twice: `occupied()` activates the tab it makes, so
+`expect(tabs.activated, contains(home.id))` passed on the setup's own
+activation. Both assertions now measure only what `abandon` adds.
+
+**Two survivors, both test defects, neither a hole in the code.** *"the flow
+re-resolves its container"* and *"abandon does not return to the origin tab"*
+survived the first run for exactly the two reasons above.
+
+**Sabotage — 12 mutations (4 Phase 1, 8 Phase 2), all killed:**
+
+```
+phase2: the flow re-resolves its container instead of keeping the captured one
+      -> the captured container never follows the active tab
+phase2: abandon does not close the dialled tab
+      -> abandon closes the claimed tab and returns to the origin
+phase2: abandon does not return to the origin tab
+      -> abandon closes the claimed tab and returns to the origin
+phase2: abandon closes a reused blank tab too
+      -> a reused blank tab is left alone
+phase2: the session is released AFTER the tab is closed
+      -> the session is released before the tab is closed
+phase2: the tab cap is ignored, so a ninth session is spun up
+      -> a flow refused at the cap claims nothing
+phase2: refusedAtTabCap ignores a tab already held
+      -> a flow already holding a tab is not refused again
+phase2: keep() closes the tab instead of handing it over
+      -> keep() hands the tab over, so a later abandon closes nothing
+```
+
+**Verification:**
+
+```
+120 offline sheet tests             +120, UNEDITED (acceptance criterion 2)
+flutter analyze (whole project)     No issues found!
+dart format                         0 changed
+flutter test (full suite)           03:32 +3787 ~3: All tests passed!
+tool/mutate.py (12 mutations)       12 killed, 0 survived, 0 did not apply
+expect=9513 testWidgets=1072
+```
+
+The 257 lines of shared workspace lifecycle that had **zero** direct test
+callers now have 15, none of which pumps a widget.
+
+#### Deviation 1 — 2026-09-08 — Phase 2 cannot move `_openResult` and stay pure
+
+**Found while writing Phase 2.** `WorkspaceFlow` is widget-free by design, so it
+has no `WidgetRef`. But `_openResult`'s local branches call
+`registerAndActivateLocal(ref, …)` and `saveLocalRepo(ref, …)`
+(`create_repo_sheet.dart:712, 719`; `clone_sheet.dart:530, 537`). Moving the
+method into the flow therefore *forces* those onto the captured container —
+which is exactly F3's fix. There is no way to move it and preserve the defect
+short of passing a `WidgetRef` into the flow purely to keep a bug alive.
+
+**Decision — move `_openResult` in Phase 3 instead.** Phase 2 moves only the tab
+lifecycle, which is provably pure, so its acceptance criterion keeps its
+meaning: if any of the 120 offline sheet tests fails, the move was not pure.
+That inference is the whole reason the criterion exists, and it does not survive
+a phase that is also allowed to change behaviour — even a change the current
+tests cannot observe (none of them switches tabs mid-flight, so F3's fix is
+invisible to all 120).
+
+**Rejected — accepting the fix in Phase 2.** One fewer step, and 120-unchanged
+would still have held in practice. But a failure would then have two candidate
+causes, and the criterion could no longer distinguish them.
+
+**Scope moved,** not added: `_openResult` and `workspace_registration.dart` come
+off Phase 2's file list and onto Phase 3's. Phase 2 gets smaller; nothing new
+enters the plan.
+
+**Follow-on, found during execution:** the four `registerAndActivateLocal`
+tests move with their function, so they port in Phase 3 too — Phase 2 ports no
+registration test at all. §2.2 originally said otherwise; corrected there.
 ### Phase 2 re-analysis — 2026-09-08, before execution
 
 A multi-pass check of Phase 2 against the tree, at the maintainer's request.
