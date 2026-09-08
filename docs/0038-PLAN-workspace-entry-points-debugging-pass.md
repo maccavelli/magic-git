@@ -1,5 +1,5 @@
 ---
-status: "in-progress"
+status: "complete"
 date: 2026-09-08
 associated-madr: "0038-MADR-workspace-entry-points-debugging-pass.md"
 ---
@@ -942,6 +942,66 @@ observable in this harness for *any* outcome: `_pump` mounts the sheet as
 pinned the harness rather than the behaviour, so the test asserts what actually
 distinguishes the outcomes — the right tab is active, no second tab exists, and
 no second session ran.
+
+### Phase 6 — 2026-09-08 — *complete*
+
+Catalogue, index row, plan status and the MADR's `verified:` date.
+
+**Acceptance criteria, each against the evidence that establishes it:**
+
+| # | Criterion | Established by |
+| --- | --- | --- |
+| 1 | A remote create, clone or open appears in Recents and records its namespace | `connection_provisioning_test.dart` — 4 tests on `finalizeProvisioned`, including a superseded finalize recording nothing |
+| 2 | The 120 offline sheet tests pass **unchanged** across Phase 2 | Ran as its own gate; 42 failed first and correctly said "not a pure move" |
+| 3 | All 8 registration tests have green counterparts before the file is deleted | 8 in `workspace_flow_test.dart`; `workspace_registration_test.dart` deleted in Phase 4, after |
+| 4 | Four lifecycle invariants asserted with no `pumpWidget` | `workspace_flow_test.dart` — **26 `test()`, 0 `testWidgets()`** |
+| 5 | An ad-hoc session can target the host it is on, from all three sheets; it dials nothing, opens no tab, persists nothing | Phase 4's five mutations + Phase 5's five |
+| 6 | A connected saved session shows exactly one destination row | "a saved session is NOT offered twice" |
+| 7 | Opening one local folder twice yields one saved repo and one tab | "re-opening a saved folder reuses its record" + "…focuses it, not the cap" |
+| 8 | No production caller of `registerAndActivate*` remains, and the functions are gone | `grep` returns nothing beyond the local pair |
+| 9 | Analyze clean, suite green each phase, every mutation killed | the per-phase blocks above |
+
+**Findings, all nine:**
+
+| # | Outcome |
+| --- | --- |
+| F1 | Fixed in Phase 1; MADR 0037's coverage claim amended |
+| F2 | Fixed in Phase 4 (wizards) and Phase 5 (add-existing) — ad-hoc sessions targetable again |
+| F3 | Made **unrepresentable** in Phase 3: the flow holds a container, so there is no ambient `ref` to drift |
+| F4 | Fixed in Phase 5 |
+| F5 | Fixed in Phase 5, with its follow-on |
+| F6 | Dispatcher deleted in Phase 3, `registerAndActivateSshActive` in Phase 4 |
+| F7 | Fixed in Phase 2 — one `WorkspaceFlow`, three sheets |
+| F8 | Fixed in Phase 3 — one `openResult` |
+| F9 | Fixed in Phase 3, all three parts |
+
+**What the sabotage was actually worth.** 27 mutations, all killed. Across six
+phases it surfaced **six survivors and four broken experiments**, and of the six
+survivors exactly **one** was a hole in the production code (Phase 4's tab-cap
+exemption, which no test covered). The other five were tests proving something
+other than what they claimed, and the four `DID NOT APPLY` were catalogue
+entries that had silently stopped matching — the failure mode where a green run
+means nothing at all.
+
+**Final verification:**
+
+```
+flutter analyze (whole project)   No issues found!
+dart format                       0 changed
+flutter test (full suite)         03:32 +3801 ~3: All tests passed!   (baseline 3768)
+tool/mutate.py (27 mutations)     27 killed, 0 survived, 0 did not apply
+expect=9536 testWidgets=1074      (baseline 9471 / 1072)
+```
+
+**Two observations recorded, not acted on:**
+
+* `registerAndActivateLocal`'s only production caller always passes
+  `save: false`, so its `save: true` branch is unreachable — pre-existing,
+  adjacent to F6, noted beside the tests that cover it.
+* `_effectiveConnectionId`'s fallback (`_destConnectionId ?? activeId`) is now
+  load-bearing only for the ad-hoc case, which Phase 4 gave a real target. It is
+  correct as written; whether it should collapse now that the destination is a
+  type is a question for a later pass.
 
 #### Deviation 1 — 2026-09-08 — Phase 2 cannot move `_openResult` and stay pure
 
