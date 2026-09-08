@@ -1,5 +1,5 @@
 ---
-status: "in-progress"
+status: "complete"
 date: 2026-09-07
 associated-madr: "0032-MADR-recent-and-searchable-forge-namespaces.md"
 ---
@@ -29,7 +29,7 @@ Executes the MADR's chosen options: **1D** (Events API + local history),
 | 2 | Correct + page-walk the creatable-namespace list | `lib/core/gitlab/glab_service.dart:550`, `lib/core/github/gh_service.dart:369` |
 | 3 | Recency: forge events → namespaces, plus local history | new `lib/core/forge/namespace_recency.dart`, both services, a prefs store |
 | 4 | Compose the providers | `lib/core/providers/app_providers.dart` |
-| 5 | The searchable field + dropdown | `lib/features/workspace/create_repo_steps/namespace_suggestions.dart`, `create_repo_sheet.dart` |
+| 5 | The searchable field + dropdown | `lib/features/workspace/create_repo_steps/namespace_suggestions.dart`, `create_repo_sheet.dart`, `lib/core/gitlab/glab_service.dart`, `lib/core/providers/app_providers.dart` (see the 2026-09-07 deviation) |
 
 **0033 Phase 5 already delivered the landing site**: `NamespaceSuggestions` is
 its own 79-line `ConsumerWidget` with 5 parameters, not a method at the bottom
@@ -500,6 +500,176 @@ flutter test (full suite)         03:27 +3662 ~2: All tests passed!
 ```
 
 **Counts.** `expect(` 9204 -> **9215**; suite 3655 -> **3662**.
+
+### Phase 5 — 2026-09-07 — *complete*
+
+> **Deviation 1 (2026-09-07): `NamespaceHistory.record` had no production
+> caller.** Phase 3b built the writer and Phase 4 wired the reader, but nothing
+> in `lib/` ever called `.record(...)` — `grep -rn "NamespaceHistory" lib/`
+> returned only the class itself and the storage fields in
+> `saved_connection.dart`. The store `namespaceSuggestionsProvider` reads
+> "local history first" from was therefore **permanently empty in production**,
+> and the shipped behaviour was decision **1C** (events only), not the chosen
+> **1D**. Confirmed pre-existing: the tree was clean at 9 commits ahead and the
+> gap arrived with the Phase 3b/4 commits, before Phase 5 opened a file.
+>
+> **Decision: option A** — wire the recorder at the sheet's success point
+> (`create_repo_sheet.dart`, immediately after the `outcome.error` check, where
+> the repository is known to exist). Rejected: routing it through
+> `CreateRepoDeps` (option B), because `runCreateRepo` has exactly one
+> production caller and the indirection buys nothing today; and deferring it to
+> a Phase 6 (option C), because the interim commit would ship the rejected 1C.
+>
+> **Scope added to this phase:** the recording call and its tests in
+> `create_repo_sheet.dart`. No new files.
+>
+> **Deliberately still not done: clone.** MADR option 1C reads "creates *or
+> clones* into". Phase 3b narrowed that to creates ("Namespaces this app has
+> created into, persisted") and this deviation keeps that narrowing rather than
+> widening scope mid-phase. A clone records no namespace today, so a user who
+> only ever clones still gets an empty local history.
+>
+> **No MADR amendment.** The MADR's decision is unchanged and no fact it
+> asserts is contradicted — 1D remains the chosen option, and this is what
+> makes it true. It never claimed delivery; the PLAN's execution record is the
+> only place that did.
+
+> **Deviation 2 (2026-09-07): the scope table under-listed this phase's
+> files.** The table named only the widget and the sheet, but the phase body
+> specifies a debounced server-side `groups?search=…&min_access_level=…`, which
+> needs a service method (`glab_service.dart`) and a provider to reach it
+> (`app_providers.dart`). This is a **file-list correction, not a scope
+> change** — the work was already approved in the phase body. The table above
+> has been corrected in place.
+
+**Delivered.** The namespace field is now the search input (5B).
+`create_repo_steps/namespace_suggestions.dart` became
+**`namespace_field.dart`**, and the widget `NamespaceSuggestions` became
+**`NamespaceField`** — a forced rename, not a preference: the widget must read
+`namespaceSuggestionsProvider`, whose value is the Phase 4 *model* class of the
+same name. Two `NamespaceSuggestions` in one import graph is the kind of trap
+this repository has spent whole MADRs removing.
+
+Three routes to a namespace, in increasing order of effort: **chips** (recency,
+zero typing), **the dropdown** (focus the field, every creatable namespace
+listed — this is what makes acceptance criterion 1 true), and **typing**
+(instant local filtering, plus a debounced server search).
+
+**Hybrid search (2C), both halves.** Local filtering runs on every keystroke
+through Phase 1's `matchTier`, over the cached list merged with anything the
+server search has since found. `GlabService.searchCreatableNamespaces` is the
+server half: `groups?search=…&min_access_level=…` at all three floors
+concurrently, **one page each** (a walk on every keystroke would be
+indefensible), filtered through the *same* `_creatable` predicate the full list
+uses — extracted for exactly that reason, so search can never offer a namespace
+the create would reject. GitHub returns nothing by design: its namespaces are
+flat and few, so the cached list is already complete.
+
+**Matching on the full path *and* the last segment.** `team/subgroup` is found
+by typing `subgroup`. Substring matching alone would also *find* it — the value
+of the last-segment arm is **ranking**, which is what its test asserts (see the
+survivors below).
+
+**Escape was deliberately not bound.** The first version closed the dropdown on
+Escape and the test caught it dismissing the whole sheet instead.
+`CommandPalette` documents the rule: dismissal is registry-based and
+focus-independent, so a focus-scoped Escape binding fights it and wins only
+sometimes. The list closes on choice and on blur; a test now pins that Escape
+still reaches the sheet.
+
+**A second deviation, decided during execution and worth reviewing.** A
+`CreateRepoOutcome` with no `error` still covers *"the repository was created
+locally, but publishing to the forge failed"* — that is a **warning**, because
+the local repository is real. Recording there would seed the suggestion list
+with a namespace the account never created in. So the recorder fires **only on
+a clean run** (no warnings). The cost is the mirror case — a successful forge
+create whose origin could not be wired is also a warning, and is not recorded —
+which loses a legitimate suggestion but never invents a false one. The precise
+alternative is a `forgePath` on `CreateRepoOutcome`, set only where the forge
+create succeeds; that touches `create_repo_pipeline.dart` and its 15 tests,
+which is why it was not taken unprompted.
+
+**Two fixture defects fixed at the root rather than around.**
+
+* `FakeCreateExecutor` answered **by queue position**, and a create's call order
+  shifts with the mode. Three separate attempts to "fail the forge create"
+  actually failed `gh auth status`, then `git init`, then nothing at all — each
+  reading as a passing test for the wrong reason. It now takes a `respond`
+  router, the same fix `forge_namespaces_test.dart` needed in Phase 2 for
+  concurrent calls.
+* **`SharedPreferences.getInstance()` never settles inside `testWidgets`.** Its
+  platform-channel reply needs `runAsync`; in a plain `test()` it throws
+  `MissingPluginException` promptly, but under a pumped widget test it simply
+  hangs. The history store reads it on the This-Mac path, so the suggestion
+  provider sat in `AsyncLoading` forever and **no suggestion rendered at all** —
+  which first surfaced as an existing chip test failing. `pumpConnected` now
+  seeds `setMockInitialValues({})`. Verified directly, not assumed.
+
+**A production bug the sheet's own tests found.** `_destConnectionId` is null in
+connected mode — the destination defaults to *this* session and the picker never
+sets an id — so reading it raw sent an SSH create's history to the This-Mac
+store, the wrong half of the two-store split. `_effectiveConnectionId` resolves
+the active session's id instead. The mutation matrix confirms the test catches
+its removal.
+
+**`_search` swallows provider failures.** The service already returns empty on
+its own errors, but the provider around it can still fail; the first version let
+that escape into the widget. Caught by the test that asserts a failing search
+leaves the cached matches standing — which failed, correctly, before the fix.
+
+**Sabotage — eight contracts, run in a scratch `git worktree`, all killed:**
+
+```
+last-segment matching removed      -> a last-segment match outranks a mid-word one
+debounce removed                   -> a debounced search backfills what the cache lacks
+generation check removed           -> a superseded response never replaces a newer one
+records even on a warned run       -> a create that fails records nothing
+recorder not called at all         -> a successful forge create records it
+active connection not resolved     -> a successful forge create records it
+search ignores creation level      -> excludes a match whose creation level outranks…
+search page-walks every keystroke  -> sends the query at every access floor, one page each
+```
+
+**Two of them survived the first round, and both were test defects.**
+
+* *last-segment matching removed* survived because substring matching finds
+  `team/subgroup` from `subgroup` anyway — the basename arm only changes
+  **rank**. The replacement test asserts the dropdown's **order**, which is the
+  contract that arm actually buys.
+* *search page-walks every keystroke* survived because the fixture returned an
+  **empty** page, which ends any walk after page 1 on its own. The fixture now
+  returns a full 100-entry page, so an uncapped walk would ask for page 2.
+
+Both are the same lesson as Phase 4's: a check that has only been seen to pass
+is indistinguishable from one that does nothing.
+
+**A redaction caught before commit.** A doc comment in `namespace_field.dart`
+named a real group from the maintainer's account as a worked example of the
+generation counter — the same identifier this session had already stripped from
+this plan. Replaced with a generic one. It never left the working tree, so
+there is nothing in history to remedy; recording it because the near-miss is the
+point (`AGENTS.md`: an existing redaction is a standing instruction).
+
+**Verification:**
+
+```
+flutter analyze (whole project)   No issues found! (ran in 3.5s)
+dart format --output=none --set-exit-if-changed   (0 changed, 8 files)
+flutter test (full suite)         03:26 +3682 ~2: All tests passed!
+```
+
+**Counts.** `expect(` 9215 -> **9254**; `testWidgets(` 1012 -> **1027**;
+suite 3662 -> **3682**.
+
+**Acceptance criteria.** 1 met (dropdown lists all, reachable by focus +
+scroll or by typing — two tests); 2 met (fixture-only, as the MADR said it
+must be); 3 met in Phase 2; 4 met ("a namespace the API never returned stays
+typeable"); 5 met (the suggestion providers are stubbed/failed in tests and the
+create still composes); 6 met in Phase 1; 7 met — eight mutations, each seen to
+fail. **The live verification below remains outstanding and is maintainer-run.**
+
+**Still not done, deliberately:** clone does not record a namespace (see
+Deviation 1 above), and GitHub has no server-side search.
 
 ## Rollout and Rollback
 

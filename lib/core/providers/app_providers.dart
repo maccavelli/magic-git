@@ -5486,6 +5486,38 @@ final namespaceSuggestionsProvider = FutureProvider.autoDispose
       return NamespaceSuggestions(recent: filtered, all: all);
     }, retry: noProviderRetry);
 
+/// Server-side namespace search — the second half of the create sheet's hybrid
+/// search (MADR 0032 Phase 5, decision 2C).
+///
+/// The cached [forgeNamespacesProvider] list answers most keystrokes instantly
+/// and offline; this backfills what that list cannot hold — a group past the
+/// pages it walked, or one granted since. Keyed by the query so a repeated or
+/// retyped term is served from Riverpod's cache instead of the network.
+///
+/// **GitHub returns nothing on purpose.** Its namespaces are flat and few (an
+/// account with no orgs has exactly one), so the cached list is already
+/// complete and a server round trip could only add latency.
+///
+/// **Suggestions only.** The service swallows its own failures, so this
+/// resolves to an empty list rather than an error — the field is free text and
+/// must work with no list at all (MADR 0031).
+final namespaceSearchProvider = FutureProvider.autoDispose
+    .family<List<String>, (Forge, String, bool, String)>((ref, key) async {
+      final (forge, host, local, query) = key;
+      if (query.trim().isEmpty || forge != Forge.gitlab) {
+        return const <String>[];
+      }
+      final executor = local
+          ? ref.read(localExecutorProvider)
+          : ref.read(activeExecutorProvider);
+      if (local) {
+        await ref.read(localEnvironmentProvider).ensure();
+      }
+      return GlabService(
+        executor,
+      ).searchCreatableNamespaces('.', host: host, query: query);
+    }, retry: noProviderRetry);
+
 /// Authentication status of git/gh/glab on **this Mac** — probed on demand for
 /// the Dashboard's Authentication section (and reusable by any This-Mac flow
 /// that wants to warn before a create/clone that would fail on a signed-out

@@ -20,7 +20,7 @@ import '../common/sized_sheet.dart';
 import '../common/tool_icon_button.dart';
 import 'create_repo_pipeline.dart';
 import 'create_repo_steps/folder_fields.dart';
-import 'create_repo_steps/namespace_suggestions.dart';
+import 'create_repo_steps/namespace_field.dart';
 import 'create_repo_steps/segmented_choice.dart';
 import 'wizard.dart';
 import 'workspace_destination.dart';
@@ -494,6 +494,17 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
         setState(() => _error = outcome.error);
         return;
       }
+      // The repository exists — remember the namespace it went into, so the
+      // next create offers it first (MADR 0032 Phase 3b; wired here per the
+      // Phase 5 deviation of 2026-09-07, which found the writer had no caller).
+      //
+      // Only on a forge create, and only after success: a namespace that was
+      // never created in is not a namespace the user works in. Awaited rather
+      // than fire-and-forget so a test can observe it, but the writer swallows
+      // its own failures — a create that succeeded must never be reported as
+      // failed because *remembering* it did not work.
+      await _rememberNamespace(host, outcome);
+      if (!mounted) return;
 
       // --- Register + activate (shared matrix) ------------------------------
       final registered = await _register(outcome.dest);
@@ -826,26 +837,49 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
     );
   }
 
-  /// Namespace suggestions under the field — never a spinner, never an error.
+  /// The saved connection a create actually targets, or null for This Mac and
+  /// for a session with nothing to persist into.
   ///
-  /// Read through `asData?.value` on purpose. The wizard's namespace field is
-  /// free text and works with no list at all, so a slow or unreachable forge
-  /// must cost the user nothing: while the fetch is in flight, and forever
-  /// after it fails, this renders as empty space. Rendering this `AsyncValue`
-  /// through `.when()` would put a spinner where the form is (0030 Phase 1).
-  Widget _namespaceSuggestions() => NamespaceSuggestions(
-    forge: _forge,
-    host: _host.text.trim().isEmpty ? _defaultHost : _host.text.trim(),
-    isLocalTarget: _isLocalTarget,
-    current: _namespaceText,
-    onSelected: (ns) => setState(() {
-      if (ns == null) {
-        _namespace.clear();
-      } else {
-        _namespace.text = ns;
-      }
-    }),
-  );
+  /// **Not simply [_destConnectionId].** In connected mode the destination
+  /// defaults to *this* session (`sshActive`) and the picker never sets an id,
+  /// so reading the raw field would send an SSH create to the This-Mac store —
+  /// the wrong half of the two-store split `NamespaceHistory` documents.
+  String? _effectiveConnectionId(String? activeId) =>
+      _isLocalTarget ? null : (_destConnectionId ?? activeId);
+
+  /// Records the namespace a successful forge create used, for the next
+  /// create's suggestions. Best-effort by contract — see [NamespaceHistory].
+  ///
+  /// **Only on a clean run.** A [CreateRepoOutcome] with no `error` still
+  /// covers "the repository was created locally, but publishing to the forge
+  /// failed" — reported as a warning, because the local repository is real.
+  /// The namespace was never created in on that path, so remembering it would
+  /// seed the suggestion list with somewhere the user has not been. Erring the
+  /// other way (a clean forge create whose origin could not be wired is also a
+  /// warning, and is not recorded) costs only a missing suggestion.
+  Future<void> _rememberNamespace(
+    String host,
+    CreateRepoOutcome outcome,
+  ) async {
+    if (!_onForge || outcome.warnings.isNotEmpty) return;
+    final namespace = _namespaceText;
+    if (namespace.isEmpty) return;
+    await ref
+        .read(namespaceHistoryProvider)
+        .record(
+          forge: _forge,
+          host: host,
+          namespace: namespace,
+          connection: await connectionById(
+            _effectiveConnectionId(ref.read(connectionProvider).connectionId),
+          ),
+        );
+  }
+
+  /// The host the forge lookups are keyed by: whatever is typed, else the
+  /// forge's default. The field is editable, so this is read fresh each build.
+  String get _resolvedHost =>
+      _host.text.trim().isEmpty ? _defaultHost : _host.text.trim();
 
   Widget _detailsStep(MacosTypography typography) {
     final existing = _source == _SourceMode.existingFolder;
@@ -876,12 +910,15 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
         // did not return — a fresh grant, a paginated tail, an unreachable
         // API — must stay typeable.
         if (_onForge) ...[
-          LabeledTextField(
-            label: 'Namespace (optional)',
+          NamespaceField(
+            forge: _forge,
+            host: _resolvedHost,
+            isLocalTarget: _isLocalTarget,
+            connectionId: _effectiveConnectionId(
+              ref.watch(connectionProvider.select((c) => c.connectionId)),
+            ),
             controller: _namespace,
-            placeholder: 'team/subgroup',
             onChanged: () => setState(() {}),
-            padding: EdgeInsets.zero,
             hint: WizardHint(
               _namespaceText.isEmpty
                   ? 'Leave empty to create under your own account. A group or '
@@ -890,7 +927,6 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
                         'forge.',
             ),
           ),
-          _namespaceSuggestions(),
           const SizedBox(height: 10),
         ],
         LabeledTextField(

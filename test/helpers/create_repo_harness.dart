@@ -24,6 +24,7 @@ import 'package:remote_magic_git/core/storage/saved_connection.dart';
 import 'package:remote_magic_git/features/common/buttons.dart';
 import 'package:remote_magic_git/features/workspace/create_repo_sheet.dart';
 import 'package:riverpod/misc.dart' show Override;
+import 'package:shared_preferences/shared_preferences.dart';
 import 'app_scope.dart';
 
 class FakeCreateExecutor extends SSHCommandExecutor {
@@ -34,6 +35,18 @@ class FakeCreateExecutor extends SSHCommandExecutor {
   /// When set, every execute parks on it — lets a test hold the create
   /// "in flight" to prove Escape can't tear the session down mid-run.
   Completer<void>? gate;
+
+  /// Answers by REQUEST rather than by queue position, and takes precedence
+  /// over [results].
+  ///
+  /// A create's call order shifts with the mode — an auth probe here, a
+  /// pre-existing-repo check there — so a positional queue aims its answers at
+  /// whichever step happens to land in that slot. That has already produced
+  /// fixtures that "failed the forge create" while actually failing `git init`,
+  /// and read as passing. `forge_namespaces_test.dart` learned the same lesson
+  /// against concurrent calls (MADR 0032 Phase 2). Return null to fall through
+  /// to [results].
+  SSHCommandResult? Function(List<String> args)? respond;
 
   FakeCreateExecutor() : super(SSHClientManager());
 
@@ -63,6 +76,8 @@ class FakeCreateExecutor extends SSHCommandExecutor {
   }) async {
     calls.add(gitArgs);
     if (gate != null) await gate!.future;
+    final routed = respond?.call(gitArgs);
+    if (routed != null) return routed;
     return results.isNotEmpty
         ? results.removeAt(0)
         : const SSHCommandResult(exitCode: 0, stdout: '', stderr: '');
@@ -151,6 +166,14 @@ Future<(StubConnection, FakeCreateExecutor, FakeConnectionStore)> pumpConnected(
   WidgetTester tester, {
   List<Override> extraOverrides = const [],
 }) async {
+  // `SharedPreferences.getInstance()` **never settles inside `testWidgets`** —
+  // its platform-channel reply needs `runAsync`, which a pumped widget test
+  // does not provide. (In a plain `test()` it throws MissingPluginException
+  // promptly; here it simply hangs.) The namespace-history store reads it on
+  // the This-Mac path, so without this the create sheet's suggestion provider
+  // sits in `AsyncLoading` forever and no suggestion ever renders. Empty is
+  // the honest default: a test that wants history sets its own values.
+  SharedPreferences.setMockInitialValues({});
   // Room for the wizard + completed-warning footer (cloneUrl failure copy
   // can be long; a tight surface overflows the step breadcrumb).
   await tester.binding.setSurfaceSize(const Size(1200, 900));

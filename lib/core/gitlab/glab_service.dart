@@ -605,6 +605,17 @@ class GlabService {
         _groupsAtLeast(repoPath, host: host, minAccessLevel: floor),
     ]);
 
+    return _creatable(byFloor);
+  }
+
+  /// Keeps only the groups whose `project_creation_level` the account's own
+  /// access actually satisfies, given one list per floor in [_accessFloors]
+  /// order. Shared by the full list and by [searchCreatableNamespaces], so a
+  /// searched namespace can never be offered when the unsearched list would
+  /// have excluded it.
+  static List<String> _creatable(
+    List<List<({String path, String? creationLevel})>> byFloor,
+  ) {
     final paths = <String>[];
     final seen = <String>{};
     for (final entry in byFloor.first) {
@@ -618,6 +629,48 @@ class GlabService {
       if (access >= _requiredAccess(entry.creationLevel)) paths.add(path);
     }
     return paths;
+  }
+
+  /// Group full paths matching [query] that this account may create in on
+  /// [host] — the server half of the create sheet's hybrid search (MADR 0032
+  /// Phase 5).
+  ///
+  /// The cached list from [listCreatableNamespaces] answers most keystrokes
+  /// instantly and offline. This exists for what that list cannot contain: a
+  /// group past the pages it walked, or one granted since it was fetched.
+  ///
+  /// **Filtered by exactly the same predicate as the cached list** ([_creatable]),
+  /// so search can never surface a namespace the create would then reject —
+  /// which would be worse than not finding it at all.
+  ///
+  /// One page per floor, not [_maxListPages]: a search narrow enough to be
+  /// worth typing is narrow enough to fit, and this runs on every debounced
+  /// keystroke.
+  ///
+  /// Returns empty on any failure, and on an empty [query]. The field is free
+  /// text and works with no list at all (MADR 0031).
+  Future<List<String>> searchCreatableNamespaces(
+    String repoPath, {
+    required String host,
+    required String query,
+  }) async {
+    if (query.trim().isEmpty) return const <String>[];
+    try {
+      final byFloor = await Future.wait([
+        for (final floor in _accessFloors)
+          _groupsAtLeast(
+            repoPath,
+            host: host,
+            minAccessLevel: floor,
+            search: query.trim(),
+            maxPages: 1,
+          ),
+      ]);
+      return _creatable(byFloor);
+    } catch (_) {
+      // Suggestions only — a failed search leaves the cached matches standing.
+      return const <String>[];
+    }
   }
 
   /// Developer, Maintainer, Owner — the three floors a `project_creation_level`
@@ -634,14 +687,21 @@ class GlabService {
     _ => 30,
   };
 
+  /// [search] is GitLab's own `search` parameter, which matches substrings of
+  /// a group's name **and** its full path, and composes with
+  /// `min_access_level` (measured: 37 groups at level 30 narrowed to 24 with a
+  /// search term). Passing it turns this into a server-side lookup for the
+  /// tail the cached list never reached; omitting it lists everything.
   Future<List<({String path, String? creationLevel})>> _groupsAtLeast(
     String repoPath, {
     required String host,
     required int minAccessLevel,
+    String? search,
+    int maxPages = _maxListPages,
   }) async {
     const perPage = 100;
     final out = <({String path, String? creationLevel})>[];
-    for (var page = 1; page <= _maxListPages; page++) {
+    for (var page = 1; page <= maxPages; page++) {
       final decoded = await api(
         repoPath,
         'groups',
@@ -649,6 +709,7 @@ class GlabService {
           'min_access_level=$minAccessLevel',
           'per_page=$perPage',
           'page=$page',
+          if (search != null && search.isNotEmpty) 'search=$search',
         ],
         host: host,
       );

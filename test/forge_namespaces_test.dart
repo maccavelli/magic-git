@@ -434,6 +434,112 @@ void main() {
     });
   });
 
+  // ---------------------------------------------------------------------
+  // MADR 0032 Phase 5 — the server half of the hybrid search.
+  //
+  // The cached list answers most keystrokes. This exists only for what that
+  // list cannot hold, and its one hard requirement is that it filter by the
+  // SAME creatable predicate — a search that offered a namespace the create
+  // would reject is worse than a search that found nothing.
+  // ---------------------------------------------------------------------
+  group('GlabService.searchCreatableNamespaces (MADR 0032 Phase 5)', () {
+    test('sends the query at every access floor, one page each', () async {
+      final exec = _FakeExecutor();
+      // A FULL page. An empty one would end any walk after page 1 on its own,
+      // so the "one page" assertion below would hold even without the cap and
+      // prove nothing.
+      final fullPage =
+          '[${List.generate(100, (i) => '{"full_path":"g$i"}').join(',')}]';
+      exec.respond = (args) => _okWithHeaders(fullPage);
+
+      await GlabService(exec).searchCreatableNamespaces(
+        '/repo',
+        host: 'gitlab.example',
+        query: 'dev',
+      );
+
+      final groupCalls = exec.calls
+          .map((c) => c.join(' '))
+          .where((c) => c.contains('groups'))
+          .toList();
+      expect(groupCalls, hasLength(3), reason: 'one call per access floor');
+      for (final floor in [30, 40, 50]) {
+        expect(
+          groupCalls.any(
+            (c) =>
+                c.contains('min_access_level=$floor') &&
+                c.contains('search=dev'),
+          ),
+          isTrue,
+          reason: 'floor $floor must carry the search term',
+        );
+      }
+      // Every keystroke pays for this, so it must not page-walk — and the
+      // page above is full, so an uncapped walk would ask for page 2.
+      expect(
+        groupCalls.every((c) => c.contains('page=1')),
+        isTrue,
+        reason: 'search fetches one page per floor, never a walk',
+      );
+    });
+
+    test('excludes a match whose creation level outranks the account', () async {
+      final exec = _FakeExecutor();
+      exec.respond = (args) {
+        final joined = args.join(' ');
+        if (!joined.contains('groups')) {
+          return _okWithHeaders('{"username":"me"}');
+        }
+        final floor =
+            RegExp(r'min_access_level=(\d+)').firstMatch(joined)?.group(1) ??
+            '30';
+        // Present at 30 only: the account is a Developer in both. One of them
+        // demands Maintainer to create, so search must not offer it.
+        if (floor != '30') return _okWithHeaders('[]');
+        return _okWithHeaders(
+          '[{"full_path":"alpha","project_creation_level":"developer"},'
+          '{"full_path":"alpha-locked","project_creation_level":"maintainer"}]',
+        );
+      };
+
+      final found = await GlabService(exec).searchCreatableNamespaces(
+        '/repo',
+        host: 'gitlab.example',
+        query: 'alpha',
+      );
+
+      expect(found, ['alpha']);
+    });
+
+    test('an empty query costs nothing and asks nothing', () async {
+      final exec = _FakeExecutor();
+      exec.respond = (args) => _okWithHeaders('[]');
+
+      final found = await GlabService(exec).searchCreatableNamespaces(
+        '/repo',
+        host: 'gitlab.example',
+        query: '   ',
+      );
+
+      expect(found, isEmpty);
+      expect(exec.calls, isEmpty, reason: 'whitespace is not a search');
+    });
+
+    test('a failing search yields empty rather than throwing', () async {
+      final exec = _FakeExecutor();
+      exec.respond = (args) =>
+          const SSHCommandResult(exitCode: 1, stdout: '', stderr: 'boom');
+
+      final found = await GlabService(exec).searchCreatableNamespaces(
+        '/repo',
+        host: 'gitlab.example',
+        query: 'dev',
+      );
+
+      expect(found, isEmpty);
+    });
+  });
+
   group('recentlyActiveNamespaces (MADR 0032 Phase 3)', () {
     test('GitLab projects the events onto their owning namespaces', () async {
       // A repo is created in a NAMESPACE, never in a project — so recent

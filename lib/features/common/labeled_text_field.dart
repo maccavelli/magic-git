@@ -29,6 +29,11 @@ class LabeledTextField extends StatelessWidget {
   /// field can show inline validation without the caller rebuilding the row.
   final bool showError;
 
+  /// Lets a caller observe or drive focus — a field with an attached dropdown
+  /// needs to know when it is being typed in. The field owns no node of its
+  /// own when this is null, exactly as before.
+  final FocusNode? focusNode;
+
   const LabeledTextField({
     super.key,
     required this.label,
@@ -41,6 +46,7 @@ class LabeledTextField extends StatelessWidget {
     this.padding = const EdgeInsets.only(bottom: 12),
     this.hint,
     this.showError = false,
+    this.focusNode,
   });
 
   @override
@@ -54,6 +60,7 @@ class LabeledTextField extends StatelessWidget {
           const SizedBox(height: 4),
           MacosTextField(
             controller: controller,
+            focusNode: focusNode,
             placeholder: placeholder,
             placeholderStyle: kAppPlaceholderStyle,
             obscureText: obscure,
