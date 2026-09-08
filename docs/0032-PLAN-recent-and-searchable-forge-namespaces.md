@@ -449,6 +449,58 @@ flutter test (full suite)         03:37 +3655 ~2: All tests passed!
 
 **Counts.** `expect(` 9191 -> **9204**; suite 3645 -> **3655**.
 
+### Phase 4 — 2026-09-07 — *complete*
+
+**`namespaceSuggestionsProvider`** returns a `NamespaceSuggestions` — `recent`
+(what the chips show) and `all` (what typing searches) — composed as: local
+history first, then the forge's event feed, then everything else creatable.
+
+**A key change the plan did not anticipate.** The key is now
+`(Forge, host, local, connectionId?)`, not the three the existing
+`forgeNamespacesProvider` uses. The wizard's destination is **editable**, so the
+suggestions must follow the chosen connection rather than the active session —
+and a namespace is meaningless across accounts. A null `connectionId` is a
+This-Mac create, whose history lives in the local store (Phase 3b).
+
+**One composition rule that needed deciding, and is now tested both ways:** a
+remembered namespace the account can no longer create in is stale history, not a
+suggestion — **but only when the creatable list actually came back**. An empty
+`all` means the lookup failed, not that the account may create nowhere, and
+dropping every remembered namespace on a failed lookup would be worse than
+offering a stale one. Both arms have their own test.
+
+**I rewrote this phase's tests after writing them.** The first version asserted
+against `NamespaceSuggestions` the model and called it provider coverage —
+`containerWith` was unused by two of the four tests, and the "no-retry policy"
+test asserted only `returnsNormally`, which is close to vacuous. The rewrite
+drives the real provider with a fake executor answering `events` and
+`projects/:id`, so the composition rules are actually exercised. A weak test
+that looks like coverage is worse than none.
+
+**Sabotage — three rules, each isolating its own test:**
+
+```
+stale history no longer filtered  -> a namespace the account can no longer create in is dropped
+failed lookup wipes history too   -> but a FAILED creatable lookup keeps history …
+local history no longer consulted -> recent comes from history first, then the forge feed
+                                     but a FAILED creatable lookup keeps history …
+```
+
+The third needed a second attempt — the mutation string had been reflowed by
+`dart format` and silently failed to apply, which reads as "the test does not
+catch this" when it means "the sabotage never happened". **Second time this
+phase, third this session.**
+
+**Verification:**
+
+```
+flutter analyze (whole project)   No issues found! (ran in 4.8s)
+dart format --output=none --set-exit-if-changed   (0 changed)
+flutter test (full suite)         03:27 +3662 ~2: All tests passed!
+```
+
+**Counts.** `expect(` 9204 -> **9215**; suite 3655 -> **3662**.
+
 ## Rollout and Rollback
 
 **Rollout.** Five commits. Phases 1–2 are independently valuable (a correct,

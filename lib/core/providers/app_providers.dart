@@ -22,6 +22,8 @@ import '../forge/forge_dashboard.dart';
 import '../forge/forge_operation_labels.dart';
 import '../forge/forge_repo_summary.dart';
 import '../forge/merge_plan.dart';
+import '../forge/namespace_history.dart';
+import '../forge/namespace_suggestions.dart';
 import '../git/bounded_watch.dart';
 import '../git/branch_comparison.dart';
 import '../git/git_service.dart';
@@ -5396,6 +5398,92 @@ final forgeNamespacesProvider = FutureProvider.autoDispose
           'forgeNamespacesProvider: not a forge: $forge',
         ),
       };
+    }, retry: noProviderRetry);
+
+/// The two-store namespace history (MADR 0032 Phase 3b).
+final namespaceHistoryProvider = Provider<NamespaceHistory>(
+  (ref) => NamespaceHistory(ref.read(connectionStoreProvider)),
+);
+
+/// What the create wizard offers for the namespace field: what the user has
+/// recently worked in, and everything they may create in (MADR 0032 Phase 4).
+///
+/// Keyed by forge, host, target **and destination connection** — the last
+/// because the wizard's destination is editable and a namespace is meaningless
+/// across accounts. A null `connectionId` is a This-Mac create, whose history
+/// lives locally (see `NamespaceHistory`).
+///
+/// **Suggestions only, and never on the critical path.** The field is free text
+/// and works with no list at all (MADR 0031), so every failure here degrades to
+/// fewer suggestions rather than an error. Read it through `.asData?.value`,
+/// never `.when()`: rendering this `AsyncValue` through `when` puts a spinner
+/// where the form is (MADR 0030 Phase 1).
+final namespaceSuggestionsProvider = FutureProvider.autoDispose
+    .family<NamespaceSuggestions, (Forge, String, bool, String?)>((
+      ref,
+      key,
+    ) async {
+      final (forge, host, local, connectionId) = key;
+      final all = await ref.watch(
+        forgeNamespacesProvider((forge, host, local)).future,
+      );
+
+      SavedConnection? connection;
+      if (connectionId != null) {
+        try {
+          final saved = await ref.watch(savedConnectionsProvider.future);
+          for (final c in saved) {
+            if (c.id == connectionId) connection = c;
+          }
+        } catch (_) {
+          // No store, no history — the creatable list still stands.
+        }
+      }
+
+      final recent = <String>[];
+      void offer(String ns) {
+        if (ns.isEmpty || recent.contains(ns)) return;
+        recent.add(ns);
+      }
+
+      // Local history first: it is free, works offline, and is already ordered
+      // most-recent-first.
+      for (final ns
+          in await ref
+              .read(namespaceHistoryProvider)
+              .recent(forge: forge, host: host, connection: connection)) {
+        offer(ns);
+      }
+
+      // Then the forge's own view of recent activity.
+      final executor = local
+          ? ref.read(localExecutorProvider)
+          : ref.read(activeExecutorProvider);
+      final fromForge = switch (forge) {
+        Forge.gitlab => await GlabService(
+          executor,
+        ).recentlyActiveNamespaces('.', host: host),
+        Forge.github => await GhService(
+          executor,
+        ).recentlyActiveNamespaces('.', host: host),
+        _ => const <String>[],
+      };
+      for (final ns in fromForge) {
+        offer(ns);
+      }
+
+      // A namespace the account can no longer create in is stale history, not a
+      // suggestion — but only trust that when the creatable list actually came
+      // back. An empty `all` means the lookup failed, and dropping every recent
+      // namespace on a failed lookup would be worse than offering a stale one.
+      final filtered = all.isEmpty
+          ? recent
+          : [
+              for (final ns in recent)
+                if (all.contains(ns)) ns,
+            ];
+
+      return NamespaceSuggestions(recent: filtered, all: all);
     }, retry: noProviderRetry);
 
 /// Authentication status of git/gh/glab on **this Mac** — probed on demand for
