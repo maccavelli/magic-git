@@ -287,6 +287,104 @@ void main() {
     expect(find.byType(CloneRepositorySheet), findsNothing, reason: 'popped');
   });
 
+  // ---------------------------------------------------------------------
+  // MADR 0032 Phase 7 — a clone records the namespace it came from, so the
+  // create sheet's recency list is not empty for a user who only ever clones.
+  // ---------------------------------------------------------------------
+
+  /// Drives a URL clone of [url] to completion and returns the store.
+  Future<_FakeStore> cloneUrl(WidgetTester tester, String url) async {
+    final (_, exec, store) = await _pumpConnected(tester);
+    await _toReviewViaUrl(tester, url);
+    exec.results.add(_ok('absent')); // probe
+    await tester.tap(_cloneButton());
+    await tester.pump();
+    await tester.pump();
+    await exec.handle.finish(0);
+    await tester.pumpAndSettle();
+    return store;
+  }
+
+  testWidgets('a nested GitLab clone records its namespace', (tester) async {
+    final store = await cloneUrl(
+      tester,
+      'https://gitlab.com/team/subgroup/my-repo.git',
+    );
+
+    expect(
+      store.updated
+          .map((c) => c.namespacesFor('gitlab@gitlab.com'))
+          .where((l) => l.isNotEmpty)
+          .toList(),
+      [
+        ['team/subgroup'],
+      ],
+      reason: 'the namespace is the path minus the project',
+    );
+  });
+
+  testWidgets('a GitHub clone records the owner', (tester) async {
+    final store = await cloneUrl(tester, 'git@github.com:owner/my-repo.git');
+
+    expect(
+      store.updated
+          .map((c) => c.namespacesFor('github@github.com'))
+          .where((l) => l.isNotEmpty)
+          .toList(),
+      [
+        ['owner'],
+      ],
+      reason: 'scp-style URLs parse the same as https ones',
+    );
+  });
+
+  testWidgets('a clone from a non-forge host records nothing', (tester) async {
+    // No forge account to key history by, so there is nothing to remember.
+    final store = await cloneUrl(
+      tester,
+      'https://example.com/team/my-repo.git',
+    );
+
+    expect(store.updated.every((c) => c.namespaceHistory.isEmpty), isTrue);
+  });
+
+  testWidgets('a clone with no namespace in the path records nothing', (
+    tester,
+  ) async {
+    // `host/project` has no group above it — the account's own namespace,
+    // which is already first in the creatable list.
+    final store = await cloneUrl(tester, 'https://gitlab.com/my-repo.git');
+
+    expect(store.updated.every((c) => c.namespaceHistory.isEmpty), isTrue);
+  });
+
+  testWidgets('a failed clone records no namespace', (tester) async {
+    final (_, exec, store) = await _pumpConnected(tester);
+    await _toReviewViaUrl(
+      tester,
+      'https://gitlab.com/team/subgroup/my-repo.git',
+    );
+
+    exec.results.add(_ok('absent')); // probe
+    exec.results.add(_ok('absent')); // cleanup probe
+    await tester.tap(_cloneButton());
+    await tester.pump();
+    await tester.pump();
+    await exec.handle.finish(128); // the clone itself fails
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byType(CloneRepositorySheet),
+      findsOneWidget,
+      reason: 'non-vacuous: the sheet stayed open on the failure',
+    );
+    expect(
+      store.updated.every((c) => c.namespaceHistory.isEmpty),
+      isTrue,
+      reason: 'a namespace never cloned from is not a namespace used',
+    );
+  });
+
   testWidgets('a failed clone keeps the sheet open with the error', (
     tester,
   ) async {

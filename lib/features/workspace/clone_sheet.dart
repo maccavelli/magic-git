@@ -346,6 +346,10 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet>
       }
       // Provisioning (if any) has been finalized by _register; don't abort it.
       provisionToken = null;
+      // The repository is on disk and open — remember the namespace it came
+      // from, so the next create offers it (MADR 0032 Phase 7).
+      await _rememberNamespace(source);
+      if (!mounted) return;
       // Let the finished (green) progress bar register before the sheet
       // pops — success otherwise vanishes the very frame it happens.
       setState(() => _finished = true);
@@ -362,6 +366,65 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet>
   /// Registers and activates the freshly-cloned repo for the current target
   /// (shared matrix — see workspace_registration.dart). Returns whether the
   /// repo actually became the live workspace (0009 H19).
+  /// Records the namespace a completed clone came from, for the next create's
+  /// suggestions (MADR 0032 option 1C — "creates **or clones** into").
+  ///
+  /// **Where you clone from is not the same as where you may create**, and
+  /// this deliberately does not check: `namespaceSuggestionsProvider` already
+  /// filters recorded namespaces against the creatable list, so an upstream
+  /// nobody can create in is dropped at read time without a permission call
+  /// here. Checking at write time would cost a round trip on every clone to
+  /// re-derive an answer the reader already has.
+  ///
+  /// Best-effort by contract — see [NamespaceHistory]. A clone that succeeded
+  /// must never be reported as failed because *remembering* it did not work.
+  Future<void> _rememberNamespace(CloneSource source) async {
+    final (Forge forge, String host, String path) = switch (source) {
+      // Already resolved by the browse list: no URL to parse, and the host is
+      // the one the repo was actually listed on.
+      ForgeCloneSource(:final forge, :final host, :final slug) => (
+        forge,
+        host,
+        slug,
+      ),
+      UrlCloneSource(:final url) => (
+        forgeFromRemoteUrl(url),
+        forgeHostFromRemoteUrl(url) ?? '',
+        remotePathFromUrl(url) ?? '',
+      ),
+    };
+    // A custom or unrecognized remote has no forge account to key history by.
+    if (forge != Forge.github && forge != Forge.gitlab) return;
+    if (host.isEmpty) return;
+    // NOT `dirname`: that helper is filesystem-shaped and answers `/` for a
+    // bare name, which would record `/` as a namespace. A forge path with no
+    // slash has no namespace above it — it is the account's own, already first
+    // in the creatable list and not worth remembering.
+    final slash = path.lastIndexOf('/');
+    if (slash <= 0) return;
+    final namespace = path.substring(0, slash);
+    await ref
+        .read(namespaceHistoryProvider)
+        .record(
+          forge: forge,
+          host: host,
+          namespace: namespace,
+          connection: await connectionById(
+            _effectiveConnectionId(ref.read(connectionProvider).connectionId),
+          ),
+        );
+  }
+
+  /// The saved connection a clone actually targets, or null for This Mac and
+  /// for a session with nothing to persist into.
+  ///
+  /// **Not simply [_destConnectionId].** In connected mode the destination
+  /// defaults to *this* session and the picker never sets an id, so reading the
+  /// raw field would send an SSH clone's history to the This-Mac store — the
+  /// wrong half of the two-store split `NamespaceHistory` documents.
+  String? _effectiveConnectionId(String? activeId) =>
+      _isLocalTarget ? null : (_destConnectionId ?? activeId);
+
   Future<bool> _register(String dest) => registerAndActivate(
     ref,
     target: _target,

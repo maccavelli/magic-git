@@ -1,10 +1,10 @@
 ---
 status: "accepted"
-date: 2026-09-06
+date: 2026-09-07
 decision-makers: [Maintainer]
 consulted: []
 informed: [Magic Git contributors]
-verified: 2026-09-06
+verified: 2026-09-07
 ---
 
 # Rank forge namespaces by the user's own recent activity, and make the list searchable instead of truncated
@@ -275,7 +275,9 @@ the recommendation for each is stated in **Decision Outcome**.
 **Decision 5 — the surface.**
 
 * **5A. Keep chips, re-ranked.** Recency-ordered chips; no search.
-* **5B. Chips plus a filtering dropdown on the namespace field.** The field
+* **5B. Chips plus a filtering dropdown on the namespace field.**
+  *(Revised 2026-09-07 — see Amendments: the chips are gone, replaced by a
+  search bar with a sectioned dropdown.)* The field
   itself becomes the search input; a dropdown opens beneath it as the user
   types; chips remain for the zero-typing case and carry the recent namespaces.
 * **5C. Replace the field with a required picker.**
@@ -507,6 +509,61 @@ maintainer's does, both surfaces render empty, which is correct.
 * Bad, because it breaks 0031's explicit decision that a namespace the API did
   not return must stay typeable — a fresh grant, a paginated tail, or an
   unreachable API would become unusable. Rejected on that ground alone.
+
+## Amendments
+
+### 2026-09-07 — 5B revised: no chips, a search bar with a sectioned dropdown
+
+**What changed.** Option 5B was recorded as *"chips plus a filtering dropdown
+on the namespace field"*, and Phase 5 shipped exactly that. The maintainer,
+seeing it running, said the chips were **not what he had asked for**:
+
+> "the recents listing was supposed to support creating new repos in non
+> default paths, providing a list of projects the user has been the most active
+> in, and a search bar with wildcard search scoped to paths the user has
+> permissions to create new repos in. presenting a bunch of buttons was not
+> exactly my idea."
+
+The chips were **inherited from MADR 0031**, where they were a small "here are
+some paths you can use" row. Phase 5 re-fed them with recency data and kept the
+shape. Continuity of an existing widget is not the same as the design being
+intended, and the record should not read as though it was.
+
+**Two defects, not only taste.**
+
+* `NamespaceField.maxSuggestions = 8` truncated a service that already fetched
+  `_maxRecentProjects = 10`. The request said **10**; two were silently dropped.
+* Recency was displayed as **namespaces**, because a repository is created in a
+  namespace and never inside a project. That projection is correct for
+  *creating* and remains so — but as a *display* it collapsed **11 recent
+  projects into 4 namespaces**, which is not what "the 10 projects I have been
+  most active in" leads a reader to expect. The collapse is kept; the surface
+  changes.
+
+**The revised 5B, chosen by the maintainer from three presented options:**
+
+* **No chips.** They are removed, not restyled.
+* **A dedicated search bar** — magnifier prefix, `Search namespaces…`
+  placeholder — so the affordance announces itself instead of looking like
+  every other wizard text field.
+* **A sectioned dropdown on focus**: `RECENTLY ACTIVE` (up to **10**, the
+  number originally asked for) above `ALL YOU CAN CREATE IN (n)`. Typing
+  filters both; an empty section disappears.
+
+**What does NOT change.** The field is still free text and still optional — the
+typed value *is* the namespace. Option **5C (a required picker) remains
+rejected** for exactly the reason recorded below: a namespace the API never
+returned must stay typeable. Decisions 1D, 2C, 3B and 4B are untouched; this
+amends the presentation of 5B only.
+
+**Deferred, and named rather than dropped.** The option the maintainer chose
+was previewed with relative timestamps (`2d ago`) beside each recent entry.
+Those are **not** in this change. The forge events already carry `created_at`,
+so the feed half is cheap — but **local history stores no timestamps at all**
+(`SavedConnection.namespaceHistory` is `Map<String, List<String>>`), and adding
+them changes a stored shape that Phase 3b deliberately designed to need no
+migration. Showing the time on some rows and not others is worse than showing
+it on none. It is a follow-up, with that schema question as its first decision.
 
 ## More Information
 

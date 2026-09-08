@@ -671,6 +671,91 @@ fail. **The live verification below remains outstanding and is maintainer-run.**
 **Still not done, deliberately:** clone does not record a namespace (see
 Deviation 1 above), and GitHub has no server-side search.
 
+### Phase 6 — 2026-09-07 — the recents surface, redesigned
+
+> **Deviation 3 (2026-09-07): Phase 5's presentation was not what was asked
+> for.** Shown the shipped sheet, the maintainer said the chips were "not
+> exactly my idea" — the recents were meant to be a list of the projects he had
+> been most active in, reached from a search bar, not a row of buttons. The
+> chips came from MADR 0031 and Phase 5 kept their shape while changing their
+> content.
+>
+> **Two of the three complaints are defects, not taste:** `maxSuggestions = 8`
+> silently truncated a service already fetching **10**, and recency was
+> surfaced as namespaces (4) where the request said projects (11 → collapsed).
+>
+> **Decision:** MADR 0032 amended (see its Amendments section); 5B keeps its
+> substance and changes its surface. Chosen from three presented options:
+> **search-first with a sectioned dropdown**, and **a dedicated search bar**.
+> Chips are removed rather than restyled. 1D/2C/3B/4B untouched.
+>
+> **Deferred and named:** the relative timestamps shown in the option preview.
+> The forge feed carries `created_at`, but local history stores none, and
+> adding them changes the stored shape Phase 3b designed to need no migration.
+
+### Phase 7 — 2026-09-07 — clone records its namespace too
+
+> **Closes the gap Deviation 1 deliberately left open.** MADR option 1C reads
+> "record namespaces the app itself creates **or clones** into". Phase 3b
+> narrowed that to creates, and the Phase 5 deviation kept the narrowing rather
+> than widening scope mid-phase. Chosen from three assessed options; this is
+> **option A**.
+
+**Why A and not the others.** B (clones as a distinct, lower-ranked signal)
+buys ranking nuance at the cost of changing `SavedConnection`'s stored shape —
+a migration Phase 3b was specifically designed not to need. C (project the
+origins of already-registered repos onto namespaces) is retroactive and needs
+no write-time hook at all, but origins are cached nowhere: it is one
+`git remote get-url origin` per repo in `repoPaths`, so it needs its own cache
+before it is affordable. A closes the stated gap with the parts that already
+exist.
+
+**Nothing new had to be written.** `ForgeCloneSource` already carries `forge`,
+`host` and `slug` fully resolved, so the namespace is `dirname(slug)` with no
+parsing at all; `UrlCloneSource` carries a raw URL, and
+`forgeHostFromRemoteUrl` / `classifyForgeHost` / `remotePathFromUrl`
+(`lib/core/forge/forge.dart:21-56`) already reduce it to the same shape.
+
+**The permission objection, and why it does not block this.** Cloning from a
+namespace does not imply *create* permission in it — cloning a well-known
+upstream should not offer its owner as a create target. Phase 4's composition
+already filters `recent` against `all` whenever the creatable list came back,
+so those are dropped without any new code. The only exposure is the deliberate
+carve-out: when `all` is empty because the lookup failed, a stale suggestion is
+preferred over none. That is a suggestion in a free-text field.
+
+**Clones are where the signal is.** They outnumber creates by a wide margin, so
+this is what makes local history non-empty on day one — the exact weakness the
+MADR recorded against 1C alone.
+
+**A real bug the tests caught, and the reason its mutation is in the
+catalogue.** The obvious way to take "the namespace above the project" is
+`dirname(path)` — and it is wrong. `dirname` is filesystem-shaped and answers
+`/` for a bare name, so cloning `<host>/my-repo.git` would have recorded a
+namespace of **`/`**. It is now an explicit last-slash split with a comment
+naming the trap, and `clone: dirname used instead of forge-path split` is in
+the mutation catalogue precisely because that is the natural mistake to make
+again.
+
+**Phase 6 and 7 verification (one run, both phases):**
+
+```
+flutter analyze (whole project)   No issues found! (ran in 4.2s)
+dart format --output=none --set-exit-if-changed   (0 changed, 6 files)
+flutter test (full suite)         03:42 +3692 ~3: All tests passed!
+tool/mutate.py (23 mutations)     23 killed, 0 survived, 0 did not apply
+```
+
+**Counts.** `expect(` 9254 -> **9289**; `testWidgets(` 1027 -> **1038**;
+suite 3682 -> **3692**. The third skip is the new live-forge file.
+
+**Two intermediate full-suite runs were discarded, not reported.** Both were
+started before the edits they would have covered — one mid-redesign, one while
+the clone tests were still being written (it showed `-2`, both of them those
+tests). A suite run that predates the code it is meant to verify proves
+nothing, and reporting it as a pass would be exactly the "check only ever seen
+to succeed" failure this plan keeps guarding against.
+
 ### Live verification — 2026-09-07 — *run, on request*
 
 Run as `flutter test --run-skipped -t live-forge test/namespace_recency_live_test.dart`.

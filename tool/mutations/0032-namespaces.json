@@ -171,5 +171,41 @@
     "tests": [
       "test/create_repo_namespace_search_test.dart"
     ]
+  },
+  {
+    "label": "clone: namespace not recorded at all",
+    "file": "lib/features/workspace/clone_sheet.dart",
+    "find": "      await _rememberNamespace(source);",
+    "replace": "      // recorder removed",
+    "tests": [
+      "test/clone_sheet_test.dart"
+    ]
+  },
+  {
+    "label": "clone: dirname used instead of forge-path split",
+    "file": "lib/features/workspace/clone_sheet.dart",
+    "find": "    final slash = path.lastIndexOf('/');\n    if (slash <= 0) return;\n    final namespace = path.substring(0, slash);",
+    "replace": "    final namespace = dirname(path);\n    if (namespace.isEmpty) return;",
+    "tests": [
+      "test/clone_sheet_test.dart"
+    ]
+  },
+  {
+    "label": "clone: non-forge hosts recorded too",
+    "file": "lib/features/workspace/clone_sheet.dart",
+    "find": "    if (forge != Forge.github && forge != Forge.gitlab) return;",
+    "replace": "    if (forge == Forge.none) return;",
+    "tests": [
+      "test/clone_sheet_test.dart"
+    ]
+  },
+  {
+    "label": "clone: active connection not resolved for history",
+    "file": "lib/features/workspace/clone_sheet.dart",
+    "find": "      _isLocalTarget ? null : (_destConnectionId ?? activeId);",
+    "replace": "      _isLocalTarget ? null : _destConnectionId;",
+    "tests": [
+      "test/clone_sheet_test.dart"
+    ]
   }
 ]

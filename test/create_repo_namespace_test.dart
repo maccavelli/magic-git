@@ -14,6 +14,7 @@
 
 import 'dart:async';
 
+import 'package:flutter/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
@@ -21,13 +22,12 @@ import 'package:remote_magic_git/core/forge/forge.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 import 'package:remote_magic_git/features/common/buttons.dart';
-import 'package:remote_magic_git/features/common/inline_action_button.dart';
 import 'package:remote_magic_git/features/workspace/create_repo_sheet.dart';
 
 import 'helpers/create_repo_harness.dart';
 
 Finder _namespaceField() => find.byWidgetPredicate(
-  (w) => w is MacosTextField && w.placeholder == 'team/subgroup',
+  (w) => w is MacosTextField && w.placeholder == 'Search namespaces…',
 );
 
 const _noOrigin = SSHCommandResult(
@@ -210,7 +210,13 @@ void main() {
   // Phase 3 — suggestions beneath the field
   // -------------------------------------------------------------------------
 
-  testWidgets('offered namespaces fill the field when tapped', (tester) async {
+  testWidgets('an offered namespace fills the field when chosen', (
+    tester,
+  ) async {
+    // MADR 0032 (amended 2026-09-07): the offer is a row in the search
+    // field's dropdown, not a chip. The chips this test used to drive were
+    // removed — a row of buttons could not show the tail, be scanned or be
+    // filtered.
     final (_, _, _) = await pumpConnected(
       tester,
       extraOverrides: [
@@ -226,9 +232,14 @@ void main() {
     await tester.enterText(nameField(), 'repo');
     await tester.pumpAndSettle();
 
-    final chip = find.widgetWithText(InlineActionButton, 'team/subgroup');
-    expect(chip, findsOneWidget);
-    await tester.tap(chip);
+    await tester.tap(_namespaceField());
+    await tester.pumpAndSettle();
+    final row = find.descendant(
+      of: find.byType(ListView),
+      matching: find.text('team/subgroup'),
+    );
+    expect(row, findsOneWidget);
+    await tester.tap(row);
     await tester.pumpAndSettle();
 
     expect(

@@ -34,6 +34,16 @@ class LabeledTextField extends StatelessWidget {
   /// own when this is null, exactly as before.
   final FocusNode? focusNode;
 
+  /// Rendered inside the field, before the text — a magnifier on a search
+  /// input, for instance, so the affordance reads as search rather than as one
+  /// more field to fill in.
+  final Widget? prefix;
+
+  /// Shows macOS's in-field clear (ⓧ) button once there is something to
+  /// clear. Off by default: an ordinary form field has a label telling you
+  /// what belongs in it, and a clear button there is noise.
+  final OverlayVisibilityMode clearButtonMode;
+
   const LabeledTextField({
     super.key,
     required this.label,
@@ -47,6 +57,8 @@ class LabeledTextField extends StatelessWidget {
     this.hint,
     this.showError = false,
     this.focusNode,
+    this.prefix,
+    this.clearButtonMode = OverlayVisibilityMode.never,
   });
 
   @override
@@ -61,6 +73,8 @@ class LabeledTextField extends StatelessWidget {
           MacosTextField(
             controller: controller,
             focusNode: focusNode,
+            prefix: prefix,
+            clearButtonMode: clearButtonMode,
             placeholder: placeholder,
             placeholderStyle: kAppPlaceholderStyle,
             obscureText: obscure,

@@ -15,21 +15,21 @@
 //    a superseded response never overwrites a newer one;
 //  * a successful create REMEMBERS its namespace, and a failed one does not.
 
+import 'package:flutter/cupertino.dart' hide OverlayVisibilityMode;
 import 'package:flutter/services.dart';
-import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
 import 'package:remote_magic_git/core/forge/namespace_suggestions.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 import 'package:remote_magic_git/features/common/buttons.dart';
-import 'package:remote_magic_git/features/common/inline_action_button.dart';
+import 'package:remote_magic_git/features/common/tappable.dart';
 import 'package:riverpod/misc.dart' show Override;
 
 import 'helpers/create_repo_harness.dart';
 
 Finder _namespaceField() => find.byWidgetPredicate(
-  (w) => w is MacosTextField && w.placeholder == 'team/subgroup',
+  (w) => w is MacosTextField && w.placeholder == 'Search namespaces…',
 );
 
 /// A row of the attached dropdown, as distinct from a chip: the rows live in
@@ -37,16 +37,33 @@ Finder _namespaceField() => find.byWidgetPredicate(
 Finder _row(String namespace) =>
     find.descendant(of: find.byType(ListView), matching: find.text(namespace));
 
-Finder _chip(String namespace) =>
-    find.widgetWithText(InlineActionButton, namespace);
-
-/// The dropdown's rows, in the order they are offered.
+/// The dropdown's selectable rows, in the order they are offered.
+///
+/// Scoped through `Tappable` on purpose: the list also carries section
+/// headers, which are `Text` but are not rows, and counting them as offers
+/// would make every order assertion here quietly wrong.
 List<String> _rowOrder(WidgetTester tester) => tester
+    .widgetList<Text>(
+      find.descendant(
+        of: find.descendant(
+          of: find.byType(ListView),
+          matching: find.byType(Tappable),
+        ),
+        matching: find.byType(Text),
+      ),
+    )
+    .map((t) => t.data)
+    .whereType<String>()
+    .toList();
+
+/// The dropdown's section headers, in order.
+List<String> _sections(WidgetTester tester) => tester
     .widgetList<Text>(
       find.descendant(of: find.byType(ListView), matching: find.byType(Text)),
     )
     .map((t) => t.data)
     .whereType<String>()
+    .where((s) => s == s.toUpperCase() && s.contains(' '))
     .toList();
 
 const _noOrigin = SSHCommandResult(
@@ -182,17 +199,82 @@ void main() {
       expect(_row('group-23'), findsOneWidget, reason: 'the tail is reachable');
     });
 
-    testWidgets('a namespace past the chip limit is still reachable', (
+    testWidgets('a namespace past the recents section is still reachable', (
       tester,
     ) async {
-      // The defect this MADR opened with: the chips showed an alphabetical
-      // head and everything after it had no route at all.
+      // The defect this MADR opened with: the old surface showed an
+      // alphabetical head and everything after it had no route at all.
       final many = [for (var i = 0; i < 24; i++) 'group-$i'];
       await _toDetails(tester, all: many);
 
-      expect(_chip('group-23'), findsNothing, reason: 'past the chip limit');
       await _type(tester, 'group-23');
-      expect(_row('group-23'), findsOneWidget, reason: 'reachable by typing');
+      expect(_rowOrder(tester), ['group-23'], reason: 'reachable by typing');
+    });
+
+    testWidgets('recents come first, under their own heading', (tester) async {
+      // The amended 5B: two sections, recents above everything else, so the
+      // namespaces the account actually works in are the first thing seen.
+      await _toDetails(
+        tester,
+        recent: ['team/subgroup'],
+        all: ['team/subgroup', 'alpha', 'beta'],
+      );
+
+      await tester.tap(_namespaceField());
+      await tester.pumpAndSettle();
+
+      expect(_sections(tester), [
+        'RECENTLY ACTIVE',
+        'ALL YOU CAN CREATE IN (2)',
+      ]);
+      expect(
+        _rowOrder(tester).first,
+        'team/subgroup',
+        reason: 'the recent namespace leads, not the alphabetical first',
+      );
+      expect(_rowOrder(tester), [
+        'team/subgroup',
+        'alpha',
+        'beta',
+      ], reason: 'a recent namespace is not repeated in the second section');
+    });
+
+    testWidgets('an account with no recents shows no empty heading', (
+      tester,
+    ) async {
+      // A heading over nothing reads as a fault. A new account, a quiet week
+      // or an unreachable forge all land here.
+      await _toDetails(tester, all: ['alpha', 'beta']);
+
+      await tester.tap(_namespaceField());
+      await tester.pumpAndSettle();
+
+      expect(_sections(tester), ['YOU CAN CREATE IN']);
+      expect(_rowOrder(tester), ['alpha', 'beta']);
+    });
+
+    testWidgets('the recents section offers ten, not eight', (tester) async {
+      // The previous surface capped at 8 while the service already fetched 10,
+      // so two were fetched and silently dropped.
+      final ten = [for (var i = 0; i < 10; i++) 'recent-$i'];
+      await _toDetails(tester, recent: ten, all: ten);
+
+      await tester.tap(_namespaceField());
+      await tester.pumpAndSettle();
+      await tester.scrollUntilVisible(
+        find.descendant(
+          of: find.byType(ListView),
+          matching: find.text('recent-9'),
+        ),
+        60,
+        scrollable: find.descendant(
+          of: find.byType(ListView),
+          matching: find.byType(Scrollable),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(_row('recent-9'), findsOneWidget);
     });
   });
 
@@ -266,6 +348,52 @@ void main() {
       expect(
         find.text('Creates granted/yesterday/repo on the forge.'),
         findsOneWidget,
+      );
+    });
+  });
+
+  group('clearing', () {
+    testWidgets('the in-field clear button empties the namespace', (
+      tester,
+    ) async {
+      // Replaces the "Clear" chip the pre-amendment surface carried. Emptying
+      // the field is how "create under my own account" is expressed, so it
+      // must stay one click rather than a select-all and delete.
+      await _toDetails(tester, all: ['team/subgroup']);
+      await tester.enterText(nameField(), 'repo');
+      await _type(tester, 'team/subgroup');
+      expect(
+        find.text('Creates team/subgroup/repo on the forge.'),
+        findsOneWidget,
+      );
+
+      final clear = find.descendant(
+        of: find.byType(MacosTextField),
+        matching: find.byIcon(CupertinoIcons.clear_thick_circled),
+      );
+      expect(clear, findsOneWidget, reason: 'shown while there is text');
+      await tester.tap(clear);
+      await tester.pumpAndSettle();
+
+      expect(
+        tester.widget<MacosTextField>(_namespaceField()).controller!.text,
+        isEmpty,
+      );
+      expect(
+        find.textContaining('Leave empty to create under your own account'),
+        findsOneWidget,
+        reason: 'back to the default namespace, and the hint says so',
+      );
+    });
+
+    testWidgets('no clear button while the field is empty', (tester) async {
+      await _toDetails(tester, all: ['team/subgroup']);
+      expect(
+        find.descendant(
+          of: find.byType(MacosTextField),
+          matching: find.byIcon(CupertinoIcons.clear_thick_circled),
+        ),
+        findsNothing,
       );
     });
   });
