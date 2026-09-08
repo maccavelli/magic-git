@@ -586,6 +586,92 @@ void main() {
       expect(() => service.commitTemplate(_repo), throwsA(isA<GitException>()));
     });
   });
+
+  // -------------------------------------------------------------------------
+  // MADR 0037 Phase 1 — `originUrl`, the public reader for the origin the
+  // session already fetches and caches. `_forgeAuthArgs` now goes through it,
+  // so there is one fetch path rather than two.
+  // -------------------------------------------------------------------------
+  group('originUrl', () {
+    bool _isGetUrl(MockExecCall c) =>
+        c.gitArgs.length >= 3 &&
+        c.gitArgs[1] == 'remote' &&
+        c.gitArgs[2] == 'get-url';
+
+    MockExecutor urlExecutor(String stdout, {int exitCode = 0}) => MockExecutor(
+      onExecute: (_) =>
+          SSHCommandResult(exitCode: exitCode, stdout: stdout, stderr: ''),
+    );
+
+    test('returns the origin URL, trimmed', () async {
+      final exec = urlExecutor('git@github.com:owner/repo.git\n');
+      final url = await GitService(exec).originUrl(_repo);
+      expect(url, 'git@github.com:owner/repo.git');
+      expect(exec.calls.single.gitArgs, ['git', 'remote', 'get-url', 'origin']);
+    });
+
+    test('memoises: a second call issues no command', () async {
+      final exec = urlExecutor('https://gitlab.example/team/sub/repo.git\n');
+      final service = GitService(exec);
+      final first = await service.originUrl(_repo);
+      final second = await service.originUrl(_repo);
+      expect(second, first);
+      expect(
+        exec.calls,
+        hasLength(1),
+        reason: 'the cache `_forgeAuthArgs` fills is the cache read here',
+      );
+    });
+
+    test('a repo with no origin returns null, not a throw', () async {
+      final exec = urlExecutor('', exitCode: 128);
+      expect(await GitService(exec).originUrl(_repo), isNull);
+    });
+
+    test('a FAILED command is null even when it printed to stdout', () async {
+      // The empty-stdout case above passes with or without the exit-code
+      // check, because the empty guard catches it — so it cannot prove the
+      // exit code is consulted at all. git writes diagnostics on failure;
+      // returning one as a URL would record it as a namespace.
+      final exec = urlExecutor('fatal: No such remote\n', exitCode: 128);
+      expect(await GitService(exec).originUrl(_repo), isNull);
+    });
+
+    test('empty output is null, not an empty URL', () async {
+      final exec = urlExecutor('\n');
+      expect(await GitService(exec).originUrl(_repo), isNull);
+    });
+
+    test('a scoped repo carries its GIT_DIR', () async {
+      // Unscoped, this command fails outright on a bare/dotfiles repo, and a
+      // repo with a perfectly good remote reports no forge at all (0022 H2).
+      final exec = urlExecutor('git@github.com:owner/dotfiles.git\n');
+      final service = GitService(exec)
+        ..registerRepoScope(_repo, gitDir: '/repo/.bare', workTree: _repo);
+      await service.originUrl(_repo);
+      expect(exec.calls.single.extraEnv?['GIT_DIR'], '/repo/.bare');
+      expect(exec.calls.single.extraEnv?['GIT_WORK_TREE'], _repo);
+    });
+
+    test('a checkout drops the memo, so the next read refetches', () async {
+      // The cached URL is a property of the CURRENT BRANCH's remote; a stale
+      // entry made `_forgeAuthArgs` install the wrong CLI's credential helper
+      // and HTTPS auth failed (0022 M1). `checkout` clears it, and `originUrl`
+      // shares that cache, so it must see the clearing too.
+      final exec = urlExecutor('git@github.com:owner/repo.git\n');
+      final service = GitService(exec);
+      await service.originUrl(_repo);
+      expect(exec.calls.where(_isGetUrl), hasLength(1));
+
+      await service.checkout(_repo, 'other-branch');
+      await service.originUrl(_repo);
+      expect(
+        exec.calls.where(_isGetUrl),
+        hasLength(2),
+        reason: 'the memo was dropped, so the second read refetched',
+      );
+    });
+  });
 }
 
 String _reflogRec(String hashChar, String selector, String subject) {

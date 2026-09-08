@@ -1,0 +1,47 @@
+[
+  {
+    "label": "phase1: originUrl ignores its cache (refetches every call)",
+    "file": "lib/core/git/git_service.dart",
+    "find": "      var url = _remoteUrlByRepo[repoPath]?[remote];\n      if (url == null) {",
+    "replace": "      String? url;\n      if (url == null) {",
+    "tests": [
+      "test/git_service_test.dart"
+    ]
+  },
+  {
+    "label": "phase1: originUrl drops the scope env",
+    "file": "lib/core/git/git_service.dart",
+    "find": "          repoPath: repoPath,\n          extraEnv: _scopeEnvFor(repoPath),\n          gitArgs: ['git', 'remote', 'get-url', remote],",
+    "replace": "          repoPath: repoPath,\n          gitArgs: ['git', 'remote', 'get-url', remote],",
+    "tests": [
+      "test/git_service_test.dart"
+    ]
+  },
+  {
+    "label": "phase1: originUrl returns an empty URL instead of null",
+    "file": "lib/core/git/git_service.dart",
+    "find": "      return url.isEmpty ? null : url;",
+    "replace": "      return url;",
+    "tests": [
+      "test/git_service_test.dart"
+    ]
+  },
+  {
+    "label": "phase1: a failed command yields '' rather than null",
+    "file": "lib/core/git/git_service.dart",
+    "find": "        if (!result.isSuccess) return null;\n        // Cached even when EMPTY, deliberately.",
+    "replace": "        // Cached even when EMPTY, deliberately.",
+    "tests": [
+      "test/git_service_test.dart"
+    ]
+  },
+  {
+    "label": "phase1: the memo survives a checkout",
+    "file": "lib/core/git/git_service.dart",
+    "find": "  void _invalidateRemoteCaches(String repoPath) {\n    _upstreamRemoteByRepo.remove(repoPath);\n    _remoteUrlByRepo.remove(repoPath);",
+    "replace": "  void _invalidateRemoteCaches(String repoPath) {\n    _upstreamRemoteByRepo.remove(repoPath);",
+    "tests": [
+      "test/git_service_test.dart"
+    ]
+  }
+]

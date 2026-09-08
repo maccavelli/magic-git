@@ -4976,10 +4976,20 @@ printf 'EC\n%d %d\n' "$ns" "$nu"
     return u.startsWith('https://') || u.startsWith('http://');
   }
 
-  Future<List<String>> _forgeAuthArgs(
-    String repoPath, {
-    String remote = 'origin',
-  }) async {
+  /// The URL of [remote] for [repoPath], or null when the repo has none (or
+  /// the command failed — the caller cannot act on either, so they are one
+  /// answer here).
+  ///
+  /// **Memoised per (repo, remote) for the session** — the same
+  /// [_remoteUrlByRepo] cache [_forgeAuthArgs] fills, so a repo whose
+  /// credential helper was already chosen costs nothing here, and vice versa.
+  /// [_invalidateRemoteCaches] clears it on checkout, for the reason recorded
+  /// there: the upstream remote is a property of the CURRENT BRANCH.
+  ///
+  /// **Scope-aware.** A bare/dotfiles repo needs its GIT_DIR or the command
+  /// fails outright — unscoped, a repo with a perfectly good remote reported
+  /// no forge at all (MADR 0022 H2).
+  Future<String?> originUrl(String repoPath, {String remote = 'origin'}) async {
     try {
       var url = _remoteUrlByRepo[repoPath]?[remote];
       if (url == null) {
@@ -4991,10 +5001,29 @@ printf 'EC\n%d %d\n' "$ns" "$nu"
           lane: ExecLane.read,
           retries: 0,
         );
-        if (!result.isSuccess) return const [];
+        if (!result.isSuccess) return null;
+        // Cached even when EMPTY, deliberately. A repo with no origin answers
+        // successfully with nothing, and not caching that made every push and
+        // pull re-issue `get-url` for the rest of the session — which
+        // `mutations_test`'s "reuse cached upstream and get-url" caught when
+        // this method was first extracted. Emptiness is reported to the
+        // caller as null, below; it is still an answer worth remembering.
         url = result.stdout.trim();
         (_remoteUrlByRepo[repoPath] ??= {})[remote] = url;
       }
+      return url.isEmpty ? null : url;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<List<String>> _forgeAuthArgs(
+    String repoPath, {
+    String remote = 'origin',
+  }) async {
+    try {
+      final url = await originUrl(repoPath, remote: remote);
+      if (url == null) return const [];
       // Credential helpers are an HTTP(S) concept — git ignores them for
       // ssh://, git://, file:// and the scp-like `git@host:owner/repo` form.
       // Installing them anyway made every push and fetch on an SSH remote pay
