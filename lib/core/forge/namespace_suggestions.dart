@@ -16,7 +16,20 @@ class NamespaceSuggestions {
   /// Every creatable namespace, own-namespace first then groups.
   final List<String> all;
 
-  const NamespaceSuggestions({this.recent = const [], this.all = const []});
+  /// When each namespace in [recent] was last used, where that is known
+  /// (MADR 0032 Phase 8).
+  ///
+  /// **Partial on purpose.** Forge events always carry a time; local history
+  /// recorded before Phase 8 does not, and neither does a namespace that only
+  /// appears in [all]. A missing entry means "not known", never "never used",
+  /// so the UI omits the label rather than inventing one.
+  final Map<String, DateTime> times;
+
+  const NamespaceSuggestions({
+    this.recent = const [],
+    this.all = const [],
+    this.times = const {},
+  });
 
   static const empty = NamespaceSuggestions();
 

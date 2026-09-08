@@ -47,6 +47,7 @@ enough to use inside a single phase of work.
 """
 
 import argparse
+import functools
 import json
 import os
 import shutil
@@ -55,6 +56,12 @@ import sys
 import tempfile
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+# A run takes minutes and is usually redirected to a file, where Python's block
+# buffering would hold every line until exit — turning a live progress report
+# into a single dump. Flushing per line is the whole point of printing as it
+# goes.
+print = functools.partial(print, flush=True)  # noqa: A001
 
 
 def run(cmd, cwd):

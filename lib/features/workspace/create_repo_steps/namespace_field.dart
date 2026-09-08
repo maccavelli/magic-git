@@ -48,6 +48,7 @@ import '../../../core/forge/namespace_suggestions.dart';
 import '../../../core/providers/app_providers.dart';
 import '../../../core/utils/match_tier.dart';
 import '../../../core/utils/posix_path.dart';
+import '../../../core/utils/relative_time.dart';
 import '../../common/labeled_text_field.dart';
 import '../../common/tappable.dart';
 
@@ -317,7 +318,13 @@ class _NamespaceFieldState extends ConsumerState<NamespaceField> {
             hint: widget.hint,
           ),
           if (showDropdown)
-            _dropdown(context, recent: recent, rest: rest, shown: shown),
+            _dropdown(
+              context,
+              recent: recent,
+              rest: rest,
+              shown: shown,
+              times: suggestions.times,
+            ),
         ],
       ),
     );
@@ -333,13 +340,16 @@ class _NamespaceFieldState extends ConsumerState<NamespaceField> {
     required List<String> recent,
     required List<String> rest,
     required List<String> shown,
+    required Map<String, DateTime> times,
   }) {
     final theme = MacosTheme.of(context);
     final rows = <Widget>[];
     if (recent.isNotEmpty) {
       rows.add(_sectionHeader(context, 'Recently active'));
       for (final ns in recent.where(shown.contains)) {
-        rows.add(_row(context, ns, shown.indexOf(ns), shown.length));
+        rows.add(
+          _row(context, ns, shown.indexOf(ns), shown.length, at: times[ns]),
+        );
       }
     }
     final restShown = rest.where(shown.contains).toList();
@@ -386,16 +396,29 @@ class _NamespaceFieldState extends ConsumerState<NamespaceField> {
     );
   }
 
-  Widget _row(BuildContext context, String namespace, int position, int count) {
+  /// [at] labels the row with when that namespace was last used. Null means
+  /// **not known** — local history recorded before Phase 8, or a namespace the
+  /// forge feed never mentioned — so the label is omitted rather than guessed.
+  Widget _row(
+    BuildContext context,
+    String namespace,
+    int position,
+    int count, {
+    DateTime? at,
+  }) {
     final typography = MacosTheme.of(context).typography;
     final highlighted = position == _highlighted;
+    final when = at == null ? '' : relativeIsoLabel(at.toIso8601String());
     // Tappable carries no semantics of its own, so without this the row reads
     // as a bare path with no indication it can be chosen (the same reason
     // `CommandPalette._row` wraps its rows).
     return Semantics(
       button: true,
       selected: highlighted,
-      label: 'Create under $namespace, ${position + 1} of $count',
+      label: when.isEmpty
+          ? 'Create under $namespace, ${position + 1} of $count'
+          : 'Create under $namespace, last used $when, '
+                '${position + 1} of $count',
       child: Tappable(
         onTap: () => _select(namespace),
         child: ExcludeSemantics(
@@ -421,6 +444,16 @@ class _NamespaceFieldState extends ConsumerState<NamespaceField> {
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
+                if (when.isNotEmpty) ...[
+                  const SizedBox(width: 8),
+                  Text(
+                    when,
+                    style: typography.caption1.copyWith(
+                      color: MacosColors.systemGrayColor,
+                    ),
+                    maxLines: 1,
+                  ),
+                ],
               ],
             ),
           ),

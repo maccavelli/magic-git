@@ -20,6 +20,8 @@
 /// writer**, both below, and callers never branch on the target themselves.
 library;
 
+import 'dart:convert';
+
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../forge/forge.dart';
@@ -39,6 +41,10 @@ class NamespaceHistory {
   final ConnectionStore _store;
 
   static const _prefsPrefix = 'namespaceHistory_';
+
+  /// Times live under their own key so the list above keeps its stored shape,
+  /// exactly as `SavedConnection.namespaceHistoryTimes` does for the SSH half.
+  static const _timesPrefix = 'namespaceHistoryTimes_';
 
   /// Most-recent-first namespaces for this (forge, host).
   ///
@@ -60,6 +66,38 @@ class NamespaceHistory {
     }
   }
 
+  /// When each remembered namespace was last used (MADR 0032 Phase 8).
+  ///
+  /// A namespace absent from the result was recorded before times were kept —
+  /// its row shows no time and gains one on next use. That is why this is a
+  /// separate lookup rather than a richer [recent]: the ordered list is
+  /// complete, the times are not, and merging them would hide which is which.
+  Future<Map<String, DateTime>> recentTimes({
+    required Forge forge,
+    required String host,
+    SavedConnection? connection,
+  }) async {
+    final key = namespaceHistoryKey(forge, host);
+    if (connection != null) return connection.namespaceTimesFor(key);
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString('$_timesPrefix$key');
+      if (raw == null) return const {};
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return const {};
+      final out = <String, DateTime>{};
+      for (final entry in decoded.entries) {
+        final at = DateTime.tryParse('${entry.value}');
+        if (entry.key is String && at != null) {
+          out[entry.key as String] = at;
+        }
+      }
+      return out;
+    } catch (_) {
+      return const {};
+    }
+  }
+
   /// Records [namespace] as the most recent use for this (forge, host).
   ///
   /// Best-effort by design: a create that succeeded must not be reported as
@@ -69,13 +107,15 @@ class NamespaceHistory {
     required String host,
     required String namespace,
     SavedConnection? connection,
+    DateTime? at,
   }) async {
     if (namespace.isEmpty) return;
     final key = namespaceHistoryKey(forge, host);
+    final when = (at ?? DateTime.now()).toUtc();
     if (connection != null) {
       try {
         await _store.updateMetadata(
-          connection.withNamespaceUse(key, namespace),
+          connection.withNamespaceUse(key, namespace, at: when),
         );
       } catch (_) {
         // Non-fatal: the repository was still created.
@@ -90,6 +130,19 @@ class NamespaceHistory {
         ...existing.where((n) => n != namespace),
       ].take(SavedConnection.maxNamespaceHistory).toList();
       await prefs.setStringList('$_prefsPrefix$key', next);
+
+      // Times are pruned alongside the list they annotate, or the map grows
+      // without bound behind a list that does not.
+      final rawTimes = prefs.getString('$_timesPrefix$key');
+      final decoded = rawTimes == null ? null : jsonDecode(rawTimes);
+      final times = <String, String>{
+        if (decoded is Map)
+          for (final e in decoded.entries)
+            if (e.key is String && e.value is String)
+              e.key as String: e.value as String,
+        namespace: when.toIso8601String(),
+      }..removeWhere((ns, _) => !next.contains(ns));
+      await prefs.setString('$_timesPrefix$key', jsonEncode(times));
     } catch (_) {
       // As above.
     }

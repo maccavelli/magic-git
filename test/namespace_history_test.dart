@@ -161,4 +161,118 @@ void main() {
       );
     });
   });
+
+  // -------------------------------------------------------------------------
+  // MADR 0032 Phase 8 — when each namespace was last used.
+  //
+  // The times ride a PARALLEL map so `namespaceHistory` keeps its stored
+  // shape: the round-trip test above must stay green without being touched,
+  // which is what "no migration" means in practice.
+  // -------------------------------------------------------------------------
+  group('namespace use times', () {
+    test('recording stamps the time on an SSH profile', () async {
+      final store = _FakeStore();
+      final at = DateTime.utc(2026, 9, 5, 12);
+      await NamespaceHistory(store).record(
+        forge: Forge.gitlab,
+        host: 'gitlab.example',
+        namespace: 'team/subgroup',
+        connection: const SavedConnection(
+          id: 'c1',
+          label: 'p',
+          host: 'h',
+          port: 22,
+          username: 'u',
+          repoPath: '/srv/repo',
+        ),
+        at: at,
+      );
+
+      final written = store.updated.single;
+      expect(written.namespacesFor('gitlab@gitlab.example'), ['team/subgroup']);
+      expect(
+        written.namespaceTimesFor('gitlab@gitlab.example')['team/subgroup'],
+        at,
+      );
+    });
+
+    test('a profile recorded before times were kept reads none', () {
+      // Absent means "not known", and the namespace is still offered — the
+      // ranking is the feature, the label is decoration.
+      const legacy = SavedConnection(
+        id: 'c1',
+        label: 'p',
+        host: 'h',
+        port: 22,
+        username: 'u',
+        repoPath: '/srv/repo',
+        namespaceHistory: {
+          'gitlab@gitlab.example': ['team/subgroup'],
+        },
+      );
+
+      expect(legacy.namespacesFor('gitlab@gitlab.example'), ['team/subgroup']);
+      expect(legacy.namespaceTimesFor('gitlab@gitlab.example'), isEmpty);
+    });
+
+    test('times are pruned with the list they annotate', () {
+      // Otherwise the map grows without bound behind a list that does not.
+      var conn = const SavedConnection(
+        id: 'c1',
+        label: 'p',
+        host: 'h',
+        port: 22,
+        username: 'u',
+        repoPath: '/srv/repo',
+      );
+      for (var i = 0; i <= SavedConnection.maxNamespaceHistory; i++) {
+        conn = conn.withNamespaceUse(
+          'gitlab@h',
+          'ns-$i',
+          at: DateTime.utc(2026, 1, 1 + i),
+        );
+      }
+
+      final list = conn.namespacesFor('gitlab@h');
+      final times = conn.namespaceTimesFor('gitlab@h');
+      expect(list, hasLength(SavedConnection.maxNamespaceHistory));
+      expect(
+        times.keys.toSet(),
+        list.toSet(),
+        reason: 'no time survives its namespace falling off the end',
+      );
+    });
+
+    test('times survive a JSON round trip, and are omitted when empty', () {
+      final conn =
+          const SavedConnection(
+            id: 'c1',
+            label: 'p',
+            host: 'h',
+            port: 22,
+            username: 'u',
+            repoPath: '/srv/repo',
+          ).withNamespaceUse(
+            'gitlab@h',
+            'team/subgroup',
+            at: DateTime.utc(2026, 9, 5),
+          );
+
+      final back = SavedConnection.fromJson(conn.toJson());
+      expect(
+        back.namespaceTimesFor('gitlab@h')['team/subgroup'],
+        DateTime.utc(2026, 9, 5),
+      );
+
+      const bare = SavedConnection(
+        id: 'c2',
+        label: 'p',
+        host: 'h',
+        port: 22,
+        username: 'u',
+        repoPath: '/srv/repo',
+      );
+      expect(bare.toJson().containsKey('namespaceHistoryTimes'), isFalse);
+    });
+  });
 }

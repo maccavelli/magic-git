@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:remote_magic_git/core/forge/forge.dart';
@@ -39,18 +41,21 @@ void main() {
       required List<String> creatable,
       List<String> history = const [],
       List<String> forgeRecent = const [],
+      Map<String, String> historyTimes = const {},
+      DateTime? forgeEventTime,
     }) {
+      final key = namespaceHistoryKey(Forge.gitlab, 'gitlab.example');
       SharedPreferences.setMockInitialValues({
-        if (history.isNotEmpty)
-          'namespaceHistory_${namespaceHistoryKey(Forge.gitlab, 'gitlab.example')}':
-              history,
+        if (history.isNotEmpty) 'namespaceHistory_$key': history,
+        if (historyTimes.isNotEmpty)
+          'namespaceHistoryTimes_$key': jsonEncode(historyTimes),
       });
       return ProviderContainer(
         retry: noProviderRetry,
         overrides: [
           forgeNamespacesProvider.overrideWith((ref, key) async => creatable),
           activeExecutorProvider.overrideWithValue(
-            _EventsExecutor(forgeRecent),
+            _EventsExecutor(forgeRecent, eventTime: forgeEventTime),
           ),
           connectionStoreProvider.overrideWithValue(_FakeStore()),
           savedConnectionsProvider.overrideWith((ref) async => const []),
@@ -81,6 +86,62 @@ void main() {
         'b',
       ], reason: 'history leads; it is free and offline');
       expect(s.ordered, ['c', 'b', 'me', 'a']);
+    });
+
+    // -----------------------------------------------------------------
+    // MADR 0032 Phase 8 — where each row's "last used" label comes from.
+    // -----------------------------------------------------------------
+
+    test('local history wins the timestamp over the forge feed', () async {
+      // Both sources know this namespace. Local history is the more
+      // authoritative "when I last used this FROM HERE" — the forge feed only
+      // knows when the account last touched something in it, which can be
+      // someone else's push or another machine's work.
+      final historyAt = DateTime.utc(2026, 9, 5, 12);
+      final forgeAt = DateTime.utc(2026, 9, 6, 12);
+      final c = build(
+        creatable: const ['me', 'shared'],
+        history: const ['shared'],
+        historyTimes: {'shared': historyAt.toIso8601String()},
+        forgeRecent: const ['shared'],
+        forgeEventTime: forgeAt,
+      );
+      addTearDown(c.dispose);
+
+      final s = await read(c);
+      expect(s.recent, ['shared']);
+      expect(
+        s.times['shared'],
+        historyAt,
+        reason: 'the newer forge time must not displace the local record',
+      );
+    });
+
+    test('the forge time is used when history has none', () async {
+      // History recorded before Phase 8 carries no time; the feed still does,
+      // so the row is labelled rather than left blank.
+      final forgeAt = DateTime.utc(2026, 9, 6, 12);
+      final c = build(
+        creatable: const ['me', 'shared'],
+        history: const ['shared'],
+        forgeRecent: const ['shared'],
+        forgeEventTime: forgeAt,
+      );
+      addTearDown(c.dispose);
+
+      expect((await read(c)).times['shared'], forgeAt);
+    });
+
+    test('a namespace with no time anywhere carries none', () async {
+      final c = build(
+        creatable: const ['me', 'shared'],
+        history: const ['shared'],
+      );
+      addTearDown(c.dispose);
+
+      final s = await read(c);
+      expect(s.recent, ['shared']);
+      expect(s.times, isEmpty, reason: 'not known, never invented');
     });
 
     test(
@@ -123,8 +184,13 @@ void main() {
 /// Answers `glab api events` with a fixed set of project ids, and each
 /// `projects/<id>` with a namespace named after it.
 class _EventsExecutor extends SSHCommandExecutor {
-  _EventsExecutor(this.namespaces) : super(SSHClientManager());
+  _EventsExecutor(this.namespaces, {this.eventTime})
+    : super(SSHClientManager());
   final List<String> namespaces;
+
+  /// `created_at` stamped on every event, when a test cares (MADR 0032
+  /// Phase 8). Null omits the field, which is the "time unknown" path.
+  final DateTime? eventTime;
 
   @override
   Future<SSHCommandResult> execute({
@@ -144,8 +210,11 @@ class _EventsExecutor extends SSHCommandExecutor {
     final joined = gitArgs.join(' ');
     String body;
     if (joined.contains(' events')) {
+      final stamp = eventTime == null
+          ? ''
+          : ',"created_at":"${eventTime!.toUtc().toIso8601String()}"';
       body =
-          '[${[for (var i = 0; i < namespaces.length; i++) '{"project_id":$i}'].join(',')}]';
+          '[${[for (var i = 0; i < namespaces.length; i++) '{"project_id":$i$stamp}'].join(',')}]';
     } else if (joined.contains('projects/')) {
       final id =
           int.tryParse(

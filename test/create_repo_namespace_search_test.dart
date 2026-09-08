@@ -78,13 +78,15 @@ Future<(FakeCreateExecutor, FakeConnectionStore)> _toDetails(
   WidgetTester tester, {
   List<String> recent = const [],
   List<String> all = const [],
+  Map<String, DateTime> times = const {},
   List<Override> extraOverrides = const [],
 }) async {
   final (_, exec, store) = await pumpConnected(
     tester,
     extraOverrides: [
       namespaceSuggestionsProvider.overrideWith(
-        (ref, key) async => NamespaceSuggestions(recent: recent, all: all),
+        (ref, key) async =>
+            NamespaceSuggestions(recent: recent, all: all, times: times),
       ),
       ...extraOverrides,
     ],
@@ -349,6 +351,62 @@ void main() {
         find.text('Creates granted/yesterday/repo on the forge.'),
         findsOneWidget,
       );
+    });
+  });
+
+  group('when it was last used', () {
+    testWidgets('a recent row is labelled with its relative time', (
+      tester,
+    ) async {
+      await _toDetails(
+        tester,
+        recent: ['team/subgroup'],
+        all: ['team/subgroup'],
+        times: {
+          'team/subgroup': DateTime.now().subtract(const Duration(days: 3)),
+        },
+      );
+
+      await tester.tap(_namespaceField());
+      await tester.pumpAndSettle();
+
+      // House wording is the long form — every other surface says it this way.
+      expect(find.text('3 days ago'), findsOneWidget);
+    });
+
+    testWidgets('a row with no known time carries no label', (tester) async {
+      // Local history recorded before Phase 8 has no timestamp. A missing
+      // entry means "not known", never "never used", so nothing is invented.
+      await _toDetails(
+        tester,
+        recent: ['team/subgroup'],
+        all: ['team/subgroup'],
+      );
+
+      await tester.tap(_namespaceField());
+      await tester.pumpAndSettle();
+
+      expect(_row('team/subgroup'), findsOneWidget);
+      expect(find.textContaining('ago'), findsNothing);
+    });
+
+    testWidgets('the non-recent section is never labelled', (tester) async {
+      // "You can create in" is a permission list, not an activity list — a
+      // time there would claim knowledge the forge feed never supplied.
+      await _toDetails(
+        tester,
+        recent: ['team/subgroup'],
+        all: ['team/subgroup', 'never-touched'],
+        times: {
+          'team/subgroup': DateTime.now().subtract(const Duration(hours: 2)),
+        },
+      );
+
+      await tester.tap(_namespaceField());
+      await tester.pumpAndSettle();
+
+      expect(find.text('2 hours ago'), findsOneWidget);
+      expect(find.textContaining('ago'), findsOneWidget);
     });
   });
 

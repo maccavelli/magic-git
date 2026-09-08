@@ -564,7 +564,7 @@ void main() {
         exec,
       ).recentlyActiveNamespaces('/repo', host: 'gitlab.example');
 
-      expect(namespaces, ['team/alpha', 'solo']);
+      expect(namespaces.keys, ['team/alpha', 'solo']);
     });
 
     test('GitLab keeps event order — most recently touched first', () async {
@@ -584,11 +584,151 @@ void main() {
         await GlabService(
           exec,
         ).recentlyActiveNamespaces('/repo', host: 'gitlab.example'),
-        ['newest', 'older'],
+        // `.keys` on purpose: insertion order IS the ranking this test exists
+        // to pin, and `containsPair` would assert membership while silently
+        // dropping the ordering claim.
+        isA<Map<String, DateTime?>>().having(
+          (m) => m.keys.toList(),
+          'ranking',
+          ['newest', 'older'],
+        ),
         reason:
             'ranked by recency, not frequency — the 100-event page cap '
             'makes a frequency ranking a biased sample',
       );
+    });
+
+    // -------------------------------------------------------------------
+    // MADR 0032 Phase 8 — the events payload already carries `created_at`,
+    // so labelling each row costs no extra call.
+    // -------------------------------------------------------------------
+
+    test('GitLab reads the last-active time off the event', () async {
+      final exec = _FakeExecutor();
+      exec.respond = (args) {
+        final joined = args.join(' ');
+        if (joined.contains(' events')) {
+          return _okWithHeaders(
+            '[{"project_id":1,"created_at":"2026-09-05T10:00:00.000Z"},'
+            '{"project_id":2,"created_at":"2026-09-01T10:00:00.000Z"}]',
+          );
+        }
+        final id = RegExp(r'projects/(\d+)').firstMatch(joined)?.group(1);
+        return _okWithHeaders(
+          '{"namespace":{"full_path":"${{'1': 'team/recent', '2': 'team/older'}[id]}"}}',
+        );
+      };
+
+      final namespaces = await GlabService(
+        exec,
+      ).recentlyActiveNamespaces('/repo', host: 'gitlab.example');
+
+      expect(
+        namespaces['team/recent'],
+        DateTime.utc(2026, 9, 5, 10),
+        reason: 'the time comes from the event, not from the clock',
+      );
+      expect(namespaces['team/older'], DateTime.utc(2026, 9, 1, 10));
+    });
+
+    test(
+      'GitLab keeps the newest time when a namespace has two projects',
+      () async {
+        // The feed is newest-first, so the FIRST sighting is the most recent;
+        // a later, older project in the same namespace must not overwrite it.
+        final exec = _FakeExecutor();
+        exec.respond = (args) {
+          final joined = args.join(' ');
+          if (joined.contains(' events')) {
+            return _okWithHeaders(
+              '[{"project_id":1,"created_at":"2026-09-05T10:00:00.000Z"},'
+              '{"project_id":2,"created_at":"2026-09-01T10:00:00.000Z"}]',
+            );
+          }
+          // Both projects live in the same namespace.
+          return _okWithHeaders('{"namespace":{"full_path":"team/shared"}}');
+        };
+
+        final namespaces = await GlabService(
+          exec,
+        ).recentlyActiveNamespaces('/repo', host: 'gitlab.example');
+
+        expect(namespaces.keys, ['team/shared']);
+        expect(namespaces['team/shared'], DateTime.utc(2026, 9, 5, 10));
+      },
+    );
+
+    test(
+      'an event with no usable time still contributes its namespace',
+      () async {
+        // The ranking is the feature; the timestamp is decoration. Requiring a
+        // time would drop the namespace along with its label.
+        final exec = _FakeExecutor();
+        exec.respond = (args) {
+          final joined = args.join(' ');
+          if (joined.contains(' events')) {
+            return _okWithHeaders(
+              '[{"project_id":1,"created_at":"not a date"}]',
+            );
+          }
+          return _okWithHeaders('{"namespace":{"full_path":"team/untimed"}}');
+        };
+
+        final namespaces = await GlabService(
+          exec,
+        ).recentlyActiveNamespaces('/repo', host: 'gitlab.example');
+
+        expect(namespaces.keys, ['team/untimed']);
+        expect(namespaces['team/untimed'], isNull);
+      },
+    );
+
+    test('GitHub reads the last-active time off the event too', () async {
+      final exec = _FakeExecutor();
+      exec.respond = (args) {
+        final joined = args.join(' ');
+        if (joined.contains('events')) {
+          // `_ok`, not `_okWithHeaders`: gh's JSON path does not pass `-i`,
+          // so a header block would not be stripped and the parse would fail.
+          return _ok(
+            '[{"repo":{"name":"acme/app"},'
+            '"created_at":"2026-09-06T08:30:00.000Z"}]',
+          );
+        }
+        return _ok('{"login":"me"}');
+      };
+
+      final namespaces = await GhService(
+        exec,
+      ).recentlyActiveNamespaces('/repo', host: 'github.com');
+
+      expect(namespaces['acme'], DateTime.utc(2026, 9, 6, 8, 30));
+    });
+
+    test('GitHub keeps the newest time when an owner appears twice', () async {
+      // The feed is newest-first, so the FIRST sighting of an owner is its
+      // most recent activity. Without this the label would report whatever
+      // the oldest event in the page happened to say.
+      final exec = _FakeExecutor();
+      exec.respond = (args) {
+        final joined = args.join(' ');
+        if (joined.contains('events')) {
+          return _ok(
+            '[{"repo":{"name":"acme/new"},'
+            '"created_at":"2026-09-06T08:30:00.000Z"},'
+            '{"repo":{"name":"acme/old"},'
+            '"created_at":"2026-09-01T08:30:00.000Z"}]',
+          );
+        }
+        return _ok('{"login":"me"}');
+      };
+
+      final namespaces = await GhService(
+        exec,
+      ).recentlyActiveNamespaces('/repo', host: 'github.com');
+
+      expect(namespaces.keys, ['acme']);
+      expect(namespaces['acme'], DateTime.utc(2026, 9, 6, 8, 30));
     });
 
     test('GitLab asks only for the window it was given', () async {
@@ -621,7 +761,11 @@ void main() {
         await GlabService(
           exec,
         ).recentlyActiveNamespaces('/repo', host: 'gitlab.example'),
-        ['survivor'],
+        isA<Map<String, DateTime?>>().having(
+          (m) => m.keys.toList(),
+          'surviving namespaces',
+          ['survivor'],
+        ),
       );
     });
 
@@ -645,7 +789,7 @@ void main() {
         exec,
       ).recentlyActiveNamespaces('/repo', host: 'github.com');
 
-      expect(namespaces, ['acme', 'solo']);
+      expect(namespaces.keys, ['acme', 'solo']);
       expect(
         exec.calls.where((c) => c.join(' ').contains('repos/')),
         isEmpty,

@@ -94,8 +94,8 @@
   {
     "label": "saved_connection: history unbounded",
     "file": "lib/core/storage/saved_connection.dart",
-    "find": "        forgeHostKey: next.take(maxNamespaceHistory).toList(),",
-    "replace": "        forgeHostKey: next.toList(),",
+    "find": "    ].take(maxNamespaceHistory).toList();",
+    "replace": "    ].toList();",
     "tests": [
       "test/namespace_history_test.dart"
     ]
@@ -206,6 +206,78 @@
     "replace": "      _isLocalTarget ? null : _destConnectionId;",
     "tests": [
       "test/clone_sheet_test.dart"
+    ]
+  },
+  {
+    "label": "phase8: a namespace with no event time is dropped",
+    "file": "lib/core/gitlab/glab_service.dart",
+    "find": "      namespaces[path] = touchedAt[projectIds[i]];",
+    "replace": "      final at = touchedAt[projectIds[i]];\n      if (at != null) namespaces[path] = at;",
+    "tests": [
+      "test/forge_namespaces_test.dart"
+    ]
+  },
+  {
+    "label": "phase8: an older event overwrites the newer time",
+    "file": "lib/core/gitlab/glab_service.dart",
+    "find": "      if (path == null || path.isEmpty || namespaces.containsKey(path)) {\n        continue;\n      }",
+    "replace": "      if (path == null || path.isEmpty) {\n        continue;\n      }",
+    "tests": [
+      "test/forge_namespaces_test.dart"
+    ]
+  },
+  {
+    "label": "phase8: GitHub keeps the oldest event time",
+    "file": "lib/core/github/gh_service.dart",
+    "find": "        if (namespaces.containsKey(owner)) continue;",
+    "replace": "        if (false) continue;",
+    "tests": [
+      "test/forge_namespaces_test.dart"
+    ]
+  },
+  {
+    "label": "phase8: history times not pruned with the list",
+    "file": "lib/core/storage/saved_connection.dart",
+    "find": "    }..removeWhere((ns, _) => !next.contains(ns));",
+    "replace": "    };",
+    "tests": [
+      "test/namespace_history_test.dart"
+    ]
+  },
+  {
+    "label": "phase8: recording does not stamp a time",
+    "file": "lib/core/forge/namespace_history.dart",
+    "find": "          connection.withNamespaceUse(key, namespace, at: when),",
+    "replace": "          connection.withNamespaceUse(key, namespace),",
+    "tests": [
+      "test/namespace_history_test.dart"
+    ]
+  },
+  {
+    "label": "phase8: times serialised even when empty",
+    "file": "lib/core/storage/saved_connection.dart",
+    "find": "    if (namespaceHistoryTimes.isNotEmpty)\n      'namespaceHistoryTimes': namespaceHistoryTimes,",
+    "replace": "    'namespaceHistoryTimes': namespaceHistoryTimes,",
+    "tests": [
+      "test/namespace_history_test.dart"
+    ]
+  },
+  {
+    "label": "phase8: the relative-time label is dropped from rows",
+    "file": "lib/features/workspace/create_repo_steps/namespace_field.dart",
+    "find": "    final when = at == null ? '' : relativeIsoLabel(at.toIso8601String());",
+    "replace": "    final when = '';",
+    "tests": [
+      "test/create_repo_namespace_search_test.dart"
+    ]
+  },
+  {
+    "label": "phase8: a forge time overwrites local history's",
+    "file": "lib/core/providers/app_providers.dart",
+    "find": "        if (at != null) times.putIfAbsent(ns, () => at);",
+    "replace": "        if (at != null) times[ns] = at;",
+    "tests": [
+      "test/namespace_suggestions_test.dart"
     ]
   }
 ]

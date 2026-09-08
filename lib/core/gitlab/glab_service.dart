@@ -750,7 +750,12 @@ class GlabService {
   /// Returns empty on any failure. The namespace field is free text and works
   /// with no list at all; a slow or unreachable forge must cost the user
   /// nothing.
-  Future<List<String>> recentlyActiveNamespaces(
+  /// Returns an **insertion-ordered** map, most-recently-touched first, whose
+  /// values are when that namespace was last active. `.keys` is the ranked
+  /// list; the timestamps exist because the events payload already carries
+  /// `created_at`, so labelling each row costs no extra call (MADR 0032
+  /// Phase 8).
+  Future<Map<String, DateTime?>> recentlyActiveNamespaces(
     String repoPath, {
     required String host,
     Duration window = const Duration(days: 7),
@@ -761,6 +766,9 @@ class GlabService {
         '${since.month.toString().padLeft(2, '0')}-'
         '${since.day.toString().padLeft(2, '0')}';
     final List<int> projectIds;
+    // The first event seen for a project is its most recent one, because the
+    // feed is newest-first — so this is "last active", not "first seen".
+    final touchedAt = <int, DateTime>{};
     try {
       final decoded = await api(
         repoPath,
@@ -768,29 +776,41 @@ class GlabService {
         fields: ['after=$after', 'per_page=100'],
         host: host,
       );
-      if (decoded is! List) return const <String>[];
+      if (decoded is! List) return const <String, DateTime?>{};
       final ordered = <int>[];
       for (final event in decoded) {
         if (event is! Map) continue;
         final id = event['project_id'];
         if (id is! int || ordered.contains(id)) continue;
+        final at = DateTime.tryParse('${event['created_at']}');
+        if (at != null) touchedAt[id] = at;
         ordered.add(id);
         if (ordered.length >= _maxRecentProjects) break;
       }
       projectIds = ordered;
     } catch (_) {
-      return const <String>[];
+      return const <String, DateTime?>{};
     }
-    if (projectIds.isEmpty) return const <String>[];
+    if (projectIds.isEmpty) return const <String, DateTime?>{};
 
     final resolved = await Future.wait([
       for (final id in projectIds)
         _namespaceOfProject(repoPath, id, host: host),
     ]);
-    final namespaces = <String>[];
-    for (final path in resolved) {
-      if (path == null || path.isEmpty || namespaces.contains(path)) continue;
-      namespaces.add(path);
+    // Insertion order IS the ranking, so the first project to name a namespace
+    // fixes its position; a later, older project in the same namespace must
+    // not overwrite the newer timestamp.
+    // The VALUE is nullable, and that matters: an event without a parseable
+    // `created_at` must still contribute its namespace to the ranking. Making
+    // the time required would silently drop the namespace along with its
+    // label — the ranking is the feature, the label is the decoration.
+    final namespaces = <String, DateTime?>{};
+    for (var i = 0; i < resolved.length; i++) {
+      final path = resolved[i];
+      if (path == null || path.isEmpty || namespaces.containsKey(path)) {
+        continue;
+      }
+      namespaces[path] = touchedAt[projectIds[i]];
     }
     return namespaces;
   }

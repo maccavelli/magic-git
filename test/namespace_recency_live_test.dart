@@ -98,15 +98,20 @@ void main() {
         stopwatch.stop();
 
         // Shape, not identity: every entry must be a usable namespace path.
-        for (final ns in recent) {
+        for (final ns in recent.keys) {
           expect(ns, isNotEmpty);
           expect(ns.startsWith('/'), isFalse, reason: 'a path, not a route');
           expect(ns.endsWith('/'), isFalse);
         }
+        // A map cannot hold a duplicate key, so the dedup claim is structural
+        // now. What is worth asserting live is that the events payload really
+        // does supply the timestamps Phase 8 renders — a null here would mean
+        // the label silently never appears.
+        final cutoff = DateTime.now().toUtc().add(const Duration(minutes: 5));
         expect(
-          recent.toSet(),
-          hasLength(recent.length),
-          reason: 'projects collapse onto namespaces, deduplicated',
+          recent.values.every((at) => at != null && at.isBefore(cutoff)),
+          isTrue,
+          reason: 'every recent namespace carries a plausible last-active time',
         );
         expect(
           recent.length,
@@ -261,7 +266,7 @@ void main() {
 
       // ignore: avoid_print
       print('GitHub recent namespaces: ${recent.length}');
-      for (final ns in recent) {
+      for (final ns in recent.keys) {
         expect(ns, isNotEmpty);
         expect(
           ns.contains('/'),
@@ -271,7 +276,7 @@ void main() {
               'split is what makes the second round trip unnecessary',
         );
       }
-      expect(recent.toSet(), hasLength(recent.length));
+      expect(recent.keys.toSet(), hasLength(recent.length));
     }, timeout: const Timeout(Duration(minutes: 2)));
   });
 }

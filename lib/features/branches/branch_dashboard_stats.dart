@@ -9,6 +9,13 @@ import '../../core/git/git_service.dart';
 export '../../core/git/branch_review_query.dart'
     show kBranchStaleDays, isBranchStale;
 
+/// Relative-time labels moved to `core/utils/relative_time.dart` (MADR 0032
+/// Phase 8), where a second feature could reach them, and are re-exported here
+/// so Branches UI code keeps its single import — the same arrangement used for
+/// the staleness policy above.
+export '../../core/utils/relative_time.dart'
+    show relativeEpochLabel, relativeIsoLabel;
+
 /// Pure dashboard counts for the Branches empty-state (and later Review chips).
 ///
 /// This is **not** a Browse/Review UI mode — it is the data shape formerly
@@ -42,40 +49,6 @@ class BranchDashboardStats {
 bool branchNameMatchesFilter(GitRef ref, String filterLower) {
   if (filterLower.isEmpty) return true;
   return ref.shortName.toLowerCase().contains(filterLower);
-}
-
-/// Relative time for a unix epoch seconds field (creator/author date).
-///
-/// Pure and clock-injectable for tests. Empty string when [epochSeconds] is
-/// null.
-String relativeEpochLabel(int? epochSeconds, {DateTime? now}) {
-  if (epochSeconds == null) return '';
-  final then = DateTime.fromMillisecondsSinceEpoch(epochSeconds * 1000);
-  final d = (now ?? DateTime.now()).difference(then);
-  if (d.isNegative) return 'just now';
-  if (d.inDays >= 365) {
-    final y = (d.inDays / 365).floor();
-    return '$y year${y == 1 ? '' : 's'} ago';
-  }
-  if (d.inDays >= 30) {
-    final mo = (d.inDays / 30).floor();
-    return '$mo month${mo == 1 ? '' : 's'} ago';
-  }
-  if (d.inDays >= 1) return '${d.inDays} day${d.inDays == 1 ? '' : 's'} ago';
-  if (d.inHours >= 1) {
-    return '${d.inHours} hour${d.inHours == 1 ? '' : 's'} ago';
-  }
-  if (d.inMinutes >= 1) {
-    return '${d.inMinutes} minute${d.inMinutes == 1 ? '' : 's'} ago';
-  }
-  return 'just now';
-}
-
-/// Relative label for an ISO-8601 commit date string (History-style).
-String relativeIsoLabel(String iso, {DateTime? now}) {
-  final then = DateTime.tryParse(iso);
-  if (then == null) return '';
-  return relativeEpochLabel(then.millisecondsSinceEpoch ~/ 1000, now: now);
 }
 
 /// Build [BranchDashboardStats] from a refs snapshot and HEAD-merged short names.

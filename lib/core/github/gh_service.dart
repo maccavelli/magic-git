@@ -444,7 +444,10 @@ class GhService {
   ///
   /// Returns empty on any failure — the namespace field is free text and works
   /// with no list at all.
-  Future<List<String>> recentlyActiveNamespaces(
+  /// Returns an **insertion-ordered** map, most-recently-touched first, whose
+  /// values are when that owner was last active (MADR 0032 Phase 8). Same
+  /// shape as `GlabService.recentlyActiveNamespaces`; `.keys` is the ranking.
+  Future<Map<String, DateTime?>> recentlyActiveNamespaces(
     String repoPath, {
     required String host,
   }) async {
@@ -457,10 +460,10 @@ class GhService {
         extraEnv: hostEnv(host),
       );
       final name = (who is Map ? who['login'] : null) as String?;
-      if (name == null || name.isEmpty) return const <String>[];
+      if (name == null || name.isEmpty) return const <String, DateTime?>{};
       login = name;
     } catch (_) {
-      return const <String>[];
+      return const <String, DateTime?>{};
     }
     try {
       final decoded = await _runJson(
@@ -477,8 +480,10 @@ class GhService {
         'gh api users/$login/events',
         extraEnv: hostEnv(host),
       );
-      if (decoded is! List) return const <String>[];
-      final namespaces = <String>[];
+      if (decoded is! List) return const <String, DateTime?>{};
+      // Nullable value on purpose — see the GitLab twin: an event with no
+      // parseable time still contributes its owner to the ranking.
+      final namespaces = <String, DateTime?>{};
       for (final event in decoded) {
         if (event is! Map) continue;
         final repo = event['repo'];
@@ -489,12 +494,14 @@ class GhService {
         final slash = fullName.indexOf('/');
         if (slash <= 0) continue;
         final owner = fullName.substring(0, slash);
-        if (namespaces.contains(owner)) continue;
-        namespaces.add(owner);
+        // The feed is newest-first, so the first sighting of an owner is its
+        // most recent activity; a later, older event must not overwrite it.
+        if (namespaces.containsKey(owner)) continue;
+        namespaces[owner] = DateTime.tryParse('${event['created_at']}');
       }
       return namespaces;
     } catch (_) {
-      return const <String>[];
+      return const <String, DateTime?>{};
     }
   }
 

@@ -5441,18 +5441,30 @@ final namespaceSuggestionsProvider = FutureProvider.autoDispose
       }
 
       final recent = <String>[];
-      void offer(String ns) {
+      final times = <String, DateTime>{};
+      void offer(String ns, [DateTime? at]) {
+        // First writer wins for BOTH: local history is consulted first and is
+        // the more authoritative "when I last used this from here", so a forge
+        // event must not overwrite it.
+        if (at != null) times.putIfAbsent(ns, () => at);
         if (ns.isEmpty || recent.contains(ns)) return;
         recent.add(ns);
       }
 
       // Local history first: it is free, works offline, and is already ordered
       // most-recent-first.
-      for (final ns
-          in await ref
-              .read(namespaceHistoryProvider)
-              .recent(forge: forge, host: host, connection: connection)) {
-        offer(ns);
+      final history = ref.read(namespaceHistoryProvider);
+      final historyTimes = await history.recentTimes(
+        forge: forge,
+        host: host,
+        connection: connection,
+      );
+      for (final ns in await history.recent(
+        forge: forge,
+        host: host,
+        connection: connection,
+      )) {
+        offer(ns, historyTimes[ns]);
       }
 
       // Then the forge's own view of recent activity.
@@ -5466,10 +5478,10 @@ final namespaceSuggestionsProvider = FutureProvider.autoDispose
         Forge.github => await GhService(
           executor,
         ).recentlyActiveNamespaces('.', host: host),
-        _ => const <String>[],
+        _ => const <String, DateTime?>{},
       };
-      for (final ns in fromForge) {
-        offer(ns);
+      for (final entry in fromForge.entries) {
+        offer(entry.key, entry.value);
       }
 
       // A namespace the account can no longer create in is stale history, not a
@@ -5483,7 +5495,16 @@ final namespaceSuggestionsProvider = FutureProvider.autoDispose
                 if (all.contains(ns)) ns,
             ];
 
-      return NamespaceSuggestions(recent: filtered, all: all);
+      return NamespaceSuggestions(
+        recent: filtered,
+        all: all,
+        // Times for namespaces that survived the creatable filter; carrying a
+        // label for a row that is not shown is just stale state.
+        times: {
+          for (final ns in filtered)
+            if (times[ns] != null) ns: times[ns]!,
+        },
+      );
     }, retry: noProviderRetry);
 
 /// Server-side namespace search — the second half of the create sheet's hybrid

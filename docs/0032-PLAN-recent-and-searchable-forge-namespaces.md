@@ -756,6 +756,82 @@ tests). A suite run that predates the code it is meant to verify proves
 nothing, and reporting it as a pass would be exactly the "check only ever seen
 to succeed" failure this plan keeps guarding against.
 
+### Phase 8 — 2026-09-07 — when each namespace was last used
+
+> **Closes the item the MADR amendment named as deferred.** The option preview
+> the maintainer chose showed relative timestamps beside each recent entry;
+> Phase 6 shipped without them and said so, naming the schema question as the
+> blocker. This answers it.
+
+**No migration, because the times ride a parallel map.** Folding them into
+`namespaceHistory` would change a stored shape Phase 3b designed to avoid
+migrating — and there is a round-trip test pinning exactly that. Instead
+`SavedConnection.namespaceHistoryTimes` (`<forge>@<host>` → namespace → ISO
+instant) sits alongside it, the same idiom as `repoLabels`/`scopedGitDirs`, and
+the This-Mac store mirrors it under its own prefs key. A profile written before
+today reads back with **no times, all its namespaces intact**, and gains a time
+on next use. Absent means *not known*, never *never used*.
+
+**Zero extra API calls.** Both forges' event payloads already carry
+`created_at`, and both feeds are newest-first — so the first sighting of a
+namespace is its most recent activity, and later older events for the same
+namespace are ignored.
+
+**House wording, not the preview's.** The preview said `2d ago`; the codebase
+says `3 days ago` everywhere. `relativeEpochLabel`/`relativeIsoLabel` were
+Branches-only, so they moved to `lib/core/utils/relative_time.dart` with a
+re-export left behind — following the arrangement `branch_dashboard_stats.dart`
+**already** uses for the staleness policy. Neutrality proven:
+`branch_dashboard_stats_test.dart` passes unedited.
+
+**A real defect the existing tests caught immediately.** The first cut typed
+the result `Map<String, DateTime>`, making the timestamp required — so an event
+with an unparseable `created_at` **dropped the namespace entirely**, not just
+its label. Four existing recency tests failed at once. The type is now
+`Map<String, DateTime?>`: the ranking is the feature, the label is decoration.
+
+**A test I weakened, noticed, and repaired.** Adapting the recency assertions
+to a map, `containsPair(...)` was the easy reach — and it asserts membership
+while silently discarding the **ordering** claim those tests exist for.
+Replaced with `isA<...>().having((m) => m.keys.toList(), …)`.
+
+**Two mutation survivors, both genuine coverage gaps:**
+
+* `a forge time overwrites local history's` — **predicted**. The rule (local
+  history's time wins; the feed only knows the *account* touched something
+  there, which may be another machine or another person) was implemented with
+  `putIfAbsent` and never tested. Three provider tests now cover it, including
+  the fallback and the no-time-anywhere case.
+* `GitHub keeps the oldest event time` — **not predicted, and the more
+  instructive of the two.** The GitHub timestamp test used a single event for
+  one owner, so the "first sighting wins" guard was never exercised: the
+  mutation changed nothing observable and the test passed either way. Its
+  GitLab twin *was* covered. A second, older event for the same owner pins it.
+
+Both are the same lesson in different clothes: one test asserted the right
+thing about the wrong scenario, the other asserted nothing about the rule.
+
+**A stale catalogue entry, reported rather than passed.** `saved_connection:
+history unbounded` came back **DID NOT APPLY (0 matches)** — this phase moved
+`.take(maxNamespaceHistory)` up into the list construction. That is the single
+property the harness exists for: a broken *experiment* is not a passing *test*.
+Repointed; it now kills two.
+
+**A flaw fixed in the harness itself.** Its progress output was block-buffered
+when redirected, so a multi-minute run showed nothing until it exited. Now
+line-flushed.
+
+**Verification:**
+
+```
+flutter analyze (whole project)   No issues found! (ran in 4.1s)
+dart format --output=none --set-exit-if-changed   (0 changed, 14 files)
+flutter test (full suite)         03:32 +3707 ~3: All tests passed!
+tool/mutate.py (31 mutations)     31 killed, 0 survived, 0 did not apply
+```
+
+**Counts.** suite 3692 -> **3707**. Catalogue 23 -> **31**.
+
 ### Live verification — 2026-09-07 — *run, on request*
 
 Run as `flutter test --run-skipped -t live-forge test/namespace_recency_live_test.dart`.

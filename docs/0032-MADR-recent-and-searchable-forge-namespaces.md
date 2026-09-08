@@ -556,7 +556,12 @@ rejected** for exactly the reason recorded below: a namespace the API never
 returned must stay typeable. Decisions 1D, 2C, 3B and 4B are untouched; this
 amends the presentation of 5B only.
 
-**Deferred, and named rather than dropped.** The option the maintainer chose
+**Deferred, then delivered (Phase 8, 2026-09-07).** Resolved by keeping the
+times in a *parallel* map (`SavedConnection.namespaceHistoryTimes`) so
+`namespaceHistory` keeps its stored shape and no migration is needed; a row
+with no recorded time simply shows none. The original deferral read:
+
+> **Deferred, and named rather than dropped.** The option the maintainer chose
 was previewed with relative timestamps (`2d ago`) beside each recent entry.
 Those are **not** in this change. The forge events already carry `created_at`,
 so the feed half is cheap — but **local history stores no timestamps at all**

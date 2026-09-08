@@ -48,6 +48,17 @@ class SavedConnection {
   /// Read and write both through `NamespaceHistory`, never directly.
   final Map<String, List<String>> namespaceHistory;
 
+  /// When each remembered namespace was last used — `<forge>@<host>` →
+  /// namespace → ISO-8601 instant (MADR 0032 Phase 8).
+  ///
+  /// **A parallel map, deliberately, so [namespaceHistory] keeps its shape.**
+  /// Folding the time into the list would change a stored format that Phase 3b
+  /// designed to need no migration, and there is a test asserting a profile
+  /// with history round-trips unchanged. Absent means "recorded before times
+  /// were kept" — the row simply shows no time, and gains one on next use.
+  /// Same idiom as `repoLabels`/`scopedGitDirs`.
+  final Map<String, Map<String, String>> namespaceHistoryTimes;
+
   /// When this profile was last successfully connected — drives the landing
   /// page's "Recent Connections" ordering. Null for never-connected profiles.
   final DateTime? lastConnectedAt;
@@ -64,6 +75,7 @@ class SavedConnection {
     this.repoLabels = const {},
     this.scopedGitDirs = const {},
     this.namespaceHistory = const {},
+    this.namespaceHistoryTimes = const {},
     this.lastConnectedAt,
   });
 
@@ -139,6 +151,7 @@ class SavedConnection {
     Map<String, String>? repoLabels,
     Map<String, String>? scopedGitDirs,
     Map<String, List<String>>? namespaceHistory,
+    Map<String, Map<String, String>>? namespaceHistoryTimes,
     DateTime? lastConnectedAt,
   }) => SavedConnection(
     id: id,
@@ -152,6 +165,7 @@ class SavedConnection {
     repoLabels: repoLabels ?? this.repoLabels,
     scopedGitDirs: scopedGitDirs ?? this.scopedGitDirs,
     namespaceHistory: namespaceHistory ?? this.namespaceHistory,
+    namespaceHistoryTimes: namespaceHistoryTimes ?? this.namespaceHistoryTimes,
     lastConnectedAt: lastConnectedAt ?? this.lastConnectedAt,
   );
 
@@ -161,18 +175,39 @@ class SavedConnection {
 
   /// Records [namespace] as the most recent use for [forgeHostKey], keeping at
   /// most [maxNamespaceHistory] entries. Mirrors [withRepoLabel]/[withFsmonitor].
-  SavedConnection withNamespaceUse(String forgeHostKey, String namespace) {
+  SavedConnection withNamespaceUse(
+    String forgeHostKey,
+    String namespace, {
+    DateTime? at,
+  }) {
     if (namespace.isEmpty) return this;
     final next = <String>[
       namespace,
       ...namespacesFor(forgeHostKey).where((n) => n != namespace),
-    ];
+    ].take(maxNamespaceHistory).toList();
+    // Times are pruned alongside the list they annotate, or the map grows
+    // without bound behind a list that does not.
+    final times = {
+      ...?namespaceHistoryTimes[forgeHostKey],
+      namespace: (at ?? DateTime.now()).toUtc().toIso8601String(),
+    }..removeWhere((ns, _) => !next.contains(ns));
     return copyWith(
-      namespaceHistory: {
-        ...namespaceHistory,
-        forgeHostKey: next.take(maxNamespaceHistory).toList(),
-      },
+      namespaceHistory: {...namespaceHistory, forgeHostKey: next},
+      namespaceHistoryTimes: {...namespaceHistoryTimes, forgeHostKey: times},
     );
+  }
+
+  /// When each remembered namespace under [forgeHostKey] was last used.
+  /// Entries missing from this map were recorded before times were kept.
+  Map<String, DateTime> namespaceTimesFor(String forgeHostKey) {
+    final raw = namespaceHistoryTimes[forgeHostKey];
+    if (raw == null) return const {};
+    final out = <String, DateTime>{};
+    for (final entry in raw.entries) {
+      final at = DateTime.tryParse(entry.value);
+      if (at != null) out[entry.key] = at;
+    }
+    return out;
   }
 
   /// Bound on per-key history. A create wizard offers a short list; keeping
@@ -193,6 +228,24 @@ class SavedConnection {
     return out;
   }
 
+  static Map<String, Map<String, String>> _readNamespaceTimes(Object? raw) {
+    if (raw is! Map) return const {};
+    final out = <String, Map<String, String>>{};
+    for (final entry in raw.entries) {
+      final key = entry.key;
+      final value = entry.value;
+      if (key is! String || value is! Map) continue;
+      final inner = <String, String>{};
+      for (final e in value.entries) {
+        if (e.key is String && e.value is String) {
+          inner[e.key as String] = e.value as String;
+        }
+      }
+      if (inner.isNotEmpty) out[key] = inner;
+    }
+    return out;
+  }
+
   Map<String, dynamic> toJson() => {
     'id': id,
     'label': label,
@@ -205,29 +258,32 @@ class SavedConnection {
     if (repoLabels.isNotEmpty) 'repoLabels': repoLabels,
     if (scopedGitDirs.isNotEmpty) 'scopedGitDirs': scopedGitDirs,
     if (namespaceHistory.isNotEmpty) 'namespaceHistory': namespaceHistory,
+    if (namespaceHistoryTimes.isNotEmpty)
+      'namespaceHistoryTimes': namespaceHistoryTimes,
     if (lastConnectedAt != null)
       'lastConnectedAt': lastConnectedAt!.toIso8601String(),
   };
 
-  factory SavedConnection.fromJson(Map<String, dynamic> json) =>
-      SavedConnection(
-        id: json['id'] as String? ?? '',
-        label: json['label'] as String? ?? '',
-        host: json['host'] as String? ?? '',
-        port: (json['port'] as num?)?.toInt() ?? 22,
-        username: json['username'] as String? ?? '',
-        repoPath: json['repoPath'] as String? ?? '',
-        repoPaths:
-            (json['repoPaths'] as List?)?.whereType<String>().toList() ??
-            const [],
-        fsmonitorPaths: _readFsmonitorPaths(json),
-        repoLabels: _readRepoLabels(json),
-        scopedGitDirs: _readStringMap(json['scopedGitDirs']),
-        namespaceHistory: _readNamespaceHistory(json['namespaceHistory']),
-        lastConnectedAt: DateTime.tryParse(
-          json['lastConnectedAt'] as String? ?? '',
-        ),
-      );
+  factory SavedConnection.fromJson(
+    Map<String, dynamic> json,
+  ) => SavedConnection(
+    id: json['id'] as String? ?? '',
+    label: json['label'] as String? ?? '',
+    host: json['host'] as String? ?? '',
+    port: (json['port'] as num?)?.toInt() ?? 22,
+    username: json['username'] as String? ?? '',
+    repoPath: json['repoPath'] as String? ?? '',
+    repoPaths:
+        (json['repoPaths'] as List?)?.whereType<String>().toList() ?? const [],
+    fsmonitorPaths: _readFsmonitorPaths(json),
+    repoLabels: _readRepoLabels(json),
+    scopedGitDirs: _readStringMap(json['scopedGitDirs']),
+    namespaceHistory: _readNamespaceHistory(json['namespaceHistory']),
+    namespaceHistoryTimes: _readNamespaceTimes(json['namespaceHistoryTimes']),
+    lastConnectedAt: DateTime.tryParse(
+      json['lastConnectedAt'] as String? ?? '',
+    ),
+  );
 
   // Reads the per-repo fsmonitor set, migrating the legacy connection-level
   // `enableFsmonitor: true` flag to enabling fsmonitor for the default repo.
