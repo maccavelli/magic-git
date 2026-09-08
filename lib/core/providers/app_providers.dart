@@ -894,6 +894,21 @@ class ConnectionController extends Notifier<ConnectionState> {
   /// [ensureForgeHostLogin].
   final Map<(Forge, String), Future<void>> _hostLogins = {};
 
+  /// Namespaces this account may create in, per `(forge, host)`, memoised for
+  /// the session (MADR 0037 decision 1).
+  ///
+  /// Opens record only namespaces the account can **create** in, so the stored
+  /// history is clean rather than filtered at read time. Checked here rather
+  /// than per open: without the memo this would be a forge round trip on every
+  /// repo open, on a path that previously made none. Same lifetime and same
+  /// clearing points as [_hostLogins] — a new connection identity means a
+  /// different account.
+  ///
+  /// A **null** value is a remembered failure: the lookup did not answer, so
+  /// "creatable" is unknown and nothing is recorded. It is retried on the next
+  /// connection rather than each open, for the same reason the list is cached.
+  final Map<(Forge, String), List<String>?> _creatableByHost = {};
+
   /// Gate for the current session's connect-time forge CLI logins, which run
   /// in the background *after* the session is already `connected` (each login
   /// validates its token against the forge's API from the host — the slowest
@@ -1291,6 +1306,7 @@ class ConnectionController extends Notifier<ConnectionState> {
     _lastScopedGitDirs =
         scopedGitDirs; // updated to the healed map once resolved
     _hostLogins.clear(); // new connection identity — re-auth forge hosts lazily
+    _creatableByHost.clear(); // …and a different account may create elsewhere
     // A new gate for this attempt's background logins. Captured locally so
     // this attempt only ever completes its *own* gate, never a successor's.
     final forgeGate = _forgeAuthGate = Completer<void>();
@@ -1826,6 +1842,7 @@ class ConnectionController extends Notifier<ConnectionState> {
     _lastGitlabToken = null;
     _lastGithubToken = null;
     _hostLogins.clear(); // new connection identity — re-auth forge hosts lazily
+    _creatableByHost.clear(); // …and a different account may create elsewhere
     // No tokens → no background logins to wait for: gate opens immediately,
     // and forge panels rely on this machine's own gh/glab auth.
     _forgeAuthGate = Completer<void>()..complete();
@@ -2219,6 +2236,115 @@ class ConnectionController extends Notifier<ConnectionState> {
           .record(isLocal: isLocal, id: id, repoPath: repoPath);
       if (ref.mounted) ref.invalidate(recentRepoRefsProvider);
     } catch (_) {}
+    await _recordOpenedNamespace(
+      isLocal: isLocal,
+      connectionId: id,
+      repoPath: repoPath,
+    );
+  }
+
+  /// Records the namespace of a just-opened repository, so the create sheet's
+  /// recency list learns from **opens** as well as creates and clones
+  /// (MADR 0037).
+  ///
+  /// This is the gap between the two shipped sources: local history records
+  /// only what this app wrote, and the forge events feed sees 7 days and one
+  /// 100-event page. A repository you joined and only ever open is invisible
+  /// to both, however often you work in it.
+  ///
+  /// **Only namespaces the account can create in are recorded** (decision 1),
+  /// so the store is clean rather than filtered — the composer's
+  /// failed-lookup arm deliberately keeps history, and would otherwise offer a
+  /// namespace the create would reject. An unknown answer records nothing.
+  ///
+  /// Best-effort, exactly like the MRU write beside it: a failure here must
+  /// never affect an open.
+  Future<void> _recordOpenedNamespace({
+    required bool isLocal,
+    required String? connectionId,
+    required String? repoPath,
+    DateTime? at,
+  }) async {
+    if (repoPath == null || repoPath.isEmpty) return;
+    try {
+      final url = await ref.read(gitServiceProvider).originUrl(repoPath);
+      if (url == null || !ref.mounted) return;
+      final forge = forgeFromRemoteUrl(url);
+      if (forge != Forge.github && forge != Forge.gitlab) return;
+      final host = forgeHostFromRemoteUrl(url);
+      if (host == null || host.isEmpty) return;
+
+      // NOT `dirname`: it is filesystem-shaped and answers `/` for a bare
+      // name, which would record `/` as a namespace (MADR 0036 Phase 7). A
+      // forge path with no slash has no namespace above it — that is the
+      // account's own, already first in the creatable list.
+      final path = remotePathFromUrl(url);
+      if (path == null) return;
+      final slash = path.lastIndexOf('/');
+      if (slash <= 0) return;
+      final namespace = path.substring(0, slash);
+
+      final creatable = await _creatableFor(forge, host);
+      if (creatable == null || !creatable.contains(namespace)) return;
+      if (!ref.mounted) return;
+
+      SavedConnection? connection;
+      if (!isLocal && connectionId != null) {
+        try {
+          for (final c in await ref.read(savedConnectionsProvider.future)) {
+            if (c.id == connectionId) connection = c;
+          }
+        } catch (_) {
+          // Store unreadable — the local half of the split still applies.
+        }
+      }
+      if (!ref.mounted) return;
+      await NamespaceHistory(ref.read(connectionStoreProvider)).record(
+        forge: forge,
+        host: host,
+        namespace: namespace,
+        connection: connection,
+        at: at,
+      );
+    } catch (_) {
+      // An open is never failed by the bookkeeping that follows it.
+    }
+  }
+
+  /// The namespaces this account may create in on [host], memoised per session
+  /// ([_creatableByHost]). Null means the lookup did not answer.
+  Future<List<String>?> _creatableFor(Forge forge, String host) async {
+    final key = (forge, host);
+    if (_creatableByHost.containsKey(key)) return _creatableByHost[key];
+    List<String>? result;
+    try {
+      final executor = _activeExecutor;
+      result = switch (forge) {
+        Forge.gitlab => await GlabService(
+          executor,
+        ).listCreatableNamespaces('.', host: host),
+        Forge.github => await GhService(
+          executor,
+        ).listCreatableNamespaces('.', host: host),
+        _ => null,
+      };
+      // Both services answer with an empty list on failure rather than
+      // throwing, so **empty is how a failed lookup arrives here** — collapse
+      // it to null, the one value meaning "unknown".
+      //
+      // This looks inert, because either value records nothing today: null
+      // fails the `== null` guard and `[]` fails `.contains`. It is not. It is
+      // what makes "the forge did not answer" a state a caller and a test can
+      // see, and without it the failed-lookup test passes through the
+      // `contains` branch while claiming to exercise the null one. Removed
+      // once as dead code; the mutation `a failed creatable lookup is treated
+      // as creatable` survived, which is how that was caught.
+      if (result != null && result.isEmpty) result = null;
+    } catch (_) {
+      result = null;
+    }
+    _creatableByHost[key] = result;
+    return result;
   }
 
   void setRepoPath(String path) {

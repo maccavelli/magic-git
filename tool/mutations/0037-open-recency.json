@@ -43,5 +43,50 @@
     "tests": [
       "test/git_service_test.dart"
     ]
+  },
+  {
+    "label": "phase2: the namespace is not recorded on open at all",
+    "file": "lib/core/providers/app_providers.dart",
+    "find": "    await _recordOpenedNamespace(\n      isLocal: isLocal,\n      connectionId: id,\n      repoPath: repoPath,\n    );",
+    "replace": "    // recorder removed",
+    "tests": [
+      "test/namespace_open_recording_test.dart"
+    ]
+  },
+  {
+    "label": "phase2: a bare path records itself as a namespace",
+    "file": "lib/core/providers/app_providers.dart",
+    "find": "      final slash = path.lastIndexOf('/');\n      if (slash <= 0) return;\n      final namespace = path.substring(0, slash);",
+    "replace": "      final slash = path.lastIndexOf('/');\n      final namespace = slash <= 0 ? path : path.substring(0, slash);",
+    "tests": [
+      "test/namespace_open_recording_test.dart"
+    ]
+  },
+  {
+    "label": "phase2: the creatable check is skipped",
+    "file": "lib/core/providers/app_providers.dart",
+    "find": "      if (creatable == null || !creatable.contains(namespace)) return;",
+    "replace": "      if (creatable == null) {}",
+    "tests": [
+      "test/namespace_open_recording_test.dart"
+    ]
+  },
+  {
+    "label": "phase2: a failed creatable lookup is treated as creatable",
+    "file": "lib/core/providers/app_providers.dart",
+    "find": "      if (creatable == null || !creatable.contains(namespace)) return;",
+    "replace": "      if (creatable != null && !creatable.contains(namespace)) return;",
+    "tests": [
+      "test/namespace_open_recording_test.dart"
+    ]
+  },
+  {
+    "label": "phase2: the creatable memo is ignored (one lookup per open)",
+    "file": "lib/core/providers/app_providers.dart",
+    "find": "    if (_creatableByHost.containsKey(key)) return _creatableByHost[key];",
+    "replace": "    if (false) return _creatableByHost[key];",
+    "tests": [
+      "test/namespace_open_recording_test.dart"
+    ]
   }
 ]

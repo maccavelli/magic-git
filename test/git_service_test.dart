@@ -593,7 +593,7 @@ void main() {
   // so there is one fetch path rather than two.
   // -------------------------------------------------------------------------
   group('originUrl', () {
-    bool _isGetUrl(MockExecCall c) =>
+    bool isGetUrl(MockExecCall c) =>
         c.gitArgs.length >= 3 &&
         c.gitArgs[1] == 'remote' &&
         c.gitArgs[2] == 'get-url';
@@ -661,12 +661,12 @@ void main() {
       final exec = urlExecutor('git@github.com:owner/repo.git\n');
       final service = GitService(exec);
       await service.originUrl(_repo);
-      expect(exec.calls.where(_isGetUrl), hasLength(1));
+      expect(exec.calls.where(isGetUrl), hasLength(1));
 
       await service.checkout(_repo, 'other-branch');
       await service.originUrl(_repo);
       expect(
-        exec.calls.where(_isGetUrl),
+        exec.calls.where(isGetUrl),
         hasLength(2),
         reason: 'the memo was dropped, so the second read refetched',
       );

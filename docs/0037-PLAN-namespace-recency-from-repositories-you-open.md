@@ -235,7 +235,7 @@ Phase 7).
 | `originUrl` drops the scope env | Phase 1 scoped-repo test |
 | `_recordOpenedNamespace` not called from `_recordRecentOpen` | Phase 2 SSH-open test |
 | `dirname` used instead of the last-slash split | Phase 2 "`host/repo` records nothing" |
-| A non-forge origin recorded anyway | Phase 2 non-forge test |
+| ~~A non-forge origin recorded anyway~~ **dropped 2026-09-08** | Unfalsifiable: redundant with `_creatableFor`'s switch default, so no single edit exposes it. See the Phase 2 record. |
 | A non-creatable namespace recorded anyway | Phase 2 "absent from creatable records nothing" |
 | A failed creatable lookup treated as creatable | Phase 2 failed-lookup test |
 | The creatable memo ignored (refetches per open) | Phase 2 "one lookup for two opens" |
@@ -332,6 +332,85 @@ dart format                       0 changed
 flutter test (full suite)         03:38 +3739 ~3: All tests passed!
 tool/mutate.py (5 mutations)      5 killed, 0 survived, 0 did not apply
 expect=9424 testWidgets=1066
+```
+
+### Phase 2 — 2026-09-08 — *complete*
+
+**`_recordOpenedNamespace`** hangs off `_recordRecentOpen` in
+`app_providers.dart`, so all three ways a repository is opened — an SSH
+connect, a local connect, a repo switch within a tab — are covered by
+construction rather than by three call sites kept in step by hand. It resolves
+the origin through Phase 1's `originUrl`, maps the host to a forge, splits the
+namespace off the project path, checks the namespace against the account's
+creatable list, and records it through `NamespaceHistory` — the same store the
+create sheet already writes on success, so open and create feed one history.
+
+**Decision 1 — "only ones you can create in" — is `_creatableFor`,** a
+`Map<(Forge, String), List<String>?>` memo beside `_hostLogins` and cleared
+wherever that is. One lookup per (forge, host) per session; an open whose
+namespace is absent records nothing, and a lookup that *failed* records nothing
+either. Decision 2 — "every open" — is what hanging off `_recordRecentOpen`
+buys: no filtering on repo age, forge, or whether the namespace is already
+known.
+
+**The bare-path guard uses `lastIndexOf('/')`, never `dirname`.** `dirname`
+returns `/` for a bare name, which is how the clone recorder shipped a bug in
+0036; the same shape recurs here and is guarded the same way.
+
+**Code deleted as dead that was not, caught by the harness.** I judged
+`if (result != null && result.isEmpty) result = null;` behaviourally inert —
+both `null` and `[]` fail the subsequent `.contains`, so no open is recorded
+either way — and removed it. The mutation *"a failed creatable lookup is
+treated as creatable"* then **survived**. It is not inert: both forge services
+swallow a failed lookup and return `[]`, so that collapse is the only thing
+that makes "the forge did not answer" a state distinct from "the account can
+create nowhere". Without it the failed-lookup test still passes, but through
+the `.contains` branch while claiming to exercise the `null` one — a test that
+proves something other than what it says. Restored, with the story in the
+comment so the next reader does not re-derive "dead code" and delete it again.
+
+**Two mutations that were broken experiments, not passes.** The first draft of
+*"a bare path records itself as a namespace"* used `dirname`, which is not
+imported in `app_providers.dart` — it killed on a **compile error** and
+therefore proved nothing about the tests. Rewritten to compile. The test it
+targets was then found to be passing for the wrong reason as well: `app` is
+absent from the harness's creatable list, so the creatable check masked the
+slash guard entirely. Fixed by putting `app` **into** that list, so only the
+guard can make the test pass.
+
+**One mutation discarded as unfalsifiable.** The non-forge-origin guard is
+redundant with `_creatableFor`'s switch default — an origin on neither forge
+yields no creatable list whichever guard runs first — so no single edit can
+expose it. That is defence in depth, not a test gap; a mutation that cannot
+fail is worse than no mutation, so it was dropped rather than kept green.
+
+**Sabotage — 10 mutations (5 from Phase 1, 5 new), all killed:**
+
+```
+phase2: the namespace is not recorded on open at all
+      -> an SSH open records its namespace onto the connection
+phase2: a bare path records itself as a namespace
+      -> a path with no namespace above it records nothing
+phase2: the creatable check is skipped
+      -> a namespace the account cannot create in records nothing
+phase2: a failed creatable lookup is treated as creatable
+      -> a failed creatable lookup records nothing
+phase2: the creatable memo is ignored (one lookup per open)
+      -> two opens on one host issue a single creatable lookup
+```
+
+**Two info-level analyzer lints cleared** in files this work introduced or
+touched (`_isGetUrl` renamed in `git_service_test.dart`; import order in
+`add_existing_repo_sheet_test.dart`). No behaviour change.
+
+**Verification:**
+
+```
+flutter analyze (whole project)   No issues found!
+dart format                       0 changed
+flutter test (full suite)         03:31 +3747 ~3: All tests passed!
+tool/mutate.py (10 mutations)     10 killed, 0 survived, 0 did not apply
+expect=9432 testWidgets=1066
 ```
 
 ## Rollout and Rollback
