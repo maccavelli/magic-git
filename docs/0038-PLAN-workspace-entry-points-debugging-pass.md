@@ -923,12 +923,25 @@ tool/mutate.py (26 mutations)     26 killed, 0 survived, 0 did not apply
 expect=9532 testWidgets=1073
 ```
 
-**Not done, and named rather than implied:** the F5 follow-on in the plan —
-distinguishing `openLocalRepoInTab`'s two null causes (tab cap vs. dedupe-focus)
-so the sheet stops reporting the cap message for a focus. The id reuse makes
-the dedupe path *reachable* for the first time, so the two causes are now
-genuinely distinguishable; it is a small, separate fix and is carried into
-Phase 6's record as an open item rather than silently dropped.
+**The F5 follow-on, done in the same phase.** `openLocalRepoInTab` returned a
+bare `null` for two different things — refused at the tab cap, and focused a tab
+already on this repository — so the sheet reported the louder one. It now
+returns `LocalOpenOutcome`, and a focus closes the sheet instead of claiming
+"too many tabs". Reachable only since the id reuse above, which is what lets
+`TabsController._find` match at all.
+
+**The discriminator is not `canOpenTab`.** A dedupe can happen *at* the cap, and
+`openOrFocus` checks for a match first, so the cap being full says nothing about
+which branch ran. What separates them is whether the tab handed back is actually
+on the repository that was asked for: `openOrFocus` adopts those fields on every
+path that takes the request, and at the cap it returns the active tab untouched.
+
+**One assertion that could not be written.** "The sheet closes" is not
+observable in this harness for *any* outcome: `_pump` mounts the sheet as
+`MacosApp.home`, where `Navigator.canPop()` is false. Asserting it would have
+pinned the harness rather than the behaviour, so the test asserts what actually
+distinguishes the outcomes — the right tab is active, no second tab exists, and
+no second session ran.
 
 #### Deviation 1 — 2026-09-08 — Phase 2 cannot move `_openResult` and stay pure
 

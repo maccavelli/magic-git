@@ -41,9 +41,24 @@ Future<RepoTab> openSshRepoInTab({
   return tab;
 }
 
+/// What [openLocalRepoInTab] did — three outcomes that used to be two, because
+/// two of them returned null and the callers could only report the louder one
+/// (MADR 0038 F5 follow-on).
+enum LocalOpenOutcome {
+  /// A session started in a tab, new or a reused blank one.
+  opened,
+
+  /// A tab was already on this repository; it was focused and no second
+  /// session was started. The user got what they asked for.
+  focused,
+
+  /// Refused at the tab cap: nothing opened and nothing focused.
+  refused,
+}
+
 /// Opens saved local [repo] in its own tab, given [grants] the caller has
 /// already resolved (its bookmark acquired; a linked worktree's main repo
-/// granted). Returns the tab, or null when no session started.
+/// granted). Returns the tab and which of the three things happened.
 ///
 /// **Awaits the connect.** `connectLocal` is where a folder that is not a
 /// repository, or one whose permission was revoked, actually fails — so a
@@ -52,13 +67,13 @@ Future<RepoTab> openSshRepoInTab({
 /// Returning before the connect settled would make `isConnected` a coin flip.
 /// The tab is returned either way: a failed session is the caller's to close.
 ///
-/// **If no session started, every grant is released.** `openOrFocus` declines
-/// at the tab cap and never runs `connect`, and a racing double-open can
-/// focus a tab whose own `connect` ran elsewhere. Either way the access
+/// **If no session started, every grant is released** — for either reason.
+/// `openOrFocus` declines at the tab cap and never runs `connect`, and a
+/// dedupe focuses a tab whose own `connect` ran elsewhere. Either way the access
 /// acquired for [grants] backs nothing and would leak for the app's lifetime
 /// — a linked worktree acquired two. [scopedAccess] is the registry those
 /// grants were taken from; tests pass a counting one.
-Future<RepoTab?> openLocalRepoInTab({
+Future<({RepoTab tab, LocalOpenOutcome outcome})> openLocalRepoInTab({
   required TabsController tabs,
   required SavedLocalRepo repo,
   required LocalOpenGrants grants,
@@ -88,12 +103,23 @@ Future<RepoTab?> openLocalRepoInTab({
   );
   if (connected) {
     await opening;
-    return tab;
+    return (tab: tab, outcome: LocalOpenOutcome.opened);
   }
   await access.release(grants.repoPath);
   final main = grants.mainRepoPath;
   if (main != null) await access.release(main);
-  return null;
+  // Which of the two no-session paths was it? NOT `canOpenTab`: a dedupe can
+  // happen *at* the cap, and `openOrFocus` checks for a match first — so the
+  // cap being full says nothing about which branch ran. What distinguishes
+  // them is whether the tab handed back is actually on the repo we asked for:
+  // `openOrFocus` adopts those fields on every path that takes the request,
+  // and at the cap it returns the active tab untouched.
+  final matched =
+      tab.connectionId == repo.id && tab.repoPath == grants.repoPath;
+  return (
+    tab: tab,
+    outcome: matched ? LocalOpenOutcome.focused : LocalOpenOutcome.refused,
+  );
 }
 
 /// Promotes the session dialled in [tab] into a workspace on [dest]. Returns

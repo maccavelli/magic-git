@@ -234,5 +234,14 @@
     "tests": [
       "test/add_existing_repo_sheet_test.dart"
     ]
+  },
+  {
+    "label": "phase5: a dedupe focus is reported as the tab cap",
+    "file": "lib/features/workspace/workspace_open_in_tab.dart",
+    "find": "  final matched =\n      tab.connectionId == repo.id && tab.repoPath == grants.repoPath;",
+    "replace": "  const matched = false;",
+    "tests": [
+      "test/add_existing_repo_sheet_test.dart"
+    ]
   }
 ]

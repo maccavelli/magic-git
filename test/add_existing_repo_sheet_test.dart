@@ -140,6 +140,76 @@ void main() {
     );
   });
 
+  // MADR 0038 F5 follow-on — `openLocalRepoInTab` returned a bare null for two
+  // different things, so the sheet reported the louder one. Focusing a tab that
+  // is already on this repository is a success, not "too many tabs".
+  testWidgets('re-opening a repo already in a tab focuses it, not the cap', (
+    tester,
+  ) async {
+    const bookmarks = MethodChannel('magicgit/bookmarks');
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      bookmarks,
+      (call) async => 'Ym0=',
+    );
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        bookmarks,
+        null,
+      ),
+    );
+    const already = SavedLocalRepo(
+      id: 'already-saved',
+      label: 'App',
+      repoPath: '/Users/me/app',
+      bookmarkData: 'bm',
+    );
+    final tabs = RecordingTabs();
+    installTabs(tabs);
+    // A tab already on this repo, under the id the sheet will now reuse...
+    final existing = tabs.newTab()
+      ..connectionId = 'already-saved'
+      ..repoPath = '/Users/me/app';
+    // ...and another one active, so "it focused the right tab" is observable.
+    final other = tabs.newTab()
+      ..connectionId = 'other'
+      ..repoPath = '/srv/other';
+    tabs.activate(other.id);
+
+    await _pump(
+      tester,
+      initialPickedPath: '/Users/me/app',
+      localRepos: const [already],
+      localStore: _RecordingLocalStore(),
+      connection: StubConnection(
+        const ConnectionState(
+          phase: ConnectionPhase.connected,
+          backend: ConnectionBackend.local,
+          repoPath: '/Users/me/app',
+        ),
+      ),
+    );
+
+    await tester.tap(_openButton());
+    await tester.pumpAndSettle();
+
+    expect(
+      find.text(AddExistingRepoSheet.capMessage),
+      findsNothing,
+      reason: 'it focused a tab; nothing was refused',
+    );
+    expect(
+      tabs.activeId,
+      existing.id,
+      reason:
+          'the tab already on this repo is the one the user is now looking at',
+    );
+    expect(tabs.tabs, hasLength(2), reason: 'no second tab for one repository');
+    expect(tabs.connectRan, 0, reason: 'and no second session for it either');
+    // The sheet pops itself, but `_pump` mounts it as `MacosApp.home`, where
+    // `Navigator.canPop()` is false — so "it closed" is not observable here for
+    // ANY outcome, and asserting it would pin the harness, not the behaviour.
+  });
+
   // MADR 0038 F4 — the sheet opens on the location the user is in. It always
   // opened on This Mac, so a user connected to a host re-picked it every time,
   // even though MADR 0036 decision 2A had already been applied to both wizards.

@@ -190,13 +190,15 @@ class WorkspaceFlow {
       if (saved.bookmarkData.isNotEmpty) {
         path = await access.acquire(saved.bookmarkData) ?? request.dest;
       }
-      final opened = await openLocalRepoInTab(
+      final placed = await openLocalRepoInTab(
         tabs: controller,
         repo: saved,
         grants: LocalOpenGrants(path),
         scopedAccess: access,
       );
-      return opened != null;
+      // `focused` means a tab was already on this repo — the user is looking
+      // at it, which is the outcome they asked for. Only `refused` is failure.
+      return placed.outcome != LocalOpenOutcome.refused;
     }
     if (request.activeSession) return _placeOnActiveSession(request);
     final conn = request.connection;

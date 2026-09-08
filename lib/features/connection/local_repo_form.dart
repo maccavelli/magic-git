@@ -711,16 +711,31 @@ class _AddExistingRepoSheetState extends ConsumerState<AddExistingRepoSheet>
         fsmonitorEnabled: _fsmonitor,
         gitDir: gitDir,
       );
-      final tab = await openLocalRepoInTab(
+      final placed = await openLocalRepoInTab(
         tabs: tabs,
         repo: probe,
         grants: grants,
         scopedAccess: AddExistingRepoSheet.scopedAccess,
       );
       if (!mounted) return;
-      if (tab == null) {
-        setState(() => _saveWarning = AddExistingRepoSheet.capMessage);
-        return;
+      final tab = placed.tab;
+      switch (placed.outcome) {
+        case LocalOpenOutcome.refused:
+          setState(() => _saveWarning = AddExistingRepoSheet.capMessage);
+          return;
+        case LocalOpenOutcome.focused:
+          // A tab was already on this repository and has just been focused —
+          // the user is looking at what they asked for, so the sheet's work is
+          // done. Reporting the tab-cap message here (as this did while both
+          // outcomes were a bare null) told them the opposite of what happened
+          // (MADR 0038 F5 follow-on). Reachable only since the same phase
+          // started reusing a saved repo's id, which is what lets the tab
+          // dedupe match at all.
+          final nav = Navigator.of(context);
+          if (nav.canPop()) nav.pop();
+          return;
+        case LocalOpenOutcome.opened:
+          break;
       }
       // `openLocalRepoInTab` awaits the connect (Deviation 4), so this is the
       // settled result — the same check the in-place path makes, just read
