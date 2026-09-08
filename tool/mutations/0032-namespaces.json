@@ -1,0 +1,175 @@
+[
+  {
+    "label": "match_tier: empty query no longer matches",
+    "file": "lib/core/utils/match_tier.dart",
+    "find": "  if (query.isEmpty) return 0;",
+    "replace": "  if (query.isEmpty) return null;",
+    "tests": [
+      "test/match_tier_test.dart",
+      "test/palette_models_test.dart"
+    ]
+  },
+  {
+    "label": "match_tier: prefix and substring tiers swapped",
+    "file": "lib/core/utils/match_tier.dart",
+    "find": "  if (haystack.any((value) => value.startsWith(needle))) return 1;\n  if (haystack.any((value) => value.contains(needle))) return 2;",
+    "replace": "  if (haystack.any((value) => value.contains(needle))) return 1;\n  if (haystack.any((value) => value.startsWith(needle))) return 2;",
+    "tests": [
+      "test/match_tier_test.dart",
+      "test/palette_models_test.dart"
+    ]
+  },
+  {
+    "label": "match_tier: case sensitivity reintroduced",
+    "file": "lib/core/utils/match_tier.dart",
+    "find": "  final needle = query.toLowerCase();",
+    "replace": "  final needle = query;",
+    "tests": [
+      "test/match_tier_test.dart"
+    ]
+  },
+  {
+    "label": "match_tier: only the first value considered",
+    "file": "lib/core/utils/match_tier.dart",
+    "find": "  final haystack = values.map((value) => value.toLowerCase());",
+    "replace": "  final haystack = values.take(1).map((value) => value.toLowerCase());",
+    "tests": [
+      "test/match_tier_test.dart"
+    ]
+  },
+  {
+    "label": "glab: creation level ignored (the pre-0032 behaviour)",
+    "file": "lib/core/gitlab/glab_service.dart",
+    "find": "      if (access >= _requiredAccess(entry.creationLevel)) paths.add(path);",
+    "replace": "      paths.add(path);",
+    "tests": [
+      "test/forge_namespaces_test.dart"
+    ]
+  },
+  {
+    "label": "glab: a null creation level treated as forbidden",
+    "file": "lib/core/gitlab/glab_service.dart",
+    "find": "    _ => 30,\n  };",
+    "replace": "    null => 1 << 30,\n    _ => 30,\n  };",
+    "tests": [
+      "test/forge_namespaces_test.dart"
+    ]
+  },
+  {
+    "label": "glab: group page walk removed",
+    "file": "lib/core/gitlab/glab_service.dart",
+    "find": "          creationLevel: entry['project_creation_level'] as String?,\n        ));\n      }\n      if (decoded.length < perPage) break; // last (short) page reached",
+    "replace": "          creationLevel: entry['project_creation_level'] as String?,\n        ));\n      }\n      break;",
+    "tests": [
+      "test/forge_namespaces_test.dart"
+    ]
+  },
+  {
+    "label": "glab: search ignores the creation level",
+    "file": "lib/core/gitlab/glab_service.dart",
+    "find": "      return _creatable(byFloor);\n    } catch (_) {",
+    "replace": "      return [for (final g in byFloor.first) g.path];\n    } catch (_) {",
+    "tests": [
+      "test/forge_namespaces_test.dart"
+    ]
+  },
+  {
+    "label": "glab: search page-walks on every keystroke",
+    "file": "lib/core/gitlab/glab_service.dart",
+    "find": "            maxPages: 1,",
+    "replace": "            maxPages: 20,",
+    "tests": [
+      "test/forge_namespaces_test.dart"
+    ]
+  },
+  {
+    "label": "gh: owner not split from repo.name",
+    "file": "lib/core/github/gh_service.dart",
+    "find": "        final owner = fullName.substring(0, slash);",
+    "replace": "        final owner = fullName;",
+    "tests": [
+      "test/forge_namespaces_test.dart"
+    ]
+  },
+  {
+    "label": "saved_connection: history unbounded",
+    "file": "lib/core/storage/saved_connection.dart",
+    "find": "        forgeHostKey: next.take(maxNamespaceHistory).toList(),",
+    "replace": "        forgeHostKey: next.toList(),",
+    "tests": [
+      "test/namespace_history_test.dart"
+    ]
+  },
+  {
+    "label": "saved_connection: a repeat use is not moved to the front",
+    "file": "lib/core/storage/saved_connection.dart",
+    "find": "      ...namespacesFor(forgeHostKey).where((n) => n != namespace),",
+    "replace": "      ...namespacesFor(forgeHostKey),",
+    "tests": [
+      "test/namespace_history_test.dart"
+    ]
+  },
+  {
+    "label": "saved_connection: empty history serialised anyway",
+    "file": "lib/core/storage/saved_connection.dart",
+    "find": "    if (namespaceHistory.isNotEmpty) 'namespaceHistory': namespaceHistory,",
+    "replace": "    'namespaceHistory': namespaceHistory,",
+    "tests": [
+      "test/namespace_history_test.dart"
+    ]
+  },
+  {
+    "label": "field: last-segment matching removed",
+    "file": "lib/features/workspace/create_repo_steps/namespace_field.dart",
+    "find": "      final tier = matchTier([ns, basename(ns)], _query);",
+    "replace": "      final tier = matchTier([ns], _query);",
+    "tests": [
+      "test/create_repo_namespace_search_test.dart"
+    ]
+  },
+  {
+    "label": "field: search debounce removed",
+    "file": "lib/features/workspace/create_repo_steps/namespace_field.dart",
+    "find": "    _debounce = Timer(NamespaceField.searchDebounce, () {\n      unawaited(_search(query, generation));\n    });",
+    "replace": "    unawaited(_search(query, generation));",
+    "tests": [
+      "test/create_repo_namespace_search_test.dart"
+    ]
+  },
+  {
+    "label": "field: generation check removed",
+    "file": "lib/features/workspace/create_repo_steps/namespace_field.dart",
+    "find": "if (!mounted || generation != _generation || found.isEmpty) return;",
+    "replace": "if (!mounted || found.isEmpty) return;",
+    "tests": [
+      "test/create_repo_namespace_search_test.dart"
+    ]
+  },
+  {
+    "label": "sheet: records even on a warned run",
+    "file": "lib/features/workspace/create_repo_sheet.dart",
+    "find": "if (!_onForge || outcome.warnings.isNotEmpty) return;",
+    "replace": "if (!_onForge) return;",
+    "tests": [
+      "test/create_repo_namespace_search_test.dart"
+    ]
+  },
+  {
+    "label": "sheet: recorder not called at all",
+    "file": "lib/features/workspace/create_repo_sheet.dart",
+    "find": "      await _rememberNamespace(host, outcome);",
+    "replace": "      // recorder removed",
+    "tests": [
+      "test/create_repo_namespace_search_test.dart"
+    ]
+  },
+  {
+    "label": "sheet: active connection not resolved for history",
+    "file": "lib/features/workspace/create_repo_sheet.dart",
+    "find": "      _isLocalTarget ? null : (_destConnectionId ?? activeId);",
+    "replace": "      _isLocalTarget ? null : _destConnectionId;",
+    "tests": [
+      "test/create_repo_namespace_search_test.dart"
+    ]
+  }
+]

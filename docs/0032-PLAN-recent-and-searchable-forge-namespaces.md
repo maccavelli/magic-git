@@ -671,6 +671,65 @@ fail. **The live verification below remains outstanding and is maintainer-run.**
 **Still not done, deliberately:** clone does not record a namespace (see
 Deviation 1 above), and GitHub has no server-side search.
 
+### Live verification — 2026-09-07 — *run, on request*
+
+Run as `flutter test --run-skipped -t live-forge test/namespace_recency_live_test.dart`.
+
+**The arms had no test.** The plan described them; nothing implemented them.
+`create_repo_wire_live_test.dart` covers 0031's namespaced *create*, not 0032's
+recency or search. `test/namespace_recency_live_test.dart` is new and is
+**read-only** — every call is a GET (`events`, `projects/:id`, `groups`,
+`user`), so unlike 0031's live suite it creates, mutates and deletes nothing.
+It is still `live-forge` tagged: network-dependent, account-dependent, and its
+output describes a real account.
+
+**Results (identifiers deliberately absent — counts carry the argument):**
+
+| Arm | Result |
+| --- | --- |
+| Events → namespaces | **4 namespaces in 1.9 s** — deduplicated, within the 10-lookup cap |
+| Creatable list | **25** entries: the account's own namespace + **24** groups, matching the MADR's measurement |
+| `search` composes and narrows | **24 groups → 1** on a leaf-segment needle; every hit was already in the creatable list |
+| Creation-level exclusion | **Unprovable, as predicted** — 24 groups at every floor (30/40/50), so nothing can be excluded. Reported as a skip, not a pass |
+| GitHub events | **1 namespace**, no `/` in it — the owner is read straight off `repo.name`, no second round trip |
+
+**The 1.9 s confirms the decision.** 1B (`projects?membership=true`) measured
+**9.0 s** for the same answer; 1D's two-step is roughly five times faster and is
+what makes this affordable on a wizard step.
+
+**One arm was rewritten after its first run, because it proved nothing.** The
+needle was initially the *first* path segment of a real group. On an instance
+where every group hangs off one root that matches all 24 — the run reported
+"narrowed 24 to 24", which satisfies composition but demonstrates no narrowing
+whatsoever. Switched to the *last* segment: 24 → 1. The first version would
+have been recorded as a passing live verification.
+
+**The exclusion arm stays fixture-only and now says so at runtime**, via
+`markTestSkipped` with the reason, rather than asserting something trivially
+true on an Owner-everywhere account.
+
+### The sabotage harness, committed — 2026-09-07
+
+`tool/mutate.py` plus `tool/mutations/0032-namespaces.json` (19 mutations).
+Previously a scratchpad script; now a repository tool, because it caught two
+tests in this plan that only *looked* like coverage.
+
+Re-run against the committed catalogue: **19 killed, 0 survived.** The first
+run reported **18 killed, 0 survived, 1 DID NOT APPLY** — the page-walk entry's
+`find` string occurs five times in `glab_service.dart`, so it matched twice
+after `dart format`. That is the harness reporting a broken *experiment* rather
+than a passing *test*, which is the single property it exists for; the entry
+was given unique surrounding context and now kills.
+
+**On `mutation_test` (pub.dev).** Evaluated and **not adopted as a
+replacement** — see the Considered Options note below. It generates mutations
+from operator rules and runs the configured test command per mutation; this
+suite is ~3.5 minutes, so a full generated run is measured in hours. The
+harness here takes a hand-written catalogue aimed at *named contracts* and runs
+only the tests claiming to cover them, which is what makes it usable inside a
+single phase. The two are complements: rules find what you did not think to
+check, catalogues check what you claimed.
+
 ## Rollout and Rollback
 
 **Rollout.** Five commits. Phases 1–2 are independently valuable (a correct,
