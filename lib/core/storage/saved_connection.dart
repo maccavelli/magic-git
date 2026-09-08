@@ -33,6 +33,21 @@ class SavedConnection {
   /// `bounded_watch.dart` / `GitService.registerRepoScope`.
   final Map<String, String> scopedGitDirs;
 
+  /// Forge namespaces recently created into on this connection, keyed by
+  /// `<forge>@<host>` and most-recent-first. The parallel-map analogue of
+  /// [repoLabels]/[scopedGitDirs]: a key absent here simply has no history, so
+  /// existing profiles round-trip with no migration (MADR 0032 Phase 3b).
+  ///
+  /// Keyed by forge **and** host because a namespace is meaningless across
+  /// them — a GitLab group is not a GitHub org, and two GitLab instances are
+  /// different accounts.
+  ///
+  /// **This is only half the story.** A This-Mac create has no connection to
+  /// hang history on, and its forge account is the Mac's own `gh`/`glab`
+  /// login — see `core/forge/namespace_history.dart`, which owns that case.
+  /// Read and write both through `NamespaceHistory`, never directly.
+  final Map<String, List<String>> namespaceHistory;
+
   /// When this profile was last successfully connected — drives the landing
   /// page's "Recent Connections" ordering. Null for never-connected profiles.
   final DateTime? lastConnectedAt;
@@ -48,6 +63,7 @@ class SavedConnection {
     this.fsmonitorPaths = const [],
     this.repoLabels = const {},
     this.scopedGitDirs = const {},
+    this.namespaceHistory = const {},
     this.lastConnectedAt,
   });
 
@@ -122,6 +138,7 @@ class SavedConnection {
     List<String>? fsmonitorPaths,
     Map<String, String>? repoLabels,
     Map<String, String>? scopedGitDirs,
+    Map<String, List<String>>? namespaceHistory,
     DateTime? lastConnectedAt,
   }) => SavedConnection(
     id: id,
@@ -134,8 +151,47 @@ class SavedConnection {
     fsmonitorPaths: fsmonitorPaths ?? this.fsmonitorPaths,
     repoLabels: repoLabels ?? this.repoLabels,
     scopedGitDirs: scopedGitDirs ?? this.scopedGitDirs,
+    namespaceHistory: namespaceHistory ?? this.namespaceHistory,
     lastConnectedAt: lastConnectedAt ?? this.lastConnectedAt,
   );
+
+  /// Namespaces recently created into for [forgeHostKey], most recent first.
+  List<String> namespacesFor(String forgeHostKey) =>
+      namespaceHistory[forgeHostKey] ?? const [];
+
+  /// Records [namespace] as the most recent use for [forgeHostKey], keeping at
+  /// most [maxNamespaceHistory] entries. Mirrors [withRepoLabel]/[withFsmonitor].
+  SavedConnection withNamespaceUse(String forgeHostKey, String namespace) {
+    if (namespace.isEmpty) return this;
+    final next = <String>[
+      namespace,
+      ...namespacesFor(forgeHostKey).where((n) => n != namespace),
+    ];
+    return copyWith(
+      namespaceHistory: {
+        ...namespaceHistory,
+        forgeHostKey: next.take(maxNamespaceHistory).toList(),
+      },
+    );
+  }
+
+  /// Bound on per-key history. A create wizard offers a short list; keeping
+  /// more would persist noise nobody reads.
+  static const int maxNamespaceHistory = 10;
+
+  static Map<String, List<String>> _readNamespaceHistory(Object? raw) {
+    if (raw is! Map) return const {};
+    final out = <String, List<String>>{};
+    for (final entry in raw.entries) {
+      final key = entry.key;
+      final value = entry.value;
+      if (key is! String || value is! List) continue;
+      final items = value.whereType<String>().where((s) => s.isNotEmpty);
+      if (items.isEmpty) continue;
+      out[key] = items.toList();
+    }
+    return out;
+  }
 
   Map<String, dynamic> toJson() => {
     'id': id,
@@ -148,6 +204,7 @@ class SavedConnection {
     'fsmonitorPaths': fsmonitorPaths,
     if (repoLabels.isNotEmpty) 'repoLabels': repoLabels,
     if (scopedGitDirs.isNotEmpty) 'scopedGitDirs': scopedGitDirs,
+    if (namespaceHistory.isNotEmpty) 'namespaceHistory': namespaceHistory,
     if (lastConnectedAt != null)
       'lastConnectedAt': lastConnectedAt!.toIso8601String(),
   };
@@ -166,6 +223,7 @@ class SavedConnection {
         fsmonitorPaths: _readFsmonitorPaths(json),
         repoLabels: _readRepoLabels(json),
         scopedGitDirs: _readStringMap(json['scopedGitDirs']),
+        namespaceHistory: _readNamespaceHistory(json['namespaceHistory']),
         lastConnectedAt: DateTime.tryParse(
           json['lastConnectedAt'] as String? ?? '',
         ),

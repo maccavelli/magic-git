@@ -394,6 +394,61 @@ flutter test (full suite)         03:36 +3645 ~2: All tests passed!
 
 **Counts.** `expect(` 9182 -> **9191**; suite 3639 -> **3645**.
 
+### Phase 3b — 2026-09-07 — *complete*
+
+**Option B built, with the guardrails the decision came with.**
+
+* **SSH targets** — `SavedConnection.namespaceHistory`, a
+  `Map<String, List<String>>` keyed `<forge>@<host>`, following the
+  `repoLabels`/`scopedGitDirs` parallel-map idiom exactly: absent means "no
+  history", so **existing profiles round-trip with no migration** (its own
+  test), and `toJson` omits the key when empty.
+* **This Mac** — `core/forge/namespace_history.dart`, SharedPreferences under
+  the same key shape.
+* **Ad-hoc sessions** — session-only, as decided: there is no record to persist
+  into, and inventing one would write under a connection the user chose not to
+  save.
+
+**One reader, one writer.** `NamespaceHistory.recent` and `.record` are the
+only things that know there are two stores; callers pass the connection (or
+null) and never branch. Both stores' doc comments name the other, so neither is
+discovered alone — the split MADR 0033 spent five phases undoing is the reason
+that mattered.
+
+**Keyed by forge *and* host**, per decision 3, with a test asserting the three
+ways that key must not collapse. A GitLab group is not a GitHub org, and two
+GitLab instances are two accounts.
+
+**Best-effort by design.** Both paths swallow their own failure: a create that
+succeeded must not be reported as failed because *remembering* it did not work.
+That is the same judgement as MADR 0034 F9's — except F9 was about a setting the
+user chose, so it reports; this is a convenience the user never asked for, so it
+does not.
+
+**Sabotage — five contracts, each isolating its own test:**
+
+```
+key ignores the forge            -> the key separates forges and hosts
+SSH routing removed              -> recording writes it back through the store
+history unbounded                -> history is bounded
+duplicate not moved to front     -> the most recent use moves to the front …
+empty history serialised anyway  -> a profile with no history round-trips unchanged
+```
+
+The second needed a second attempt: the first mutation string had been reflowed
+by `dart format` and silently failed to apply, so the routing looked pinned when
+it was not. Re-run against the formatted text, it fails correctly.
+
+**Verification:**
+
+```
+flutter analyze (whole project)   No issues found! (ran in 5.4s)
+dart format --output=none --set-exit-if-changed   (0 changed)
+flutter test (full suite)         03:37 +3655 ~2: All tests passed!
+```
+
+**Counts.** `expect(` 9191 -> **9204**; suite 3645 -> **3655**.
+
 ## Rollout and Rollback
 
 **Rollout.** Five commits. Phases 1–2 are independently valuable (a correct,
