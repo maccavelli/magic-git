@@ -24,9 +24,9 @@ targetable again, and every remote create/clone/open lands in Recents.
 | Phase | What | Files |
 | --- | --- | --- |
 | 1 | F1 — record per-repo recency in `finalizeProvisioned` | `lib/core/providers/app_providers.dart`, `test/connection_provisioning_test.dart`, `docs/0037-PLAN-*` (amendment) |
-| 2 | F7/F8 — the flow object; port all 8 registration tests | new `lib/features/workspace/workspace_flow.dart`, `workspace_provisioning.dart`, all three sheets, new `test/workspace_flow_test.dart`, `test/workspace_registration_test.dart` |
+| 2 | F7/F8 — the flow object; port the 4 live registration tests | new `lib/features/workspace/workspace_flow.dart`, `workspace_provisioning.dart`, all three sheets, new `test/workspace_flow_test.dart` |
 | 3 | F3, F9 — container capture and namespace symmetry, on the single copy | `lib/features/workspace/workspace_flow.dart`, `create_repo_sheet.dart`, `clone_sheet.dart`, `test/workspace_flow_test.dart` |
-| 4 | F2, F6 — restore ad-hoc targeting; delete the dead matrix | `workspace_targets.dart`, `workspace_destination.dart`, `workspace_registration.dart`, both sheets, `test/workspace_flow_test.dart`, `test/create_repo_sheet_test.dart`, `test/clone_sheet_test.dart` |
+| 4 | F2, F6 — restore ad-hoc targeting; port the 4 remaining registration tests; delete the dead matrix | `workspace_targets.dart`, `workspace_destination.dart`, `workspace_registration.dart`, `workspace_flow.dart`, both sheets, `test/workspace_flow_test.dart`, **delete `test/workspace_registration_test.dart`**, `test/create_repo_sheet_test.dart`, `test/clone_sheet_test.dart` |
 | 5 | F4, F5 — add-existing seeding and path dedupe | `lib/features/connection/local_repo_form.dart`, `lib/core/storage/local_repo_store.dart`, `test/add_existing_repo_sheet_test.dart`, `test/local_repo_store_test.dart` |
 | 6 | Record | `docs/README.md`, `tool/mutations/0038-*.json`, this plan, the MADR's `verified:` date |
 
@@ -125,17 +125,24 @@ strike the "three" claim rather than rewriting it.
 
 **Commit.**
 
-### Phase 2 — F7/F8: the flow object, and the 8 ported tests
+### Phase 2 — F7/F8: the flow object, and the ported registration tests
 
-New `lib/features/workspace/workspace_flow.dart` — a **plain class**, no
-`ConsumerState`, no `BuildContext`, no `WidgetRef`:
+**Re-analysed 2026-09-08 before execution; five assertions in the first draft
+were wrong. See "Phase 2 re-analysis" below for the evidence — this section is
+the corrected version.**
+
+#### 2.1 What moves, and what provably does not
+
+New `lib/features/workspace/workspace_flow.dart` — a **plain class**: no
+`ConsumerState`, no `BuildContext`, no `WidgetRef`.
 
 ```dart
-/// The lifecycle every workspace entry point runs, minus the work itself.
+/// The tab half of the lifecycle every workspace entry point runs.
 ///
 /// Plain and widget-free ON PURPOSE. `WorkspaceProvisioning` was extracted as
 /// `mixin … on ConsumerState<T>`, which is why it has no direct test and why
-/// its lifecycle was hand-copied into all three sheets anyway (MADR 0038 F7).
+/// the tab lifecycle beside it was hand-copied into all three sheets anyway
+/// (MADR 0038 F7).
 class WorkspaceFlow {
   WorkspaceFlow({
     required ProviderContainer origin,
@@ -143,70 +150,135 @@ class WorkspaceFlow {
     ScopedAccess? scopedAccess,
   });
 
-  /// The container the flow reads and writes through — captured once, never
-  /// re-resolved. F3 is unrepresentable here: there is no ambient `ref`.
+  /// The container the flow reads and writes through — the sheet's own at
+  /// construction, or the dialled tab's once [ensureTab] has run. Captured,
+  /// never re-resolved: MADR 0038 F3 is unrepresentable here because there is
+  /// no ambient `ref` to reach for.
   ProviderContainer get container;
 
-  Future<bool> ensureTab();              // was _ensureProvisionTab  ×3
-  Future<bool> ensureProvisioned(SavedConnection conn);
-  Future<bool> openResult(WorkspaceOpenRequest request);  // was _openResult ×2
-  Future<void> abandon();                // was _abandonProvisionTab ×3
-  bool get refusedAtTabCap;              // was _refusedAtTabCap     ×3
+  RepoTab? get tab;
+  bool refusedAtTabCap({required bool opensNewTab});
+  Future<bool> ensureTab();
+  Future<void> abandon({required Future<void> Function() releaseSession});
+  Future<bool> openResult(WorkspaceOpenRequest request);
 }
 ```
 
-Moves, with **no behaviour change**:
+`tabs` and `scopedAccess` are resolved **lazily** — `tabs ?? TabsController.current`,
+`scopedAccess ?? <the sheet's static>` — read at each use, not at construction.
 
-* `_provisionTab`, `_originTabId`, `_ensureProvisionTab`, `_abandonProvisionTab`
-  from `create_repo_sheet.dart:661-697`, `clone_sheet.dart:309-344`,
-  `local_repo_form.dart:283-309` (byte-identical in two; clone adds three lines
-  of routed-job teardown, which becomes an `onAbandon` callback);
-* `_opensNewTab` / `_refusedAtTabCap` from all three;
-* `_openResult` from `create_repo_sheet.dart:703-770` and
-  `clone_sheet.dart:521-588`, parameterised by the two values that differ
-  (`scopedAccess`, and the label/fsmonitor fields, carried in
-  `WorkspaceOpenRequest`);
-* `registerAndActivateLocal` and `saveLocalRepo` from
-  `workspace_registration.dart` become methods on the flow, taking the captured
-  container instead of a `WidgetRef`.
+This is **behaviour preservation, not a test requirement**, and the distinction
+matters because the obvious justification is false. The code being moved reads
+both statics at each use (`_ensureProvisionTab` and `_abandonProvisionTab` each
+read `TabsController.current`; `_openResult` reads the sheet's `scopedAccess`),
+so a sheet mounted before a `TabsHost` exists currently picks the controller up
+later — constructor capture would silently change that. The existing tests do
+**not** force it: all three sites that swap the static
+(`create_repo_sheet_test.dart:1468, 1630`, `add_existing_repo_sheet_test.dart:343`)
+assign it *before* the pump, so a constructor capture would pass them too. A
+pure move must preserve the read timing regardless of what the tests happen to
+exercise.
 
-`WorkspaceProvisioning` shrinks to a thin adapter: it keeps `provisioning`,
-`onProvisioningError` and the `setState` plumbing sheets need, and delegates
-everything else to a `WorkspaceFlow` it owns. **It does not grow.** A bigger
-mixin would consolidate the duplication and keep the untestability that caused
-it.
+**Moves into the flow (proven identical):**
 
-**Port all 8 registration tests** (maintainer's decision, 2026-09-08) into
-`test/workspace_flow_test.dart`, driving `WorkspaceFlow` directly over a bare
-`ProviderContainer`:
+| Member | From | Evidence |
+| --- | --- | --- |
+| `_provisionTab`, `_originTabId`, `_ensureProvisionTab`, `_abandonProvisionTab` | all three sheets | `diff` of the block, comments stripped: **byte-identical** create vs. add-existing; clone adds 3 lines of routed-job teardown |
+| `_refusedAtTabCap` | all three sheets | textually identical in all three |
+| `_openResult` | create, clone | `diff` of the exact method bodies: **one line differs**, `CreateRepositorySheet.scopedAccess` vs `CloneRepositorySheet.scopedAccess` |
 
-| Ported test | Covers |
+**Does NOT move — and the first draft was wrong to say it would:**
+
+* **`ensureProvisioned` stays in `WorkspaceProvisioning`.** It is already a
+  single implementation, so it is not part of F7's duplication, and it is not
+  cleanly splittable: across 42 lines it makes three `mounted` checks and three
+  `setState` calls, and its mid-dial guard (`destConnectionId != conn.id`,
+  `workspace_provisioning.dart:79`) re-reads **live sheet state after an
+  await** — that guard is the 0022 H4 fix. Moving it would either lose the
+  guard or force the flow to call back into widget state through a callback
+  whose contract is subtler than the duplication it removes. Nothing is gained:
+  there is one copy today.
+* **`_opensNewTab` does not move.** It reads as identical but is not: create
+  and clone spell it `!_isLocalTarget || _saveLocal`, add-existing
+  `!_isLocal || _save`. Same meaning, different sheet fields, so it stays a
+  sheet getter and is passed to `refusedAtTabCap(opensNewTab:)` as an argument.
+* **`workspace_open_in_tab.dart` stays as it is.** The flow *calls* it. It has
+  a caller outside these sheets — `connection_switcher.dart:1143` — so
+  absorbing it into the flow would break the switcher.
+* **`registerAndActivateLocal` / `saveLocalRepo` move as-is**, taking the
+  flow's captured `ProviderContainer` instead of a `WidgetRef`. Their bodies do
+  not change; `ProviderContainer` exposes the `read` and `invalidate` they use.
+
+**Each sheet takes a different amount of the flow, and that is expected:**
+
+| Sheet | Uses |
 | --- | --- |
-| `save:false calls connectLocal without persisting` | live |
-| `a failed connect reports false and persists nothing` | live |
-| `save:true persists SavedLocalRepo with bookmark data` | live |
-| `save:true with empty label passes null to connectLocal` | live |
-| `updates connection metadata and sets repoPath` | the F2 contract |
-| `with fsmonitor calls setFsmonitor on git service` | the F2 contract |
-| `with label saves it in connection metadata` | the F2 contract |
-| `without connectionId (ad-hoc) skips metadata mutation` | **the F2 contract, exactly** |
+| create | tab lifecycle + `openResult` |
+| clone | tab lifecycle + `openResult` (+ its routed-job teardown via `abandon`'s callback) |
+| add-existing | tab lifecycle **only** — it has no `_openResult`; `_openRemote`/`_openLocal` are differently shaped (fsmonitor and persistence are separate steps, and it carries the scoped git-dir) |
 
-The four `registerAndActivateSshActive` tests are ported against the flow's
-active-session path, which Phase 4 restores. Until then they target the
-still-present function; Phase 4 repoints them and Phase 4 deletes the function.
-`test/workspace_registration_test.dart` is deleted only once every one of its
-tests has a green counterpart in `workspace_flow_test.dart` — never before.
+Unifying add-existing's open path is **explicitly out of scope for this phase**.
+It is not proven identical to anything, and Phase 5 touches that sheet anyway.
 
-**New tests the flow makes possible for the first time** — these are the reason
-for the phase, and each must be seen to fail against a deliberately broken flow:
+#### 2.2 The ported registration tests
 
-* every grant acquired is released when no session starts;
-* a dialled tab is closed, and the origin tab re-activated, on abandon;
-* the container captured at construction is the one the result opens in;
-* a flow refused at the tab cap dials nothing.
+New `test/workspace_flow_test.dart`, driving `WorkspaceFlow` over a bare
+`ProviderContainer` with no `pumpWidget`.
 
-**Acceptance:** the 73 existing sheet tests pass **unchanged**. Any sheet test
-that needs editing means the move was not pure — stop and prompt.
+**Ported in this phase — the four `registerAndActivateLocal` tests**
+(`workspace_registration_test.dart:176-286`), which cover **live** behaviour
+called from `create_repo_sheet.dart:712` and `clone_sheet.dart:530`:
+
+* `save:false calls connectLocal without persisting`
+* `a failed connect reports false and persists nothing`
+* `save:true persists SavedLocalRepo with bookmark data`
+* `save:true with empty label passes null to connectLocal`
+
+**Deferred to Phase 4 — the four `registerAndActivateSshActive` tests**
+(`:287-407`). The first draft said they would be ported here "against the
+still-present function"; that contradicts the phase's own premise of driving
+`WorkspaceFlow`, and the flow has no active-session path until Phase 4 restores
+it (F2). Porting them here would mean either testing the old function from the
+new file — which is not a port — or writing tests against a method that does not
+exist.
+
+`test/workspace_registration_test.dart` therefore **survives Phase 2 unchanged**
+and is deleted in Phase 4, once all 8 have green counterparts. The MADR's rule
+stands and is unchanged: never delete before that.
+
+#### 2.3 The four invariants that have never been asserted
+
+Each must be **seen to fail** against its mutation before the phase is called
+done (they are the first four Phase-2 rows of the sabotage table):
+
+1. every grant acquired is released when no session starts;
+2. an abandoned flow closes the dialled tab;
+3. …and re-activates the origin tab;
+4. the container captured at construction is the one the result opens in;
+5. a flow refused at the tab cap dials nothing.
+
+#### 2.4 Acceptance
+
+**120 offline tests across 7 files must pass unchanged** — not the 73 the first
+draft claimed, which counted only the three files named after the sheets and
+missed `create_repo_namespace_search_test.dart` (24),
+`create_repo_namespace_test.dart` (9), `connection_edit_test.dart` (8) and
+`namespace_backfill_wiring_test.dart` (6):
+
+```sh
+flutter test test/add_existing_repo_sheet_test.dart test/clone_sheet_test.dart \
+  test/connection_edit_test.dart test/create_repo_namespace_test.dart \
+  test/create_repo_namespace_search_test.dart test/create_repo_sheet_test.dart \
+  test/namespace_backfill_wiring_test.dart
+# expect: +120
+```
+
+`test/create_repo_wire_live_test.dart` (4 tests) also drives the create sheet
+and is **excluded deliberately**: it is `live-forge` tagged, hits real
+GitHub/GitLab and is mutating. It is never run for this plan.
+
+A sheet test that needs editing means the move was not pure — **stop and
+prompt**, do not adjust the test.
 
 **Commit.**
 
@@ -286,10 +358,18 @@ Changes:
    not**. No dial, no new tab: the session is already here.
 5. `needsProvisioning` is false for `ActiveSessionDestination`, so no tab is
    claimed and the tab cap does not apply — an ad-hoc create can run at 8 tabs.
-6. **Delete** `registerAndActivate` and `registerAndActivateSshActive`
-   (`workspace_registration.dart:77-171`), and with them the dispatcher's
-   `gitDir`-dropping `sshProvision` branch (`:158-166`). Delete
-   `test/workspace_registration_test.dart`, now fully superseded.
+6. **Port the four remaining registration tests** —
+   `updates connection metadata and sets repoPath`, `with fsmonitor calls
+   setFsmonitor on git service`, `with label saves it in connection metadata`
+   and `without connectionId (ad-hoc) skips metadata mutation`
+   (`workspace_registration_test.dart:287-407`) — onto the flow's new
+   active-session path. The last of these **is** this phase's specification.
+7. **Only then delete** `registerAndActivate` and
+   `registerAndActivateSshActive` (`workspace_registration.dart:77-171`), and
+   with them the dispatcher's `gitDir`-dropping `sshProvision` branch
+   (`:158-166`), and `test/workspace_registration_test.dart`, now fully
+   superseded. The order is load-bearing: all 8 have green counterparts before
+   anything is removed.
 
 **Tests.** A connected ad-hoc session opens both sheets on the active session,
 not This Mac. Creating there registers nothing and switches the repo path. A
@@ -366,8 +446,10 @@ python3 tool/mutate.py tool/mutations/0038-workspace-entry-points.json
 
 1. A create, clone or open on a remote host appears in Recents and records its
    namespace.
-2. The 73 existing sheet tests pass unchanged across Phase 2 — a phase that
-   needs to edit them is not the pure move it claims to be.
+2. The **120** offline sheet tests across 7 files pass unchanged across
+   Phase 2 — a phase that needs to edit them is not the pure move it claims to
+   be. (`create_repo_wire_live_test.dart`'s 4 are excluded: `live-forge`,
+   mutating, never run for this plan.)
 3. All 8 registration tests have green counterparts against `WorkspaceFlow`
    before `workspace_registration_test.dart` is deleted.
 4. Four lifecycle invariants (grant release, tab close, origin re-activate,
@@ -465,6 +547,85 @@ tool/mutate.py (4 mutations)      4 killed, 0 survived, 0 did not apply
 expect=9482 testWidgets=1072
 ```
 
+### Phase 2 re-analysis — 2026-09-08, before execution
+
+A multi-pass check of Phase 2 against the tree, at the maintainer's request.
+Every assertion the phase rested on was re-derived from the code rather than
+carried forward. **Five were wrong**, three of them in a direction that would
+have made execution non-deterministic. The phase is rewritten above; the
+evidence is here.
+
+**Pass 1 — the code-shape claims.** Two held, two were wrong.
+
+* *Held:* the four provision-tab members are byte-identical between create and
+  add-existing, and differ from clone by three lines of routed-job teardown.
+* *Held:* `_refusedAtTabCap` is textually identical in all three sheets.
+* **Wrong — `_openResult` differs by less than claimed.** The plan said the two
+  copies differ in "`scopedAccess`, and the label/fsmonitor fields". Diffing the
+  exact method bodies (create 703-773, clone 521-589, comments stripped) gives
+  **exactly one differing line**: the `scopedAccess` static. The label and
+  fsmonitor fields are spelled identically in both sheets, so they are inputs,
+  not a source of divergence. The move is simpler than planned.
+* **Wrong — `_opensNewTab` is not identical.** Create and clone spell it
+  `!_isLocalTarget || _saveLocal`; add-existing `!_isLocal || _save`. Same
+  meaning, different sheet fields. It cannot move; it becomes an argument.
+
+**Pass 2 — the test-surface claim. Wrong, and materially.** "The 73 existing
+sheet tests" counted only the three files named after the sheets. Seven offline
+files drive these sheets — adding `create_repo_namespace_search_test.dart` (24),
+`create_repo_namespace_test.dart` (9), `connection_edit_test.dart` (8) and
+`namespace_backfill_wiring_test.dart` (6) — for **120**. An acceptance criterion
+that names the wrong number is not a check; it would have passed while 47 tests
+went unexercised. An eighth file, `create_repo_wire_live_test.dart` (4), also
+drives the create sheet and is excluded on purpose: `live-forge`, mutating,
+never run.
+
+**Pass 3 — internal contradictions. Two found.**
+
+* The phase claimed to port all 8 registration tests "driving `WorkspaceFlow`
+  directly", then said four of them "target the still-present function" until
+  Phase 4. Both cannot be true. Resolved: the four live
+  `registerAndActivateLocal` tests port here; the four
+  `registerAndActivateSshActive` tests port in Phase 4, where the capability
+  they specify exists. `workspace_registration_test.dart` survives Phase 2 and
+  is deleted in Phase 4.
+* The phase implied all three sheets consume the flow uniformly. Add-existing
+  has no `_openResult` at all — `_openRemote`/`_openLocal` are differently
+  shaped (separate fsmonitor and persistence steps, plus the scoped git-dir).
+  Resolved: add-existing takes the tab lifecycle only, and unifying its open
+  path is explicitly out of scope.
+
+**Pass 4 — determinism gaps. Three closed.**
+
+* **`ensureProvisioned` must not move**, though the sketch put it on the flow.
+  It is already a single implementation, so it is not F7 duplication, and it is
+  not cleanly splittable: three `mounted` checks and three `setState` calls in 42
+  lines, with a mid-dial guard (`workspace_provisioning.dart:79`) that re-reads
+  live sheet state after an await — that guard *is* the 0022 H4 fix. Moving it
+  would trade a real guard for a callback contract subtler than the duplication
+  it removes, and remove no duplication at all.
+* **`workspace_open_in_tab.dart` must survive.** The flow calls it, it is not
+  absorbed: `connection_switcher.dart:1143` is a caller outside these sheets.
+  The plan had not said either way.
+* **`tabs` and `scopedAccess` must resolve lazily, not at construction** — and
+  the first justification written for this was itself wrong, which is why it is
+  recorded. The draft claimed the tests assign the statics *after* the pump, so
+  a constructor capture would miss them. They do not: all three sites
+  (`create_repo_sheet_test.dart:1468, 1630`,
+  `add_existing_repo_sheet_test.dart:343`) assign *before* the pump, and a
+  constructor capture would pass every one of them. The real reason is
+  behaviour preservation — the code being moved reads both statics at each use,
+  so a sheet mounted before a `TabsHost` exists currently picks the controller
+  up later. A justification that only holds because of how the tests happen to
+  be written is not a justification.
+
+**What this changes about the phase.** It gets smaller and better specified:
+one line of genuine divergence in `_openResult` instead of three values to
+parameterise, one fewer member to move, `ensureProvisioned` left alone, four
+tests ported instead of eight, and an acceptance check that names 120 tests
+instead of 73. Nothing found here changes the MADR's findings or the phase
+order.
+
 ## Rollout and Rollback
 
 **Rollout.** Six commits, one per phase. Phase 1 stands alone and delivers the
@@ -480,5 +641,5 @@ riskiest to revert late, because 3 and 4 build on the flow object — revert 4, 
 **The one thing to watch.** Phase 2 touches all three sheets for no behaviour
 change, which is the highest-risk shape of edit. The 48 workspace goldens are
 **not** exposed (`workspace_golden_test.dart:311-334` renders the workspace
-shell; none of the three sheets appears in it), so the check is the sheet tests,
-and acceptance criterion 2 is what makes it meaningful.
+shell; none of the three sheets appears in it), so the check is the 120 offline
+sheet tests, and acceptance criterion 2 is what makes it meaningful.
