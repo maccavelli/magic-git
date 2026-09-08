@@ -21,6 +21,7 @@ import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 import 'package:remote_magic_git/features/common/buttons.dart';
 import 'package:remote_magic_git/features/common/field_styles.dart';
 import 'package:remote_magic_git/features/workspace/create_repo_sheet.dart';
+import 'package:remote_magic_git/features/workspace/workspace_targets.dart';
 
 import 'helpers/app_scope.dart';
 import 'helpers/create_repo_harness.dart';
@@ -1508,17 +1509,81 @@ void main() {
     testWidgets('it opens on the current SSH session', (tester) async {
       await pumpConnected(tester, pastDestination: false);
       expect(
-        tester.widget<MacosPopupButton<String?>>(destinationPopup()).value,
-        'c1',
+        tester
+            .widget<MacosPopupButton<WorkspaceDestination>>(destinationPopup())
+            .value,
+        const SavedConnectionDestination('c1'),
         reason: 'the wizard opens on where the user is (2A)',
+      );
+    });
+
+    // MADR 0038 F2 — an ad-hoc SSH session (connected, but never saved) is
+    // not local and has no id. Reading `connectionId` alone made it
+    // indistinguishable from This Mac, so the wizard silently pointed at the
+    // Mac while the user was working on a host — and no selection could reach
+    // that host at all.
+    testWidgets('an ad-hoc SSH session opens on itself, not This Mac', (
+      tester,
+    ) async {
+      await pumpConnected(tester, pastDestination: false, adHoc: true);
+
+      expect(
+        tester
+            .widget<MacosPopupButton<WorkspaceDestination>>(destinationPopup())
+            .value,
+        const ActiveSessionDestination(),
+      );
+    });
+
+    testWidgets('the ad-hoc session is offered as its own row', (tester) async {
+      await pumpConnected(tester, pastDestination: false, adHoc: true);
+      await tester.tap(destinationPopup());
+      await tester.pumpAndSettle();
+
+      expect(find.text('h (this session)'), findsWidgets);
+    });
+
+    testWidgets('a saved session is NOT offered twice', (tester) async {
+      // It is already in the list by id; a second row for the same host would
+      // be two ways to say one thing.
+      await pumpConnected(tester, pastDestination: false);
+      await tester.tap(destinationPopup());
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('this session'), findsNothing);
+    });
+
+    testWidgets('an ad-hoc create is NOT refused at the tab cap', (
+      tester,
+    ) async {
+      // It opens no new tab — the session is already here — so the cap that
+      // protects `openOrFocus` has nothing to protect against (MADR 0038 F2).
+      // Without this, a user at 8 tabs on an unsaved session could not create
+      // at all.
+      final tabs = RecordingTabs()..capReached = true;
+      installTabs(tabs);
+      await pumpConnected(tester, adHoc: true);
+      await nextStep(tester); // Source
+      await nextStep(tester); // Remote (None)
+      await tester.enterText(nameField(), 'new-proj');
+      await tester.pumpAndSettle();
+      await nextStep(tester); // Details → Review
+
+      expect(find.text(CreateRepositorySheet.capMessage), findsNothing);
+      expect(
+        tester.widget<AppPushButton>(createButton()).onPressed,
+        isNotNull,
+        reason: 'the cap does not apply to a target that opens no tab',
       );
     });
 
     testWidgets('a local session opens on This Mac', (tester) async {
       await pumpConnectedLocal(tester, pastDestination: false);
       expect(
-        tester.widget<MacosPopupButton<String?>>(destinationPopup()).value,
-        isNull,
+        tester
+            .widget<MacosPopupButton<WorkspaceDestination>>(destinationPopup())
+            .value,
+        const LocalMacDestination(),
       );
     });
 
@@ -1714,7 +1779,9 @@ void main() {
       await tester.tap(find.widgetWithText(AppPushButton, 'Back'));
       await tester.pump();
       expect(
-        tester.widget<MacosPopupButton<String?>>(destinationPopup()).onChanged,
+        tester
+            .widget<MacosPopupButton<WorkspaceDestination>>(destinationPopup())
+            .onChanged,
         isNull,
         reason: 'switching mid-dial would adopt host A\'s session under B',
       );

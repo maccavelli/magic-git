@@ -14,15 +14,20 @@
 import 'package:flutter/services.dart' show MethodChannel;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:remote_magic_git/core/git/git_service.dart';
 import 'package:remote_magic_git/core/local/scoped_access.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/core/providers/provider_retry_policy.dart';
+import 'package:remote_magic_git/core/storage/connection_store.dart';
 import 'package:remote_magic_git/core/storage/local_repo_store.dart';
+import 'package:remote_magic_git/core/storage/saved_connection.dart';
 import 'package:remote_magic_git/core/storage/saved_local_repo.dart';
 import 'package:remote_magic_git/features/tabs/tabs_controller.dart';
 import 'package:remote_magic_git/features/workspace/workspace_flow.dart';
 import 'package:remote_magic_git/features/workspace/workspace_registration.dart';
 import 'package:riverpod/misc.dart' show Override;
+
+import 'helpers/mock_executor.dart';
 
 /// A tabs controller whose tabs are cheap containers, and which records the
 /// closes and activations the flow performs.
@@ -72,8 +77,16 @@ class _FakeConnection extends ConnectionController {
   String? recordedConnectLocalLabel;
   String? recordedConnectLocalId;
 
+  String? recordedSetRepoPath;
+
   @override
   ConnectionState build() => _state;
+
+  @override
+  void setRepoPath(String path) {
+    recordedSetRepoPath = path;
+    _state = _state.copyWith(repoPath: path);
+  }
 
   @override
   Future<void> connectLocal(
@@ -116,6 +129,25 @@ class _FakeLocalRepoStore extends LocalRepoStore {
 
   @override
   Future<void> save(SavedLocalRepo repo) async => saved = repo;
+}
+
+class _FakeConnectionStore extends ConnectionStore {
+  SavedConnection? updated;
+
+  @override
+  Future<void> updateMetadata(SavedConnection conn) async => updated = conn;
+}
+
+class _RecordingGitService extends GitService {
+  _RecordingGitService() : super(MockExecutor());
+  String? fsmonitorPath;
+  bool? fsmonitorEnabled;
+
+  @override
+  Future<void> setFsmonitor(String repoPath, {required bool enabled}) async {
+    fsmonitorPath = repoPath;
+    fsmonitorEnabled = enabled;
+  }
 }
 
 /// Counts native start/stop so a grant leak is visible.
@@ -425,6 +457,127 @@ void main() {
         isFalse,
         reason: 'a silent true here flashes green Complete (0009 H19)',
       );
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Ported from `workspace_registration_test.dart`'s
+  // `registerAndActivateSshActive` group (MADR 0038 F2/F6). These four are the
+  // specification of the capability MADR 0036 removed and the maintainer
+  // restored on 2026-09-08 — the last of them especially: an **ad-hoc** session
+  // has no SavedConnection to persist into, so it persists nothing and still
+  // makes the repository live.
+  //
+  // Like the group below, this is a port and not a copy: the function they
+  // covered needed a pumped widget for its `WidgetRef`; `WorkspaceFlow` needs
+  // none.
+  // -------------------------------------------------------------------------
+  group('placing the result on the session this tab holds', () {
+    const dest = '/home/user/new-repo';
+    const savedConn = SavedConnection(
+      id: 'conn-1',
+      label: 'my server',
+      host: 'example.com',
+      port: 22,
+      username: 'user',
+      repoPath: '/home/user/project',
+      repoPaths: [],
+    );
+
+    ({
+      WorkspaceFlow flow,
+      _FakeConnection conn,
+      _FakeConnectionStore store,
+      _RecordingGitService git,
+    })
+    build({bool adHoc = false}) {
+      final conn = _FakeConnection(
+        adHoc
+            ? const ConnectionState(
+                phase: ConnectionPhase.connected,
+                repoPath: '/',
+              )
+            : null,
+      );
+      final store = _FakeConnectionStore();
+      final git = _RecordingGitService();
+      final c = ProviderContainer(
+        retry: noProviderRetry,
+        overrides: [
+          connectionProvider.overrideWith(() => conn),
+          connectionStoreProvider.overrideWithValue(store),
+          savedConnectionsProvider.overrideWith((ref) async => [savedConn]),
+          gitServiceProvider.overrideWithValue(git),
+        ],
+      );
+      addTearDown(c.dispose);
+      return (
+        flow: WorkspaceFlow(origin: c, tabsOverride: tabs),
+        conn: conn,
+        store: store,
+        git: git,
+      );
+    }
+
+    WorkspaceOpenRequest request({bool fsmonitor = false, String label = ''}) =>
+        WorkspaceOpenRequest(
+          dest: dest,
+          isLocalTarget: false,
+          activeSession: true,
+          saveLocal: false,
+          remoteLabel: label,
+          fsmonitor: fsmonitor,
+        );
+
+    test('updates connection metadata and sets repoPath', () async {
+      final h = build();
+
+      final ok = await h.flow.openResult(request());
+
+      expect(ok, isTrue);
+      expect(h.store.updated, isNotNull);
+      expect(h.store.updated!.allRepoPaths, contains(dest));
+      expect(h.conn.recordedSetRepoPath, dest);
+    });
+
+    test('with fsmonitor calls setFsmonitor on git service', () async {
+      final h = build();
+
+      await h.flow.openResult(request(fsmonitor: true));
+
+      expect(h.git.fsmonitorPath, dest);
+      expect(h.git.fsmonitorEnabled, isTrue);
+    });
+
+    test('with label saves it in connection metadata', () async {
+      final h = build();
+
+      await h.flow.openResult(request(label: 'My Repo'));
+
+      expect(h.store.updated!.repoLabels[dest], 'My Repo');
+    });
+
+    test('without connectionId (ad-hoc) skips metadata mutation', () async {
+      // MADR 0038 F2, exactly. There is no saved connection to write into —
+      // and that must not stop the repository becoming live on the session
+      // the user is already working in.
+      final h = build(adHoc: true);
+
+      final ok = await h.flow.openResult(request());
+
+      expect(ok, isTrue);
+      expect(h.store.updated, isNull);
+      expect(h.conn.recordedSetRepoPath, dest);
+    });
+
+    test('it claims no tab and dials nothing', () async {
+      final before = tabs.tabs.length;
+      final h = build();
+
+      await h.flow.openResult(request());
+
+      expect(h.flow.tab, isNull);
+      expect(tabs.tabs, hasLength(before));
     });
   });
 

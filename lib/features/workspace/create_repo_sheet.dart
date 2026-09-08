@@ -171,7 +171,14 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
   bool _picking = false;
 
   // Landing destination selection: null id = "This Mac", else a connection id.
-  String? _destConnectionId;
+  WorkspaceDestination _dest = const LocalMacDestination();
+
+  /// The saved connection id the destination names, or null for This Mac
+  /// and for the ad-hoc session (which has none to name).
+  String? get _destConnectionId => switch (_dest) {
+    SavedConnectionDestination(:final id) => id,
+    _ => null,
+  };
 
   bool _submitting = false;
   String? _error;
@@ -362,8 +369,17 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
     if (!widget.landing) {
       // The wizard opens on the destination the user is in (MADR 0036, 2A).
       // The picker never sets this in connected mode, so it is seeded here.
+      // Open on the destination the user is in (MADR 0036, 2A) — now for all
+      // three session shapes. An **ad-hoc** SSH session has no saved id, and
+      // reading `conn.connectionId` alone made it indistinguishable from This
+      // Mac: the wizard silently pointed at the Mac while the user worked on a
+      // host (MADR 0038 F2).
       final conn = ref.read(connectionProvider);
-      _destConnectionId = conn.isLocal ? null : conn.connectionId;
+      _dest = conn.isLocal
+          ? const LocalMacDestination()
+          : (conn.connectionId == null
+                ? const ActiveSessionDestination()
+                : SavedConnectionDestination(conn.connectionId!));
     }
     _recomputeTarget();
     _applyIdentityPrefill(ref.read(appSettingsProvider));
@@ -412,16 +428,16 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
 
   void _recomputeTarget() {
     final conn = ref.read(connectionProvider);
-    // One rule for both variants (MADR 0036, 3B): This Mac, or a saved host
-    // dialled in its own tab. `sshActive` is no longer produced here — every
-    // tab is its own session, so creating on the host you are already on
-    // costs the same single dial as creating on any other host.
-    _target = _destConnectionId == null
-        ? WorkspaceTarget.localMac
-        : WorkspaceTarget.sshProvision;
+    _target = switch (_dest) {
+      LocalMacDestination() => WorkspaceTarget.localMac,
+      // Restored 2026-09-08 (MADR 0038 F2): the session this tab already holds
+      // needs no dial and no new tab.
+      ActiveSessionDestination() => WorkspaceTarget.sshActive,
+      SavedConnectionDestination() => WorkspaceTarget.sshProvision,
+    };
     // Prefill the parent from the current session only when the destination
     // IS the current session; another host's layout is not known here.
-    if (_target == WorkspaceTarget.sshProvision &&
+    if (_target != WorkspaceTarget.localMac &&
         _destConnectionId == conn.connectionId &&
         _parent.text.isEmpty &&
         conn.repoPath != null) {
@@ -452,7 +468,7 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
   String get _defaultHost =>
       _remote == CreateRemoteMode.gitlab ? 'gitlab.com' : 'github.com';
 
-  Future<void> _onDestChanged(String? connectionId) async {
+  Future<void> _onDestChanged(WorkspaceDestination dest) async {
     // Switching destination abandons any in-flight provisioning, and the tab
     // it was dialled in.
     await _abandonProvisionTab();
@@ -462,7 +478,7 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
     // before it.
     if (!mounted) return;
     setState(() {
-      _destConnectionId = connectionId;
+      _dest = dest;
       _error = null;
       _recomputeTarget();
     });
@@ -476,10 +492,13 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
     return _activeSteps.every((s) => s.valid());
   }
 
-  /// Whether this create ends by opening a tab (MADR 0036, 3B). The one
-  /// exception is an unsaved local create, which has no bookmark to reopen
-  /// from and so opens in place, as it always did (decision 5B).
-  bool get _opensNewTab => !_isLocalTarget || _saveLocal;
+  /// Whether this create ends by opening a **new** tab (MADR 0036, 3B). Two
+  /// exceptions, and both work in the tab the user is already in: an unsaved
+  /// local create, which has no bookmark to reopen from (decision 5B), and a
+  /// create onto the session this tab already holds (MADR 0038 F2) — which
+  /// dials nothing, so the cap below must not refuse it.
+  bool get _opensNewTab =>
+      _target != WorkspaceTarget.sshActive && (!_isLocalTarget || _saveLocal);
 
   /// A create that opens a tab cannot run at the cap: `openOrFocus` would
   /// silently never run `connect` (`tabs_controller.dart:289-292`), and for a
@@ -508,7 +527,7 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
         // bin dir are invisible to the GUI app's inherited PATH.
         await own.read(localEnvironmentProvider).ensure();
         if (!mounted) return;
-      } else {
+      } else if (_target == WorkspaceTarget.sshProvision) {
         if (!await _flow.ensureTab()) {
           setState(() => _error = CreateRepositorySheet.capMessage);
           return;
@@ -687,6 +706,7 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
         WorkspaceOpenRequest(
           dest: dest,
           isLocalTarget: _isLocalTarget,
+          activeSession: _target == WorkspaceTarget.sshActive,
           saveLocal: _saveLocal,
           localLabel: _localLabel.text.trim(),
           remoteLabel: _remoteLabel.text.trim(),
@@ -872,7 +892,7 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
 
   Widget _destinationSection(MacosTypography typography) {
     return WorkspaceDestinationSection(
-      selectedConnectionId: _destConnectionId,
+      selected: _dest,
       onChanged: (_submitting || provisioning) ? null : _onDestChanged,
       provisioning: provisioning,
       localHint: 'The repository is created on this Mac\'s own filesystem.',
@@ -1364,7 +1384,15 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
     final host = _host.text.trim().isEmpty ? _defaultHost : _host.text.trim();
     final destText = switch (_target) {
       WorkspaceTarget.localMac => 'This Mac',
-      WorkspaceTarget.sshActive => 'Connected host (active session)',
+      // Reachable again since MADR 0038 F2. Worded to match the Target
+      // control's own row, so the review step does not appear to name a
+      // different place.
+      WorkspaceTarget.sshActive => () {
+        final host = ref.watch(connectionProvider).host;
+        return host == null || host.isEmpty
+            ? 'This session'
+            : '$host (this session)';
+      }(),
       WorkspaceTarget.sshProvision => () {
         final conns = ref.watch(savedConnectionsProvider).value ?? const [];
         for (final c in conns) {

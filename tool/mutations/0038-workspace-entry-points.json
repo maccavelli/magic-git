@@ -143,5 +143,51 @@
     "tests": [
       "test/workspace_flow_test.dart"
     ]
+  },
+  {
+    "label": "phase4: an ad-hoc session is treated as This Mac again",
+    "file": "lib/features/workspace/create_repo_sheet.dart",
+    "find": "      _dest = conn.isLocal\n          ? const LocalMacDestination()\n          : (conn.connectionId == null\n                ? const ActiveSessionDestination()\n                : SavedConnectionDestination(conn.connectionId!));",
+    "replace": "      _dest = conn.isLocal || conn.connectionId == null\n          ? const LocalMacDestination()\n          : SavedConnectionDestination(conn.connectionId!);",
+    "tests": [
+      "test/create_repo_sheet_test.dart"
+    ]
+  },
+  {
+    "label": "phase4: the active-session row is offered for a saved session too",
+    "file": "lib/features/workspace/workspace_destination.dart",
+    "find": "    final adHoc =\n        session.isConnected && !session.isLocal && session.connectionId == null;",
+    "replace": "    final adHoc = session.isConnected && !session.isLocal;",
+    "tests": [
+      "test/create_repo_sheet_test.dart"
+    ]
+  },
+  {
+    "label": "phase4: an active-session target claims a tab and is capped",
+    "file": "lib/features/workspace/create_repo_sheet.dart",
+    "find": "  bool get _opensNewTab =>\n      _target != WorkspaceTarget.sshActive && (!_isLocalTarget || _saveLocal);",
+    "replace": "  bool get _opensNewTab => !_isLocalTarget || _saveLocal;",
+    "tests": [
+      "test/workspace_flow_test.dart",
+      "test/create_repo_sheet_test.dart"
+    ]
+  },
+  {
+    "label": "phase4: an ad-hoc active-session result persists into a connection it has none of",
+    "file": "lib/features/workspace/workspace_flow.dart",
+    "find": "    final connectionId = container.read(connectionProvider).connectionId;",
+    "replace": "    final connectionId =\n        container.read(connectionProvider).connectionId ??\n        (await container.read(savedConnectionsProvider.future)).firstOrNull?.id;",
+    "tests": [
+      "test/workspace_flow_test.dart"
+    ]
+  },
+  {
+    "label": "phase4: an active-session result never becomes live",
+    "file": "lib/features/workspace/workspace_flow.dart",
+    "find": "    container.read(connectionProvider.notifier).setRepoPath(request.dest);\n    return true;",
+    "replace": "    return true;",
+    "tests": [
+      "test/workspace_flow_test.dart"
+    ]
   }
 ]

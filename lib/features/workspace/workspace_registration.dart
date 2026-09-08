@@ -1,13 +1,17 @@
-/// The clone and create sheets share one registration matrix — a new repo at
-/// its destination must be persisted and become the active workspace the same
-/// way no matter which sheet produced it. Kept as standalone functions (not
-/// sheet methods) so there is exactly one implementation to reason about.
+/// Persisting and activating a **local** result, for `WorkspaceFlow.openResult`.
+///
+/// This file used to hold a three-branch registration "matrix" (MADR 0033).
+/// MADR 0036 stopped producing one of its branches and nothing was removed, so
+/// by MADR 0038 F6 the dispatcher had zero callers and the SSH-active branch
+/// zero production callers while keeping four tests. Both are gone: the
+/// dispatcher with the `_openResult` move (Phase 3), and the SSH-active branch
+/// once its contract was ported onto `WorkspaceFlow._placeOnActiveSession`
+/// (Phase 4), which is where the restored capability lives.
 library;
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/local/security_scoped_bookmark.dart';
 import '../../core/providers/app_providers.dart';
-import '../../core/storage/saved_connection.dart';
 import '../../core/storage/saved_local_repo.dart';
 
 /// **Takes a [ProviderContainer], not a `WidgetRef`.** A `WidgetRef` in a sheet
@@ -70,55 +74,4 @@ Future<SavedLocalRepo?> saveLocalRepo(
     return null;
   }
   return repo;
-}
-
-/// Persists [dest] into the *active saved connection's* repo list (when the
-/// session is a saved one — an ad-hoc session just switches), optionally
-/// enables fsmonitor, and makes [dest] the active repo. Mirrors the
-/// switcher's `_addRepo` + repo-switch sequence.
-///
-/// Returns whether the session ended on [dest] (see
-/// [registerAndActivateLocal]) — false when the active session is gone.
-Future<bool> registerAndActivateSshActive(
-  WidgetRef ref, {
-  required String dest,
-  required bool fsmonitor,
-  String label = '',
-}) async {
-  final connectionId = ref.read(connectionProvider).connectionId;
-  if (connectionId != null) {
-    SavedConnection? conn;
-    try {
-      final list = await ref.read(savedConnectionsProvider.future);
-      for (final c in list) {
-        if (c.id == connectionId) {
-          conn = c;
-          break;
-        }
-      }
-    } catch (_) {
-      // Store unreadable — fall through to session-only registration.
-    }
-    if (conn != null) {
-      var updated = conn.copyWith(
-        repoPaths: SavedConnection.dedupePaths([...conn.allRepoPaths, dest]),
-      );
-      if (label.isNotEmpty) updated = updated.withRepoLabel(dest, label);
-      if (fsmonitor) updated = updated.withFsmonitor(dest, true);
-      try {
-        await ref.read(connectionStoreProvider).updateMetadata(updated);
-        ref.invalidate(savedConnectionsProvider);
-      } catch (_) {
-        // Non-fatal: the repo still opens for this session.
-      }
-    }
-  }
-  if (fsmonitor) {
-    try {
-      await ref.read(gitServiceProvider).setFsmonitor(dest, enabled: true);
-    } catch (_) {}
-  }
-  if (!ref.read(connectionProvider).isConnected) return false;
-  ref.read(connectionProvider.notifier).setRepoPath(dest);
-  return true;
 }

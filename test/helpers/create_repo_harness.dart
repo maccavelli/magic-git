@@ -31,6 +31,7 @@ import 'package:remote_magic_git/core/storage/saved_workspace_set.dart';
 import 'package:remote_magic_git/features/common/buttons.dart';
 import 'package:remote_magic_git/features/tabs/tabs_controller.dart';
 import 'package:remote_magic_git/features/workspace/create_repo_sheet.dart';
+import 'package:remote_magic_git/features/workspace/workspace_targets.dart';
 import 'package:riverpod/misc.dart' show Override;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'app_scope.dart';
@@ -241,10 +242,25 @@ const testConn = SavedConnection(
 /// [pastDestination] advances off the Destination step the connected wizard
 /// now opens on (MADR 0036, 2A), so the many tests written when Source was
 /// step 0 keep their `nextStep` sequences. Pass false to look at the step.
+/// The connected-session state `pumpConnected` runs against. Pass
+/// [adHoc] for a session with **no saved connection id** — an SSH connect with
+/// "save this profile" turned off (`connection_form.dart:182`). That is the
+/// shape MADR 0038 F2 is about: not local, but with no id to seed a
+/// destination from.
+ConnectionState connectedState({bool adHoc = false}) => ConnectionState(
+  phase: ConnectionPhase.connected,
+  repoPath: '/srv/repo',
+  repoPaths: const ['/srv/repo'],
+  connectionId: adHoc ? null : 'c1',
+  connectionLabel: adHoc ? null : 'Prod',
+  host: 'h',
+);
+
 Future<(StubConnection, FakeCreateExecutor, FakeConnectionStore)> pumpConnected(
   WidgetTester tester, {
   List<Override> extraOverrides = const [],
   bool pastDestination = true,
+  bool adHoc = false,
 }) async {
   // `SharedPreferences.getInstance()` **never settles inside `testWidgets`** —
   // its platform-channel reply needs `runAsync`, which a pumped widget test
@@ -257,16 +273,7 @@ Future<(StubConnection, FakeCreateExecutor, FakeConnectionStore)> pumpConnected(
   // Room for the wizard + completed-warning footer (cloneUrl failure copy
   // can be long; a tight surface overflows the step breadcrumb).
   await tester.binding.setSurfaceSize(const Size(1200, 900));
-  final stub = StubConnection(
-    const ConnectionState(
-      phase: ConnectionPhase.connected,
-      repoPath: '/srv/repo',
-      repoPaths: ['/srv/repo'],
-      connectionId: 'c1',
-      connectionLabel: 'Prod',
-      host: 'h',
-    ),
-  );
+  final stub = StubConnection(connectedState(adHoc: adHoc));
   final exec = FakeCreateExecutor();
   final store = FakeConnectionStore();
   await tester.pumpWidget(
@@ -421,7 +428,11 @@ Future<(ProvisionStub, FakeCreateExecutor, FakeConnectionStore)> pumpLanding(
 }
 
 /// The Destination step's popup (This Mac + every saved connection).
-Finder destinationPopup() => find.byType(MacosPopupButton<String?>);
+/// The wizards' Target control. Typed `WorkspaceDestination` since MADR 0038
+/// F2 gave it a third state — the add-existing sheet's own popup is still
+/// `String?`, so this must not be widened to match on any popup.
+Finder destinationPopup() =>
+    find.byType(MacosPopupButton<WorkspaceDestination>);
 
 /// Chooses [displayName] in the Destination popup and settles the dial the
 /// selection triggers.

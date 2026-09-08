@@ -745,6 +745,81 @@ expect=9519 testWidgets=1069
 sheets + registration              84 insertions, 221 deletions
 ```
 
+### Phase 4 — 2026-09-08 — *complete*
+
+**Ad-hoc SSH sessions are targetable again**, and the dead registration branch
+is gone.
+
+**The destination is a type, not a nullable id.** `WorkspaceDestination` is
+sealed with `LocalMacDestination` / `ActiveSessionDestination` /
+`SavedConnectionDestination`, each with value equality because
+`MacosPopupButton` selects by `==`. A sentinel id would have restored the
+capability and re-created its cause — one value meaning two things — which is
+exactly how F2 arose: `null` meant both "This Mac" and "an ad-hoc session has
+no id to give you".
+
+**The active-session row is offered only when the session is ad-hoc.** A saved
+session is already in the list by id, and two rows for one host is two ways to
+say one thing. Labelled from `ConnectionState.host`, which is populated for
+ad-hoc sessions (`app_providers.dart:1348`).
+
+**It dials nothing and claims no tab**, so `_opensNewTab` excludes it and the
+tab cap does not apply. Without that a user at 8 tabs on an unsaved session
+could not create at all — the cap exists to protect `openOrFocus`, which this
+path never reaches.
+
+**The last four registration tests are ported**, onto
+`WorkspaceFlow._placeOnActiveSession`. `registerAndActivateSshActive` and
+`test/workspace_registration_test.dart` are deleted — after, not before, all
+eight had green counterparts. `workspace_registration.dart` is now one pair of
+functions for the local half, and its header records why it stopped being a
+"matrix".
+
+**Two survivors, and they were different kinds of wrong:**
+
+* *"an active-session target claims a tab and is capped"* — a genuine **test
+  gap**. `workspace_flow_test.dart` proved `openResult` claims no tab, but
+  nothing proved the *sheet* exempts the target from the cap. Closed with a
+  create-sheet test at `capReached`.
+* *"an ad-hoc result persists into a connection it has none of"* — a mutation
+  of mine that was **inert**. It flipped `if (connectionId != null)` to
+  `if (true)`, but with a null id the lookup inside matches nothing anyway, so
+  behaviour was unchanged and the green read as proof. Replaced with the
+  plausible wrong implementation the guard actually prevents: falling back to
+  the only saved connection.
+
+**Test-type churn, expected and confined.** `MacosPopupButton<String?>` became
+`MacosPopupButton<WorkspaceDestination>` in the two wizards, so
+`destinationPopup()` and three assertions were retyped. The add-existing
+sheet's own popup is still `String?` and was deliberately left alone — Phase 5
+touches that sheet.
+
+**Sabotage — 21 mutations (4/8/4/5 across the phases), all killed:**
+
+```
+phase4: an ad-hoc session is treated as This Mac again
+      -> an ad-hoc SSH session opens on itself, not This Mac
+phase4: the active-session row is offered for a saved session too
+      -> a saved session is NOT offered twice
+phase4: an active-session target claims a tab and is capped
+      -> an ad-hoc create is NOT refused at the tab cap
+phase4: an ad-hoc active-session result persists into a connection it has none of
+      -> without connectionId (ad-hoc) skips metadata mutation
+phase4: an active-session result never becomes live
+      -> updates connection metadata and sets repoPath
+```
+
+**Verification:**
+
+```
+flutter analyze (whole project)   No issues found!
+dart format                       0 changed
+flutter test (full suite)         03:26 +3796 ~3: All tests passed!
+tool/mutate.py (21 mutations)     21 killed, 0 survived, 0 did not apply
+expect=9527 testWidgets=1069
+F6 proof                          no `registerAndActivate*` outside the local pair
+```
+
 #### Deviation 1 — 2026-09-08 — Phase 2 cannot move `_openResult` and stay pure
 
 **Found while writing Phase 2.** `WorkspaceFlow` is widget-free by design, so it

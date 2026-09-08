@@ -36,6 +36,7 @@ class WorkspaceOpenRequest {
   const WorkspaceOpenRequest({
     required this.dest,
     required this.isLocalTarget,
+    this.activeSession = false,
     required this.saveLocal,
     this.localLabel = '',
     this.remoteLabel = '',
@@ -49,6 +50,10 @@ class WorkspaceOpenRequest {
 
   /// This Mac rather than a host.
   final bool isLocalTarget;
+
+  /// The result belongs on the session this tab already holds — no dial, no
+  /// new tab (MADR 0038 F2). Mutually exclusive with [isLocalTarget].
+  final bool activeSession;
 
   /// Save a local result to Local Repositories. False opens it in place, with
   /// no bookmark to reopen from (MADR 0036, 5B).
@@ -193,6 +198,7 @@ class WorkspaceFlow {
       );
       return opened != null;
     }
+    if (request.activeSession) return _placeOnActiveSession(request);
     final conn = request.connection;
     final token = request.provisionToken;
     if (conn == null || token == null) return false;
@@ -217,6 +223,61 @@ class WorkspaceFlow {
       fsmonitor: request.fsmonitor,
       label: request.remoteLabel,
     );
+  }
+
+  /// Registers the result into the session this tab already holds.
+  ///
+  /// Ported from `registerAndActivateSshActive`, which MADR 0036 orphaned when
+  /// it stopped producing `WorkspaceTarget.sshActive`. Its contract is the one
+  /// its four tests state, and the last of them is the reason this exists: an
+  /// **ad-hoc** session has no `SavedConnection` to persist into, so it
+  /// persists nothing and still calls `setRepoPath` — the repository becomes
+  /// live on the session the user is already in (MADR 0038 F2).
+  Future<bool> _placeOnActiveSession(WorkspaceOpenRequest request) async {
+    final connectionId = container.read(connectionProvider).connectionId;
+    if (connectionId != null) {
+      SavedConnection? conn;
+      try {
+        for (final c in await container.read(savedConnectionsProvider.future)) {
+          if (c.id == connectionId) {
+            conn = c;
+            break;
+          }
+        }
+      } catch (_) {
+        // Store unreadable — fall through to session-only registration.
+      }
+      if (conn != null) {
+        var updated = conn.copyWith(
+          repoPaths: SavedConnection.dedupePaths([
+            ...conn.allRepoPaths,
+            request.dest,
+          ]),
+        );
+        if (request.remoteLabel.isNotEmpty) {
+          updated = updated.withRepoLabel(request.dest, request.remoteLabel);
+        }
+        if (request.fsmonitor) {
+          updated = updated.withFsmonitor(request.dest, true);
+        }
+        try {
+          await container.read(connectionStoreProvider).updateMetadata(updated);
+          container.invalidate(savedConnectionsProvider);
+        } catch (_) {
+          // Non-fatal: the repo still opens for this session.
+        }
+      }
+    }
+    if (request.fsmonitor) {
+      try {
+        await container
+            .read(gitServiceProvider)
+            .setFsmonitor(request.dest, enabled: true);
+      } catch (_) {}
+    }
+    if (!container.read(connectionProvider).isConnected) return false;
+    container.read(connectionProvider.notifier).setRepoPath(request.dest);
+    return true;
   }
 
   /// Relinquishes ownership of the claimed tab **without closing it**: the work

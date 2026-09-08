@@ -18,6 +18,7 @@ import 'package:remote_magic_git/core/storage/saved_connection.dart';
 import 'package:remote_magic_git/core/workspace/clone_controller.dart';
 import 'package:remote_magic_git/features/common/buttons.dart';
 import 'package:remote_magic_git/features/workspace/clone_sheet.dart';
+import 'package:remote_magic_git/features/workspace/workspace_targets.dart';
 
 import 'helpers/create_repo_harness.dart'
     show RecordingTabs, installTabs, destinationPopup;
@@ -704,9 +705,9 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    MacosPopupButton<String?> destination() => tester
-        .widgetList<MacosPopupButton<String?>>(
-          find.byType(MacosPopupButton<String?>),
+    MacosPopupButton<WorkspaceDestination> destination() => tester
+        .widgetList<MacosPopupButton<WorkspaceDestination>>(
+          find.byType(MacosPopupButton<WorkspaceDestination>),
         )
         .first;
 
@@ -793,7 +794,7 @@ void main() {
       // Adopt a session, so resetProvisioning has a token to hang up. Under
       // MADR 0036 (6B) selection no longer dials: Browse… on the Location
       // step is the first commitment to the host.
-      await tester.tap(find.byType(MacosPopupButton<String?>));
+      await tester.tap(find.byType(MacosPopupButton<WorkspaceDestination>));
       await tester.pumpAndSettle();
       await tester.tap(find.text(_conn.displayName).last);
       await tester.pumpAndSettle();
@@ -818,7 +819,7 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.widgetWithText(AppPushButton, 'Back'));
       await tester.pumpAndSettle();
-      await tester.tap(find.byType(MacosPopupButton<String?>));
+      await tester.tap(find.byType(MacosPopupButton<WorkspaceDestination>));
       await tester.pumpAndSettle();
       await tester.tap(find.text('This Mac').last);
       await tester.pump();

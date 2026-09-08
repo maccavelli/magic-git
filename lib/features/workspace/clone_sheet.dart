@@ -99,7 +99,14 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet>
   bool _picking = false;
 
   // Landing destination selection: null id = "This Mac", else a connection id.
-  String? _destConnectionId;
+  WorkspaceDestination _dest = const LocalMacDestination();
+
+  /// The saved connection id the destination names, or null for This Mac
+  /// and for the ad-hoc session (which has none to name).
+  String? get _destConnectionId => switch (_dest) {
+    SavedConnectionDestination(:final id) => id,
+    _ => null,
+  };
 
   bool _submitting = false;
   String? _error;
@@ -212,8 +219,17 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet>
     });
     if (!widget.landing) {
       // Open on the destination the user is in (MADR 0036, 2A).
+      // Open on the destination the user is in (MADR 0036, 2A) — now for all
+      // three session shapes. An **ad-hoc** SSH session has no saved id, and
+      // reading `conn.connectionId` alone made it indistinguishable from This
+      // Mac: the wizard silently pointed at the Mac while the user worked on a
+      // host (MADR 0038 F2).
       final conn = ref.read(connectionProvider);
-      _destConnectionId = conn.isLocal ? null : conn.connectionId;
+      _dest = conn.isLocal
+          ? const LocalMacDestination()
+          : (conn.connectionId == null
+                ? const ActiveSessionDestination()
+                : SavedConnectionDestination(conn.connectionId!));
     }
     _recomputeTarget();
   }
@@ -246,11 +262,16 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet>
   /// prefills the SSH parent path when connected.
   void _recomputeTarget() {
     final conn = ref.read(connectionProvider);
-    // One rule for both variants (MADR 0036, 3B) — see the create sheet.
-    _target = _destConnectionId == null
-        ? WorkspaceTarget.localMac
-        : WorkspaceTarget.sshProvision;
-    if (_target == WorkspaceTarget.sshProvision &&
+    _target = switch (_dest) {
+      LocalMacDestination() => WorkspaceTarget.localMac,
+      // Restored 2026-09-08 (MADR 0038 F2): the session this tab already holds
+      // needs no dial and no new tab.
+      ActiveSessionDestination() => WorkspaceTarget.sshActive,
+      SavedConnectionDestination() => WorkspaceTarget.sshProvision,
+    };
+    // Prefill the parent from the current session only when the destination
+    // IS the current session; another host's layout is not known here.
+    if (_target != WorkspaceTarget.localMac &&
         _destConnectionId == conn.connectionId &&
         _parent.text.isEmpty &&
         conn.repoPath != null) {
@@ -277,7 +298,7 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet>
   bool get _forgeBrowseReady =>
       _target != WorkspaceTarget.sshProvision || provisionToken != null;
 
-  Future<void> _onDestChanged(String? connectionId) async {
+  Future<void> _onDestChanged(WorkspaceDestination dest) async {
     // Switching destination abandons any in-flight provisioning, and the tab
     // it was dialled in.
     await _abandonProvisionTab();
@@ -287,7 +308,7 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet>
     // before it.
     if (!mounted) return;
     setState(() {
-      _destConnectionId = connectionId;
+      _dest = dest;
       _error = null;
       _recomputeTarget();
     });
@@ -302,7 +323,13 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet>
   }
 
   /// See the create sheet's twin (MADR 0036, 3B/5B/7A).
-  bool get _opensNewTab => !_isLocalTarget || _saveLocal;
+  /// Whether this clone ends by opening a **new** tab (MADR 0036, 3B). Two
+  /// exceptions, and both work in the tab the user is already in: an unsaved
+  /// local clone, which has no bookmark to reopen from (decision 5B), and a
+  /// clone onto the session this tab already holds (MADR 0038 F2) — which
+  /// dials nothing, so the cap below must not refuse it.
+  bool get _opensNewTab =>
+      _target != WorkspaceTarget.sshActive && (!_isLocalTarget || _saveLocal);
   bool get _refusedAtTabCap => _flow.refusedAtTabCap(opensNewTab: _opensNewTab);
 
   /// The tab an SSH clone dials in and runs its job in — see the create
@@ -343,7 +370,9 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet>
     final own = ProviderScope.containerOf(context, listen: false);
     RepoTab? tab;
     try {
-      if (!_isLocalTarget) {
+      // Only a saved host dials: This Mac needs no session, and the session
+      // this tab already holds needs no second one (MADR 0038 F2).
+      if (_target == WorkspaceTarget.sshProvision) {
         if (!await _flow.ensureTab()) {
           setState(() => _error = CloneRepositorySheet.capMessage);
           return;
@@ -529,6 +558,7 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet>
         WorkspaceOpenRequest(
           dest: dest,
           isLocalTarget: _isLocalTarget,
+          activeSession: _target == WorkspaceTarget.sshActive,
           saveLocal: _saveLocal,
           localLabel: _localLabel.text.trim(),
           remoteLabel: _remoteLabel.text.trim(),
@@ -665,7 +695,7 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet>
 
   Widget _destinationSection(MacosTypography typography) {
     return WorkspaceDestinationSection(
-      selectedConnectionId: _destConnectionId,
+      selected: _dest,
       onChanged: (_submitting || provisioning) ? null : _onDestChanged,
       provisioning: provisioning,
       localHint: 'The repository is cloned onto this Mac\'s own filesystem.',
@@ -1046,7 +1076,15 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet>
   Widget _reviewStep(MacosTypography typography) {
     final destText = switch (_target) {
       WorkspaceTarget.localMac => 'This Mac',
-      WorkspaceTarget.sshActive => 'Connected host (active session)',
+      // Reachable again since MADR 0038 F2. Worded to match the Target
+      // control's own row, so the review step does not appear to name a
+      // different place.
+      WorkspaceTarget.sshActive => () {
+        final host = ref.watch(connectionProvider).host;
+        return host == null || host.isEmpty
+            ? 'This session'
+            : '$host (this session)';
+      }(),
       WorkspaceTarget.sshProvision => () {
         final conns = ref.watch(savedConnectionsProvider).value ?? const [];
         for (final c in conns) {
