@@ -121,7 +121,7 @@
             {
               "type": "items",
               "items": [
-                "Destination — where the new working copy will live.",
+                "Target — where the new working copy will live.",
                 "Source — browse GitHub or GitLab, or paste a URL.",
                 "Location — the folder name on the host.",
                 "Review — confirm and run. A failed or cancelled clone deletes the partial folder."
@@ -134,7 +134,7 @@
             {
               "type": "items",
               "items": [
-                "Destination — local Mac or an SSH host.",
+                "Target — local Mac or an SSH host.",
                 "Source — empty folder or an existing folder.",
                 "Remote — create on GitHub or GitLab, a custom URL, or none.",
                 "Details — name, initial branch, git identity (name and email), first commit.",

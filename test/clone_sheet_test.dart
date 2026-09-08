@@ -282,7 +282,7 @@ void main() {
     // Deliberately renumbered: the connected wizard gained a Destination step
     // in front of Source (MADR 0036, 2A), so it is four steps, not three.
     await _pumpConnected(tester, pastDestination: false);
-    expect(find.text('Step 1 of 4 — Destination'), findsOneWidget);
+    expect(find.text('Step 1 of 4 — Target'), findsOneWidget);
     await _next(tester);
     expect(find.text('Step 2 of 4 — Source'), findsOneWidget);
 
@@ -611,7 +611,7 @@ void main() {
     await tester.pumpAndSettle();
 
     // The landing wizard opens on Destination (section caption + breadcrumb).
-    expect(find.text('Destination'), findsWidgets);
+    expect(find.text('Target'), findsWidgets);
     expect(find.text('This Mac'), findsOneWidget);
     await _next(tester); // Destination → Source
 

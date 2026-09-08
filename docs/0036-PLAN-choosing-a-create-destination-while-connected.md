@@ -773,6 +773,50 @@ prior connection) by the Phase 1 landing test and the Phase 4 routed create;
 10 (the switcher's local-open tests unedited after its block moved) by
 `connection_switcher_test.dart` passing throughout.
 
+### Follow-up — 2026-09-08 — the step is "Target", and the breadcrumb fits
+
+> **Maintainer follow-up, after seeing Phase 6's note that the breadcrumb
+> wraps:** *"change destination to target"*.
+
+**The wrap was measured, not guessed.** At the sheet's 376 px content width
+the five chips plus four separators needed **452.8 px**. Tighter spacing alone
+never fixed it — `gap 6 → 3` saves 22 px and it still wrapped; so did 9 pt at
+gap 2. Only a font drop to 8.5 pt, or a shorter first label, closed it.
+
+**"Target" alone did not fit either** — 6 characters shorter, but 380 px,
+still 4 px over. `Target` **plus** `gap 6 → 2` gives **370.2 / 376**, verified
+in the real sheet (`rows=1`), with **6 px to spare**. Clone's four steps land
+at 305.5.
+
+**Also corrected: the wrap was never introduced by this work.** Clone's
+landing breadcrumb measured **379.6 px** — over by 3.6 px — before any of
+these phases, which is what `WizardStepIndicator`'s doc comment described.
+MADR 0036 only made the *create* sheet reach a line clone was already on, and
+this change takes both off it.
+
+**Renamed everywhere the concept is named, not only the breadcrumb:** the step
+title (both sheets), the popup's own caption
+(`workspace_destination.dart`), and both Review rows. A step called "Target"
+above a control captioned "Destination" reads as two concepts. `help_book.json`
+followed — it documented *"Destination — where the new working copy will
+live"*, and `help_book_json_test.dart` asserts that string, so leaving it
+would have shipped help naming a label the app no longer shows.
+
+**Code identifiers deliberately untouched** — `WorkspaceDestinationSection`,
+`_destConnectionId`, `WorkspaceTarget`. Not user-visible, and a five-file
+rename buys nothing; the UI now matches `WorkspaceTarget`, which was already
+the internal name.
+
+**Verification:**
+
+```
+flutter analyze (whole project)   No issues found!
+dart format                       0 changed
+flutter test (full suite)         03:22 +3727 ~3: All tests passed!
+tool/mutate.py (24 mutations)     24 killed, 0 survived, 0 did not apply
+breadcrumb, measured in-sheet     rows=1, span=370.2/376
+```
+
 ## Rollout and Rollback
 
 **Rollout.** Six commits: Phase 1, Phase 2, **Phases 3+4 together**, Phase 5,

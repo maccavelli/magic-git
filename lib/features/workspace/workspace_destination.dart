@@ -59,7 +59,7 @@ class WorkspaceDestinationSection extends ConsumerWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Text('Destination', style: typography.caption1),
+        Text('Target', style: typography.caption1),
         const SizedBox(height: 4),
         MacosPopupButton<String?>(
           value: selectedConnectionId,

@@ -47,8 +47,11 @@ class WizardStep {
   static bool always() => true;
 }
 
-/// Breadcrumb of the active steps with the current one highlighted. A Wrap
-/// so five landing-mode steps flow onto a second line at sheet width.
+/// Breadcrumb of the active steps with the current one highlighted.
+///
+/// Still a `Wrap`: five steps fit on one line at the sheet's 376 px content
+/// width with **6 px to spare** (measured), so a longer step title — or a
+/// translation — must degrade to a second line rather than overflow.
 class WizardStepIndicator extends StatelessWidget {
   final List<WizardStep> steps;
   final int current;
@@ -69,7 +72,7 @@ class WizardStepIndicator extends StatelessWidget {
         for (var i = 0; i < steps.length; i++) ...[
           if (i > 0)
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 6),
+              padding: const EdgeInsets.symmetric(horizontal: 2),
               child: Text(
                 '›',
                 style: typography.caption1.copyWith(

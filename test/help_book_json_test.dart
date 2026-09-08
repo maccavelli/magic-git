@@ -379,7 +379,7 @@ void main() {
         'clone_create': [
           'Clone repository',
           'Create repository',
-          'Destination',
+          'Target',
           'Review',
           'partial folder',
           'git identity',

@@ -394,7 +394,7 @@ void main() {
     // Deliberately renumbered: the connected wizard gained a Destination step
     // in front of Source (MADR 0036, 2A), so it is five steps, not four.
     await pumpConnected(tester, pastDestination: false);
-    expect(find.text('Step 1 of 5 — Destination'), findsOneWidget);
+    expect(find.text('Step 1 of 5 — Target'), findsOneWidget);
     await nextStep(tester);
     expect(find.text('Step 2 of 5 — Source'), findsOneWidget);
     await nextStep(tester);

@@ -121,7 +121,7 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet>
   late final List<WizardStep> _steps = [
     WizardStep(
       id: 'destination',
-      title: 'Destination',
+      title: 'Target',
       intro:
           'Choose where the clone will live: on this Mac, or on one of your '
           'saved SSH hosts. Picking a host connects to it on demand — the '
@@ -1122,7 +1122,7 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet>
       children: [
         if (_refusedAtTabCap)
           WizardReviewRow('Cannot clone', CloneRepositorySheet.capMessage),
-        WizardReviewRow('Destination', destText),
+        WizardReviewRow('Target', destText),
         if (_isLocalTarget && !_saveLocal)
           const WizardReviewRow(
             'Tab',

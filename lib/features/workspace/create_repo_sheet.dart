@@ -197,7 +197,7 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
   late final List<WizardStep> _steps = [
     WizardStep(
       id: 'destination',
-      title: 'Destination',
+      title: 'Target',
       intro:
           'Choose where the repository will live: on this Mac, or on one of '
           'your saved SSH hosts. Picking a host connects to it on demand — '
@@ -1466,7 +1466,7 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
       children: [
         if (_refusedAtTabCap)
           WizardReviewRow('Cannot create', CreateRepositorySheet.capMessage),
-        WizardReviewRow('Destination', destText),
+        WizardReviewRow('Target', destText),
         if (_isLocalTarget && !_saveLocal)
           const WizardReviewRow(
             'Tab',

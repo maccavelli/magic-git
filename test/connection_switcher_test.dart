@@ -243,9 +243,9 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Clone repository'), findsOneWidget);
-    // Landing wizard: 'Destination' appears as the step's section caption
+    // Landing wizard: 'Target' appears as the step's section caption
     // and in the breadcrumb indicator.
-    expect(find.text('Destination'), findsWidgets);
+    expect(find.text('Target'), findsWidgets);
   });
 
   testWidgets('Create repository opens the create sheet', (tester) async {
@@ -255,7 +255,7 @@ void main() {
 
     expect(find.text('Create repository'), findsOneWidget);
     // Disconnected → landing variant: the wizard opens on Destination.
-    expect(find.text('Destination'), findsWidgets);
+    expect(find.text('Target'), findsWidgets);
     expect(find.text('This Mac'), findsWidgets);
   });
 
