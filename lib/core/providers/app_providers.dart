@@ -2016,6 +2016,17 @@ class ConnectionController extends Notifier<ConnectionState> {
           ref.invalidate(savedLocalReposProvider);
         } catch (_) {}
         await _recordRecentOpen(isLocal: true, id: id, repoPath: repoPath);
+      } else {
+        // An UNSAVED local open has no id, so there is nothing for the
+        // per-repo MRU to rank — it could not be reopened from the recent
+        // list anyway. The **namespace** is a different matter: it is real
+        // evidence of where this user works, and it was being dropped purely
+        // because it shared a guard with the MRU write (MADR 0038 F9.2).
+        await _recordOpenedNamespace(
+          isLocal: true,
+          connectionId: null,
+          repoPath: repoPath,
+        );
       }
     } catch (e) {
       if (attempt != _attempt || !ref.mounted) return;

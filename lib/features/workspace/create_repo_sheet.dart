@@ -13,6 +13,7 @@ import '../../core/output/output_log.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/settings/app_settings.dart';
 import '../../core/ssh/ssh_command_executor.dart';
+import '../../core/storage/saved_connection.dart';
 import '../../core/utils/display_error.dart';
 import '../../core/utils/posix_path.dart';
 import '../common/buttons.dart';
@@ -21,7 +22,6 @@ import '../common/field_styles.dart';
 import '../common/labeled_text_field.dart';
 import '../common/sized_sheet.dart';
 import '../common/tool_icon_button.dart';
-import '../connection/local_repo_form.dart' show LocalOpenGrants;
 import '../tabs/tabs_controller.dart';
 import 'create_repo_pipeline.dart';
 import 'create_repo_steps/folder_fields.dart';
@@ -30,10 +30,8 @@ import 'create_repo_steps/segmented_choice.dart';
 import 'wizard.dart';
 import 'workspace_destination.dart';
 import 'workspace_flow.dart';
-import 'workspace_open_in_tab.dart';
 import 'workspace_pickers.dart';
 import 'workspace_provisioning.dart';
-import 'workspace_registration.dart';
 import 'workspace_targets.dart';
 import 'workspace_widgets.dart';
 
@@ -565,7 +563,10 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
       if (!mounted) return;
 
       // --- Open the result in its own tab (MADR 0036, 3B) -------------------
-      final opened = await _openResult(outcome.dest, own: own, tab: tab);
+      final opened = await _openResult(
+        outcome.dest,
+        connection: await connectionById(_destConnectionId),
+      );
       if (!mounted) return;
       if (!opened) {
         // Created on disk/forge but never became the live workspace — the
@@ -677,81 +678,23 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
   Future<void> _abandonProvisionTab() =>
       _flow.abandon(releaseSession: resetProvisioning);
 
-  /// Where the created repository opens (MADR 0036, 3B): its own tab —
-  /// except an unsaved local create, which has no bookmark to reopen from and
-  /// opens in place as it always did (5B). [own] is the container the create
-  /// ran in; [tab] the one an SSH create dialled.
-  Future<bool> _openResult(
-    String dest, {
-    required ProviderContainer own,
-    required RepoTab? tab,
-  }) async {
-    final tabs = TabsController.current;
-    if (_isLocalTarget) {
-      final label = _localLabel.text.trim();
-      if (!_saveLocal) {
-        return registerAndActivateLocal(
-          ref,
+  /// Where the finished repository opens (MADR 0036, 3B) — now
+  /// [WorkspaceFlow.openResult], one implementation for both wizards
+  /// (MADR 0038 F8). It reads the flow's captured container, so a tab switch
+  /// mid-flight can no longer land the result in the wrong session (F3).
+  Future<bool> _openResult(String dest, {SavedConnection? connection}) =>
+      _flow.openResult(
+        WorkspaceOpenRequest(
           dest: dest,
-          label: label,
-          save: false,
-        );
-      }
-      final saved = await saveLocalRepo(
-        ref,
-        id: DateTime.now().microsecondsSinceEpoch.toString(),
-        dest: dest,
-        label: label,
+          isLocalTarget: _isLocalTarget,
+          saveLocal: _saveLocal,
+          localLabel: _localLabel.text.trim(),
+          remoteLabel: _remoteLabel.text.trim(),
+          fsmonitor: _fsmonitor,
+          connection: connection,
+          provisionToken: provisionToken,
+        ),
       );
-      if (saved == null) return false;
-      if (tabs == null) {
-        // No tab host: open in place, as the landing page does.
-        await own
-            .read(connectionProvider.notifier)
-            .connectLocal(
-              dest,
-              label: label.isEmpty ? null : label,
-              id: saved.id,
-            );
-        return own.read(connectionProvider).isConnected;
-      }
-      final access = CreateRepositorySheet.scopedAccess;
-      var path = dest;
-      if (saved.bookmarkData.isNotEmpty) {
-        path = await access.acquire(saved.bookmarkData) ?? dest;
-      }
-      final opened = await openLocalRepoInTab(
-        tabs: tabs,
-        repo: saved,
-        grants: LocalOpenGrants(path),
-        scopedAccess: access,
-      );
-      return opened != null;
-    }
-    final conn = await connectionById(_destConnectionId);
-    final token = provisionToken;
-    if (conn == null || token == null) return false;
-    if (tab == null) {
-      // No tab host: the sheet's own container dialled (landing behaviour).
-      return own
-          .read(connectionProvider.notifier)
-          .finalizeProvisioned(
-            token: token,
-            conn: conn,
-            repoPath: dest,
-            enableFsmonitor: _fsmonitor,
-            label: _remoteLabel.text.trim(),
-          );
-    }
-    return finalizeProvisionedInTab(
-      tab: tab,
-      conn: conn,
-      token: token,
-      dest: dest,
-      fsmonitor: _fsmonitor,
-      label: _remoteLabel.text.trim(),
-    );
-  }
 
   Future<void> _requestClose() async {
     // Escape / title-X while `git init` / forge publish is running must not
@@ -997,10 +940,17 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
   /// The saved connection a create actually targets, or null for This Mac and
   /// for a session with nothing to persist into.
   ///
-  /// **Not simply [_destConnectionId].** In connected mode the destination
-  /// defaults to *this* session (`sshActive`) and the picker never sets an id,
-  /// so reading the raw field would send an SSH create to the This-Mac store —
-  /// the wrong half of the two-store split `NamespaceHistory` documents.
+  /// **Not simply [_destConnectionId].** MADR 0036 made the connected wizard
+  /// seed its destination from the live session, so the raw field is usually
+  /// right — but an **ad-hoc** SSH session has no saved id to seed from, and
+  /// then both are null. The fallback keeps that case pointed at the session's
+  /// own connection when it has one, rather than sending an SSH create's
+  /// history to the This-Mac store — the wrong half of the two-store split
+  /// `NamespaceHistory` documents.
+  ///
+  /// (This comment previously described the pre-0036 world, where the
+  /// destination defaulted to `sshActive` and "the picker never sets an id".
+  /// It does now. MADR 0038 F2 covers the ad-hoc gap the fallback papers over.)
   String? _effectiveConnectionId(String? activeId) =>
       _isLocalTarget ? null : (_destConnectionId ?? activeId);
 
@@ -1021,14 +971,16 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
     if (!_onForge || outcome.warnings.isNotEmpty) return;
     final namespace = _namespaceText;
     if (namespace.isEmpty) return;
-    await ref
+    await _flow.container
         .read(namespaceHistoryProvider)
         .record(
           forge: _forge,
           host: host,
           namespace: namespace,
           connection: await connectionById(
-            _effectiveConnectionId(ref.read(connectionProvider).connectionId),
+            _effectiveConnectionId(
+              _flow.container.read(connectionProvider).connectionId,
+            ),
           ),
         );
   }

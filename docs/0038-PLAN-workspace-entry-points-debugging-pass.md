@@ -659,6 +659,92 @@ expect=9513 testWidgets=1072
 The 257 lines of shared workspace lifecycle that had **zero** direct test
 callers now have 15, none of which pumps a widget.
 
+### Phase 3 — 2026-09-08 — *complete*
+
+**`_openResult` is one implementation.** Both copies moved into
+`WorkspaceFlow.openResult`, parameterised by `WorkspaceOpenRequest`. The two
+differed by exactly one line — which sheet's `scopedAccess` static they read —
+and 221 lines came out of the three files for 84 put back.
+
+**F3 is now unrepresentable rather than fixed.** `registerAndActivateLocal` and
+`saveLocalRepo` take a `ProviderContainer`, not a `WidgetRef`. There is no
+ambient ref in the flow to drift onto whichever tab is active
+(`tabs_host.dart:500-505`), so the "finished repository connects into the wrong
+tab" defect cannot be written.
+
+**F9, all three parts.** Clone now records its namespace **before** the open,
+matching create — the repository is on disk either way, and a clone that fails
+to open is exactly when remembering where it came from is most useful. An
+**unsaved** local open records its namespace while still writing no MRU entry:
+it had been dropped only because it shared a guard with the MRU write, not for
+any reason of its own. And `_rememberNamespace` reads through the flow's
+captured container.
+
+**The stale `_effectiveConnectionId` comment** in both sheets described the
+pre-0036 world ("the destination defaults to *this* session (`sshActive`) and
+the picker never sets an id"). It does set one now; the comment was a fossil
+pointing at exactly the gap F2 reports, and now says so.
+
+**Two scope corrections, both recorded rather than absorbed silently:**
+
+1. **`registerAndActivate` (the dead dispatcher) was deleted here, not in
+   Phase 4.** Changing `registerAndActivateLocal`'s signature broke its only
+   remaining reference, and the alternative was inventing a container for a
+   function with zero callers. It has **no tests at all** — unlike
+   `registerAndActivateSshActive`, whose four tests are what actually gate
+   deleting `workspace_registration_test.dart` — so nothing was deleted ahead
+   of its replacement. F6 already sanctioned the removal.
+2. **`app_providers.dart` was touched, though Phase 3's file list omits it.**
+   F9.2's step text says "`_recordOpenedNamespace` is called independently for
+   the unsaved case", which can only happen there. The column was incomplete,
+   not the scope.
+
+**An observation recorded, not acted on.** `registerAndActivateLocal`'s single
+production caller always passes `save: false`, and did so before this refactor
+too — a saved local result goes through `saveLocalRepo` + `openLocalRepoInTab`
+instead. Its `save: true` branch is therefore unreachable in production, and
+three of the four ported tests exercise a dead parameter. Pre-existing, adjacent
+to F6, out of scope here; noted in `workspace_flow_test.dart` beside the tests.
+
+**The four ported tests are a port, not a copy.** They previously needed a
+pumped `_RefHarness` widget to obtain a `WidgetRef`; they now drive a bare
+`ProviderContainer`. `test/workspace_registration_test.dart` keeps only the
+`registerAndActivateSshActive` group, which ports in Phase 4 with the capability
+it specifies — and remains the only thing gating that file's deletion.
+
+**One test-harness gap the port exposed.** `workspace_flow_test.dart` has no
+`testWidgets` at all, so nothing initialised the binding and the ported tests'
+mock method-channel handler threw "Binding has not yet been initialized".
+`TestWidgetsFlutterBinding.ensureInitialized()` at the top of `main()` is the
+fix, and the comment says why the file has no widget test to do it implicitly.
+
+**Sabotage — 16 mutations (4 Phase 1, 8 Phase 2, 4 Phase 3), all killed.** One
+Phase 3 mutation was **broken on first run** — `if (!ref.read(connectionProvider).isConnected) return false;`
+matched twice in `workspace_registration.dart`, so the experiment never
+happened; re-anchored on the preceding `connectLocal` call.
+
+```
+phase3: openResult places the result in the active tab, not the captured one
+      -> a local result opens in the captured container, not the active tab
+phase3: a clone records its namespace AFTER the open, not before
+      -> a clone that lands but fails to open still records
+phase3: an unsaved local open records no namespace
+      -> an unsaved local open records its namespace but no MRU entry
+phase3: a failed local connect is reported as success
+      -> a failed connect reports false and persists nothing
+```
+
+**Verification:**
+
+```
+flutter analyze (whole project)   No issues found!
+dart format                       0 changed
+flutter test (full suite)         03:33 +3791 ~3: All tests passed!
+tool/mutate.py (16 mutations)     16 killed, 0 survived, 0 did not apply
+expect=9519 testWidgets=1069
+sheets + registration              84 insertions, 221 deletions
+```
+
 #### Deviation 1 — 2026-09-08 — Phase 2 cannot move `_openResult` and stay pure
 
 **Found while writing Phase 2.** `WorkspaceFlow` is widget-free by design, so it

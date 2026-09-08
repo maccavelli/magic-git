@@ -127,6 +127,11 @@ class _StubConnection extends ConnectionController {
   /// ended on", whichever call set it.
   final List<({int token, String repoPath})> finalized = [];
 
+  /// What [finalizeProvisioned] reports. False is "cloned, but never became
+  /// the live workspace" — the 0009 H19 case the sheet turns into an error
+  /// rather than a green Complete.
+  bool finalizeResult = true;
+
   @override
   Future<bool> finalizeProvisioned({
     required int token,
@@ -137,6 +142,7 @@ class _StubConnection extends ConnectionController {
     String gitDir = '',
   }) async {
     finalized.add((token: token, repoPath: repoPath));
+    if (!finalizeResult) return false;
     repoPathsSet.add(repoPath);
     return true;
   }
@@ -401,6 +407,42 @@ void main() {
     final store = await cloneUrl(tester, 'https://gitlab.com/my-repo.git');
 
     expect(store.updated.every((c) => c.namespaceHistory.isEmpty), isTrue);
+  });
+
+  // MADR 0038 F9.1 — the clone landed on disk; only opening it failed. The
+  // namespace is evidence either way, and recording it AFTER the open (as this
+  // sheet used to) dropped it in exactly the case where it is most useful. The
+  // create sheet always recorded before opening; this is the two agreeing.
+  testWidgets('a clone that lands but fails to open still records', (
+    tester,
+  ) async {
+    final (stub, exec, store) = await _pumpConnected(tester);
+    // A finalize that reports false is "cloned, but never became the live
+    // workspace" — the 0009 H19 case the sheet surfaces as an error.
+    stub.finalizeResult = false;
+    await _toReviewViaUrl(
+      tester,
+      'https://gitlab.com/team/subgroup/my-repo.git',
+    );
+    exec.results.add(_ok('absent')); // probe
+    await tester.tap(_cloneButton());
+    await tester.pump();
+    await tester.pump();
+    await exec.handle.finish(0);
+    await tester.pumpAndSettle();
+
+    expect(
+      find.textContaining('could not be opened'),
+      findsOneWidget,
+      reason: 'non-vacuous: the open really did fail',
+    );
+    expect(
+      store.updated
+          .map((c) => c.namespacesFor('gitlab@gitlab.com'))
+          .expand((e) => e)
+          .toList(),
+      ['team/subgroup'],
+    );
   });
 
   testWidgets('a failed clone records no namespace', (tester) async {

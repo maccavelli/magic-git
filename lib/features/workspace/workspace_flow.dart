@@ -21,7 +21,49 @@ library;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/local/scoped_access.dart';
+import '../../core/providers/app_providers.dart';
+import '../../core/storage/saved_connection.dart';
+import '../connection/local_repo_form.dart' show LocalOpenGrants;
 import '../tabs/tabs_controller.dart';
+import 'workspace_open_in_tab.dart';
+import 'workspace_registration.dart';
+
+/// Everything [WorkspaceFlow.openResult] needs to place a finished repository,
+/// resolved by the sheet. Plain values, never controllers — the flow cannot
+/// reach back into a widget for something it forgot to ask for, which is the
+/// same boundary `CreateRepoRequest` draws for the create pipeline.
+class WorkspaceOpenRequest {
+  const WorkspaceOpenRequest({
+    required this.dest,
+    required this.isLocalTarget,
+    required this.saveLocal,
+    this.localLabel = '',
+    this.remoteLabel = '',
+    this.fsmonitor = false,
+    this.connection,
+    this.provisionToken,
+  });
+
+  /// The repository's path at its destination.
+  final String dest;
+
+  /// This Mac rather than a host.
+  final bool isLocalTarget;
+
+  /// Save a local result to Local Repositories. False opens it in place, with
+  /// no bookmark to reopen from (MADR 0036, 5B).
+  final bool saveLocal;
+
+  final String localLabel;
+  final String remoteLabel;
+  final bool fsmonitor;
+
+  /// The saved connection an SSH result is finalized into; null for This Mac.
+  final SavedConnection? connection;
+
+  /// `WorkspaceProvisioning`'s adopted-session token; null for This Mac.
+  final int? provisionToken;
+}
 
 class WorkspaceFlow {
   WorkspaceFlow({required this.origin, this.tabsOverride, this.accessOverride});
@@ -93,6 +135,88 @@ class WorkspaceFlow {
     _originTabId = controller.activeId;
     _tab = controller.newTab();
     return true;
+  }
+
+  /// Places a finished repository: opens it, registers it, and reports whether
+  /// it actually became the live workspace.
+  ///
+  /// A silent false used to let the sheets flash green Complete while the user
+  /// was still on the previous workspace (0009 H19), which is why the result is
+  /// the contract rather than a void.
+  ///
+  /// One implementation for the create and clone sheets, whose copies differed
+  /// by **exactly one line** — which sheet's `scopedAccess` static they read
+  /// (MADR 0038 F8). That is now [scopedAccess].
+  ///
+  /// The add-existing sheet does not use this: its `_openRemote`/`_openLocal`
+  /// carry fsmonitor, persistence and the scoped git-dir as separate steps and
+  /// are not the same shape.
+  Future<bool> openResult(WorkspaceOpenRequest request) async {
+    final controller = tabs;
+    if (request.isLocalTarget) {
+      if (!request.saveLocal) {
+        return registerAndActivateLocal(
+          container,
+          dest: request.dest,
+          label: request.localLabel,
+          save: false,
+        );
+      }
+      final saved = await saveLocalRepo(
+        container,
+        id: DateTime.now().microsecondsSinceEpoch.toString(),
+        dest: request.dest,
+        label: request.localLabel,
+      );
+      if (saved == null) return false;
+      if (controller == null) {
+        // No tab host: open in place, as the landing page does.
+        await container
+            .read(connectionProvider.notifier)
+            .connectLocal(
+              request.dest,
+              label: request.localLabel.isEmpty ? null : request.localLabel,
+              id: saved.id,
+            );
+        return container.read(connectionProvider).isConnected;
+      }
+      final access = scopedAccess;
+      var path = request.dest;
+      if (saved.bookmarkData.isNotEmpty) {
+        path = await access.acquire(saved.bookmarkData) ?? request.dest;
+      }
+      final opened = await openLocalRepoInTab(
+        tabs: controller,
+        repo: saved,
+        grants: LocalOpenGrants(path),
+        scopedAccess: access,
+      );
+      return opened != null;
+    }
+    final conn = request.connection;
+    final token = request.provisionToken;
+    if (conn == null || token == null) return false;
+    final claimed = _tab;
+    if (claimed == null) {
+      // No tab host: the sheet's own container dialled (landing behaviour).
+      return container
+          .read(connectionProvider.notifier)
+          .finalizeProvisioned(
+            token: token,
+            conn: conn,
+            repoPath: request.dest,
+            enableFsmonitor: request.fsmonitor,
+            label: request.remoteLabel,
+          );
+    }
+    return finalizeProvisionedInTab(
+      tab: claimed,
+      conn: conn,
+      token: token,
+      dest: request.dest,
+      fsmonitor: request.fsmonitor,
+      label: request.remoteLabel,
+    );
   }
 
   /// Relinquishes ownership of the claimed tab **without closing it**: the work

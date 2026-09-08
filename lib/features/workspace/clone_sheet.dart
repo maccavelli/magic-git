@@ -9,6 +9,7 @@ import '../../core/forge/forge_repo_summary.dart';
 import '../../core/git/host_fs_service.dart';
 import '../../core/local/scoped_access.dart';
 import '../../core/providers/app_providers.dart';
+import '../../core/storage/saved_connection.dart';
 import '../../core/utils/display_error.dart';
 import '../../core/utils/posix_path.dart';
 import '../../core/workspace/clone_controller.dart';
@@ -19,15 +20,12 @@ import '../common/field_styles.dart';
 import '../common/sized_sheet.dart';
 import '../common/tappable.dart';
 import '../common/tool_icon_button.dart';
-import '../connection/local_repo_form.dart' show LocalOpenGrants;
 import '../tabs/tabs_controller.dart';
 import 'wizard.dart';
 import 'workspace_destination.dart';
 import 'workspace_flow.dart';
-import 'workspace_open_in_tab.dart';
 import 'workspace_pickers.dart';
 import 'workspace_provisioning.dart';
-import 'workspace_registration.dart';
 import 'workspace_targets.dart';
 import 'workspace_widgets.dart';
 
@@ -407,7 +405,16 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet>
       }
 
       final dest = HostFsService.joinPath(parentDir, name);
-      final registered = await _openResult(dest, own: own, tab: tab);
+      // Recorded BEFORE the open, matching the create sheet (MADR 0038 F9.1).
+      // The repository is on disk either way, and a clone that fails to open is
+      // exactly when remembering where it came from is most useful — the old
+      // order dropped it precisely then.
+      await _rememberNamespace(source);
+      if (!mounted) return;
+      final registered = await _openResult(
+        dest,
+        connection: await connectionById(_destConnectionId),
+      );
       if (!mounted) return;
       if (!registered) {
         // The clone landed on disk but never became the live workspace —
@@ -424,10 +431,6 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet>
       _routedJob?.close();
       _routedJob = null;
       _jobContainer = null;
-      // The repository is on disk and open — remember the namespace it came
-      // from, so the next create offers it (MADR 0032 Phase 7).
-      await _rememberNamespace(source);
-      if (!mounted) return;
       // Let the finished (green) progress bar register before the sheet
       // pops — success otherwise vanishes the very frame it happens.
       setState(() => _finished = true);
@@ -481,14 +484,16 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet>
     final slash = path.lastIndexOf('/');
     if (slash <= 0) return;
     final namespace = path.substring(0, slash);
-    await ref
+    await _flow.container
         .read(namespaceHistoryProvider)
         .record(
           forge: forge,
           host: host,
           namespace: namespace,
           connection: await connectionById(
-            _effectiveConnectionId(ref.read(connectionProvider).connectionId),
+            _effectiveConnectionId(
+              _flow.container.read(connectionProvider).connectionId,
+            ),
           ),
         );
   }
@@ -496,10 +501,17 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet>
   /// The saved connection a clone actually targets, or null for This Mac and
   /// for a session with nothing to persist into.
   ///
-  /// **Not simply [_destConnectionId].** In connected mode the destination
-  /// defaults to *this* session and the picker never sets an id, so reading the
-  /// raw field would send an SSH clone's history to the This-Mac store — the
-  /// wrong half of the two-store split `NamespaceHistory` documents.
+  /// **Not simply [_destConnectionId].** MADR 0036 made the connected wizard
+  /// seed its destination from the live session, so the raw field is usually
+  /// right — but an **ad-hoc** SSH session has no saved id to seed from, and
+  /// then both are null. The fallback keeps that case pointed at the session's
+  /// own connection when it has one, rather than sending an SSH clone's
+  /// history to the This-Mac store — the wrong half of the two-store split
+  /// `NamespaceHistory` documents.
+  ///
+  /// (This comment previously described the pre-0036 world, where the
+  /// destination defaulted to `sshActive` and "the picker never sets an id".
+  /// It does now. MADR 0038 F2 covers the ad-hoc gap the fallback papers over.)
   String? _effectiveConnectionId(String? activeId) =>
       _isLocalTarget ? null : (_destConnectionId ?? activeId);
 
@@ -508,77 +520,23 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet>
   ProviderContainer get _jobScope =>
       _jobContainer ?? ProviderScope.containerOf(context, listen: false);
 
-  /// Where the cloned repository opens (MADR 0036, 3B) — the create sheet's
-  /// `_openResult`, clone-shaped.
-  Future<bool> _openResult(
-    String dest, {
-    required ProviderContainer own,
-    required RepoTab? tab,
-  }) async {
-    final tabs = TabsController.current;
-    if (_isLocalTarget) {
-      final label = _localLabel.text.trim();
-      if (!_saveLocal) {
-        return registerAndActivateLocal(
-          ref,
+  /// Where the finished repository opens (MADR 0036, 3B) — now
+  /// [WorkspaceFlow.openResult], one implementation for both wizards
+  /// (MADR 0038 F8). It reads the flow's captured container, so a tab switch
+  /// mid-flight can no longer land the result in the wrong session (F3).
+  Future<bool> _openResult(String dest, {SavedConnection? connection}) =>
+      _flow.openResult(
+        WorkspaceOpenRequest(
           dest: dest,
-          label: label,
-          save: false,
-        );
-      }
-      final saved = await saveLocalRepo(
-        ref,
-        id: DateTime.now().microsecondsSinceEpoch.toString(),
-        dest: dest,
-        label: label,
+          isLocalTarget: _isLocalTarget,
+          saveLocal: _saveLocal,
+          localLabel: _localLabel.text.trim(),
+          remoteLabel: _remoteLabel.text.trim(),
+          fsmonitor: _fsmonitor,
+          connection: connection,
+          provisionToken: provisionToken,
+        ),
       );
-      if (saved == null) return false;
-      if (tabs == null) {
-        await own
-            .read(connectionProvider.notifier)
-            .connectLocal(
-              dest,
-              label: label.isEmpty ? null : label,
-              id: saved.id,
-            );
-        return own.read(connectionProvider).isConnected;
-      }
-      final access = CloneRepositorySheet.scopedAccess;
-      var path = dest;
-      if (saved.bookmarkData.isNotEmpty) {
-        path = await access.acquire(saved.bookmarkData) ?? dest;
-      }
-      final opened = await openLocalRepoInTab(
-        tabs: tabs,
-        repo: saved,
-        grants: LocalOpenGrants(path),
-        scopedAccess: access,
-      );
-      return opened != null;
-    }
-    final conn = await connectionById(_destConnectionId);
-    final token = provisionToken;
-    if (conn == null || token == null) return false;
-    if (tab == null) {
-      return own
-          .read(connectionProvider.notifier)
-          .finalizeProvisioned(
-            token: token,
-            conn: conn,
-            repoPath: dest,
-            enableFsmonitor: _fsmonitor,
-            label: _remoteLabel.text.trim(),
-          );
-    }
-    return finalizeProvisionedInTab(
-      tab: tab,
-      conn: conn,
-      token: token,
-      dest: dest,
-      fsmonitor: _fsmonitor,
-      label: _remoteLabel.text.trim(),
-    );
-  }
 
   Future<void> _requestClose() async {
     final job = _jobScope.read(cloneJobProvider);

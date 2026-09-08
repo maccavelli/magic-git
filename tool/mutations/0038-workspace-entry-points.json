@@ -106,5 +106,42 @@
     "tests": [
       "test/workspace_flow_test.dart"
     ]
+  },
+  {
+    "label": "phase3: openResult places the result in the active tab, not the captured one",
+    "file": "lib/features/workspace/workspace_flow.dart",
+    "find": "        return registerAndActivateLocal(\n          container,",
+    "replace": "        return registerAndActivateLocal(\n          tabs?.active?.container ?? container,",
+    "tests": [
+      "test/workspace_flow_test.dart"
+    ]
+  },
+  {
+    "label": "phase3: a clone records its namespace AFTER the open, not before",
+    "file": "lib/features/workspace/clone_sheet.dart",
+    "find": "      await _rememberNamespace(source);\n      if (!mounted) return;\n      final registered = await _openResult(",
+    "replace": "      final registered = await _openResult(",
+    "tests": [
+      "test/clone_sheet_test.dart"
+    ],
+    "note": "paired with the re-insertion below"
+  },
+  {
+    "label": "phase3: an unsaved local open records no namespace",
+    "file": "lib/core/providers/app_providers.dart",
+    "find": "        await _recordOpenedNamespace(\n          isLocal: true,\n          connectionId: null,\n          repoPath: repoPath,\n        );",
+    "replace": "        if (repoPath.isEmpty) {\n          await _recordOpenedNamespace(\n            isLocal: true,\n            connectionId: null,\n            repoPath: repoPath,\n          );\n        }",
+    "tests": [
+      "test/namespace_open_recording_test.dart"
+    ]
+  },
+  {
+    "label": "phase3: a failed local connect is reported as success",
+    "file": "lib/features/workspace/workspace_registration.dart",
+    "find": "      .connectLocal(dest, label: label.isEmpty ? null : label, id: id);\n  if (!ref.read(connectionProvider).isConnected) return false;",
+    "replace": "      .connectLocal(dest, label: label.isEmpty ? null : label, id: id);\n  if (!ref.read(connectionProvider).isConnected) return true;",
+    "tests": [
+      "test/workspace_flow_test.dart"
+    ]
   }
 ]

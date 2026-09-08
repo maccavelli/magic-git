@@ -7,9 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:remote_magic_git/core/git/git_service.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/core/storage/connection_store.dart';
-import 'package:remote_magic_git/core/storage/local_repo_store.dart';
 import 'package:remote_magic_git/core/storage/saved_connection.dart';
-import 'package:remote_magic_git/core/storage/saved_local_repo.dart';
 import 'package:remote_magic_git/features/workspace/workspace_registration.dart';
 
 import 'helpers/mock_executor.dart';
@@ -63,33 +61,6 @@ class _FakeConnection extends ConnectionController {
   void setRepoPath(String path) {
     recordedSetRepoPath = path;
     _state = _state.copyWith(repoPath: path);
-  }
-}
-
-/// A connect that never lands — the phase stays disconnected, exactly what a
-/// bad path / dead transport produces.
-class _FailingConnection extends _FakeConnection {
-  _FailingConnection()
-    : super(const ConnectionState(phase: ConnectionPhase.disconnected));
-
-  @override
-  Future<void> connectLocal(
-    String repoPath, {
-    String? label,
-    String? id,
-    String? mainRepoPath,
-    String? gitDir,
-  }) async {
-    recordedConnectLocalRepoPath = repoPath;
-  }
-}
-
-class _FakeLocalRepoStore extends LocalRepoStore {
-  SavedLocalRepo? saved;
-
-  @override
-  Future<void> save(SavedLocalRepo repo) async {
-    saved = repo;
   }
 }
 
@@ -172,117 +143,12 @@ void main() {
         .setMockMethodCallHandler(_bookmarkChannel, null);
   });
 
-  group('registerAndActivateLocal', () {
-    testWidgets('save:false calls connectLocal without persisting', (
-      tester,
-    ) async {
-      final conn = _FakeConnection();
-      final localStore = _FakeLocalRepoStore();
-      final container = ProviderContainer(
-        overrides: [
-          connectionProvider.overrideWith(() => conn),
-          localRepoStoreProvider.overrideWithValue(localStore),
-          savedLocalReposProvider.overrideWith((ref) async => const []),
-        ],
-      );
-      addTearDown(container.dispose);
-
-      await _pumpWork(
-        tester,
-        container,
-        (ref) => registerAndActivateLocal(ref, dest: _dest, save: false),
-      );
-
-      expect(conn.recordedConnectLocalRepoPath, _dest);
-      expect(conn.recordedConnectLocalId, isNull);
-      expect(localStore.saved, isNull);
-    });
-
-    // 0009 H19: a connect that never lands must report false — the sheets
-    // used to flash the green Complete state regardless.
-    testWidgets('a failed connect reports false and persists nothing', (
-      tester,
-    ) async {
-      final conn = _FailingConnection();
-      final localStore = _FakeLocalRepoStore();
-      final container = ProviderContainer(
-        overrides: [
-          connectionProvider.overrideWith(() => conn),
-          localRepoStoreProvider.overrideWithValue(localStore),
-          savedLocalReposProvider.overrideWith((ref) async => const []),
-        ],
-      );
-      addTearDown(container.dispose);
-
-      bool? result;
-      await _pumpWork(tester, container, (ref) async {
-        result = await registerAndActivateLocal(ref, dest: _dest, save: true);
-      });
-
-      expect(result, isFalse);
-      expect(conn.recordedConnectLocalRepoPath, _dest);
-      expect(localStore.saved, isNull);
-    });
-
-    testWidgets('save:true persists SavedLocalRepo with bookmark data', (
-      tester,
-    ) async {
-      final conn = _FakeConnection();
-      final localStore = _FakeLocalRepoStore();
-      final container = ProviderContainer(
-        overrides: [
-          connectionProvider.overrideWith(() => conn),
-          localRepoStoreProvider.overrideWithValue(localStore),
-          savedLocalReposProvider.overrideWith((ref) async => const []),
-        ],
-      );
-      addTearDown(container.dispose);
-
-      await _pumpWork(
-        tester,
-        container,
-        (ref) => registerAndActivateLocal(
-          ref,
-          dest: _dest,
-          save: true,
-          label: 'my project',
-        ),
-      );
-
-      expect(conn.recordedConnectLocalRepoPath, _dest);
-      expect(conn.recordedConnectLocalId, isNotEmpty);
-      expect(conn.recordedConnectLocalLabel, 'my project');
-      final saved = localStore.saved;
-      expect(saved, isNotNull);
-      expect(saved!.id, conn.recordedConnectLocalId);
-      expect(saved.repoPath, _dest);
-      expect(saved.label, 'my project');
-      // Under test SecurityScopedBookmark.create returns null → bookmarkData ''
-      expect(saved.bookmarkData, '');
-    });
-
-    testWidgets('save:true with empty label passes null to connectLocal', (
-      tester,
-    ) async {
-      final conn = _FakeConnection();
-      final container = ProviderContainer(
-        overrides: [
-          connectionProvider.overrideWith(() => conn),
-          localRepoStoreProvider.overrideWithValue(_FakeLocalRepoStore()),
-          savedLocalReposProvider.overrideWith((ref) async => const []),
-        ],
-      );
-      addTearDown(container.dispose);
-
-      await _pumpWork(
-        tester,
-        container,
-        (ref) => registerAndActivateLocal(ref, dest: _dest, save: true),
-      );
-
-      expect(conn.recordedConnectLocalLabel, isNull);
-    });
-  });
+  // The `registerAndActivateLocal` group moved to `workspace_flow_test.dart`
+  // when the function took a ProviderContainer instead of a WidgetRef
+  // (MADR 0038 Phase 3). It is a port, not a copy: the four tests there need no
+  // pumped widget at all. This file keeps only what has no counterpart yet —
+  // the `registerAndActivateSshActive` group, which ports in Phase 4 with the
+  // capability it specifies, and is what still gates deleting this file.
 
   group('registerAndActivateSshActive', () {
     const savedConn = SavedConnection(

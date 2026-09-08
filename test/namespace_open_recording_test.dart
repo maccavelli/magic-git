@@ -12,6 +12,7 @@
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:remote_magic_git/core/exec/local_command_executor.dart';
 import 'package:remote_magic_git/core/forge/forge.dart';
 import 'package:remote_magic_git/core/forge/namespace_history.dart';
 import 'package:remote_magic_git/core/git/git_service.dart';
@@ -20,6 +21,7 @@ import 'package:remote_magic_git/core/providers/provider_retry_policy.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 import 'package:remote_magic_git/core/storage/connection_store.dart';
+import 'package:remote_magic_git/core/storage/recent_repos_store.dart';
 import 'package:remote_magic_git/core/storage/saved_connection.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -80,6 +82,65 @@ class _OriginGit extends GitService {
   Future<String?> originUrl(String repoPath, {String remote = 'origin'}) async {
     calls++;
     return _urls[repoPath];
+  }
+
+  // The real `connectLocal` validates before it records; a local open in these
+  // tests is about the recording, not about git.
+  @override
+  Future<void> validateRepoPath(String repoPath) async {}
+
+  @override
+  Future<RepoLayout?> validateLocalRepoRoot(String repoPath) async => null;
+}
+
+/// Records the per-repo MRU writes without touching SharedPreferences.
+class _RecordingRecents extends RecentReposStore {
+  final List<String> records = [];
+
+  @override
+  Future<void> record({
+    required bool isLocal,
+    required String id,
+    required String repoPath,
+    DateTime? when,
+  }) async => records.add(repoPath);
+
+  @override
+  Future<List<RecentRepoRef>> list() async => const [];
+}
+
+/// The This-Mac executor a local session's creatable lookup goes through:
+/// `ConnectionController._activeExecutor` switches on the backend, so a local
+/// open reads `localExecutorProvider`, not `executorProvider`.
+class _LocalForgeExecutor extends LocalCommandExecutor {
+  _LocalForgeExecutor() {
+    // Non-empty so the environment guard treats it as already probed.
+    configureEnvironment(path: '/usr/bin', binaries: const {});
+  }
+
+  @override
+  Future<SSHCommandResult> execute({
+    required String repoPath,
+    required List<String> gitArgs,
+    Map<String, String>? extraEnv,
+    String? stdin,
+    Duration timeout = SSHCommandExecutor.defaultTimeout,
+    int retries = 0,
+    ExecLane lane = ExecLane.exclusive,
+    bool compress = false,
+    Duration? activityIdle,
+    OperationDescriptor? operation,
+    OperationEventCallback? onOperationEvent,
+    CommandOutputCallback? onOutput,
+  }) async {
+    final joined = gitArgs.join(' ');
+    if (joined.contains('api') && joined.contains('user')) {
+      return _ForgeExecutor._headers('{"username":"me"}');
+    }
+    if (joined.contains('groups')) {
+      return _ForgeExecutor._headers('[{"full_path":"team/subgroup"}]');
+    }
+    return const SSHCommandResult(exitCode: 0, stdout: '', stderr: '');
   }
 }
 
@@ -237,6 +298,50 @@ void main() {
     await open(c, '/srv/app');
     expect(store.updated, isEmpty);
   });
+
+  // MADR 0038 F9.2 — an UNSAVED local open has no id, so nothing goes into the
+  // per-repo MRU. The namespace is a different matter: it was being dropped
+  // only because it shared a guard with the MRU write.
+  test(
+    'an unsaved local open records its namespace but no MRU entry',
+    () async {
+      SharedPreferences.setMockInitialValues({});
+      final store = _FakeStore();
+      final recents = _RecordingRecents();
+      final c = ProviderContainer(
+        retry: noProviderRetry,
+        overrides: [
+          gitServiceProvider.overrideWithValue(
+            _OriginGit({
+              '/Users/me/app': 'https://gitlab.example/team/subgroup/app.git',
+            }),
+          ),
+          localExecutorProvider.overrideWithValue(_LocalForgeExecutor()),
+          connectionStoreProvider.overrideWithValue(store),
+          recentReposStoreProvider.overrideWithValue(recents),
+          savedConnectionsProvider.overrideWith((ref) async => const []),
+        ],
+      );
+      addTearDown(c.dispose);
+
+      // `id: null` is what an unsaved local create/clone/open passes.
+      await c
+          .read(connectionProvider.notifier)
+          .connectLocal('/Users/me/app', label: 'App');
+      for (var i = 0; i < 8; i++) {
+        await Future<void>.delayed(Duration.zero);
+      }
+
+      expect(recents.records, isEmpty, reason: 'nothing to reopen from');
+      expect(
+        await NamespaceHistory(
+          store,
+        ).recent(forge: Forge.gitlab, host: 'gitlab.example'),
+        ['team/subgroup'],
+        reason: 'a This-Mac history goes to the prefs store, not a connection',
+      );
+    },
+  );
 
   test('a throwing store does not fail the open', () async {
     final c = build(

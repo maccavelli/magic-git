@@ -11,12 +11,17 @@
 // Everything here runs with no `pumpWidget`. That is the point: these are
 // invariants of the lifecycle, not of any sheet.
 
+import 'package:flutter/services.dart' show MethodChannel;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:remote_magic_git/core/local/scoped_access.dart';
+import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/core/providers/provider_retry_policy.dart';
+import 'package:remote_magic_git/core/storage/local_repo_store.dart';
+import 'package:remote_magic_git/core/storage/saved_local_repo.dart';
 import 'package:remote_magic_git/features/tabs/tabs_controller.dart';
 import 'package:remote_magic_git/features/workspace/workspace_flow.dart';
+import 'package:remote_magic_git/features/workspace/workspace_registration.dart';
 import 'package:riverpod/misc.dart' show Override;
 
 /// A tabs controller whose tabs are cheap containers, and which records the
@@ -48,6 +53,71 @@ class _Tabs extends TabsController {
   }
 }
 
+/// Records what a local open asked of the session. Ported from
+/// `workspace_registration_test.dart`, where the same fake was driven through a
+/// pumped `_RefHarness` widget to obtain a `WidgetRef`; the function now takes
+/// a [ProviderContainer], so no widget is needed at all.
+class _FakeConnection extends ConnectionController {
+  _FakeConnection([ConnectionState? state])
+    : _state =
+          state ??
+          const ConnectionState(
+            phase: ConnectionPhase.connected,
+            repoPath: '/',
+            connectionId: 'conn-1',
+          );
+
+  ConnectionState _state;
+  String? recordedConnectLocalRepoPath;
+  String? recordedConnectLocalLabel;
+  String? recordedConnectLocalId;
+
+  @override
+  ConnectionState build() => _state;
+
+  @override
+  Future<void> connectLocal(
+    String repoPath, {
+    String? label,
+    String? id,
+    String? mainRepoPath,
+    String? gitDir,
+  }) async {
+    recordedConnectLocalRepoPath = repoPath;
+    recordedConnectLocalLabel = label;
+    recordedConnectLocalId = id;
+    _state = _state.copyWith(
+      phase: ConnectionPhase.connected,
+      repoPath: repoPath,
+    );
+  }
+}
+
+/// A connect that never lands — the phase stays disconnected, exactly what a
+/// bad path or a dead transport produces.
+class _FailingConnection extends _FakeConnection {
+  _FailingConnection()
+    : super(const ConnectionState(phase: ConnectionPhase.disconnected));
+
+  @override
+  Future<void> connectLocal(
+    String repoPath, {
+    String? label,
+    String? id,
+    String? mainRepoPath,
+    String? gitDir,
+  }) async {
+    recordedConnectLocalRepoPath = repoPath;
+  }
+}
+
+class _FakeLocalRepoStore extends LocalRepoStore {
+  SavedLocalRepo? saved;
+
+  @override
+  Future<void> save(SavedLocalRepo repo) async => saved = repo;
+}
+
 /// Counts native start/stop so a grant leak is visible.
 class _Grants {
   final List<String> acquired = [];
@@ -62,6 +132,11 @@ class _Grants {
 }
 
 void main() {
+  // No `testWidgets` in this file — that is the point — so nothing else
+  // initializes the binding, and the mock method-channel handler the ported
+  // tests install needs one.
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   late ProviderContainer origin;
   late _Tabs tabs;
 
@@ -290,6 +365,171 @@ void main() {
         expect(home.id, isNot(f.tab?.id));
       },
     );
+  });
+
+  group('placing the result (MADR 0038 F3/F8)', () {
+    test(
+      'a local result opens in the captured container, not the active tab',
+      () async {
+        // F3 in its observable form. The sheets used to reach `openResult`'s
+        // local branches through a `WidgetRef`, which re-resolves to whichever
+        // tab is active (`tabs_host.dart:500-505`) — so clicking another tab
+        // during a clone connected the finished repository into THAT tab.
+        final mine = _FakeConnection();
+        final theirs = _FakeConnection();
+        final own = ProviderContainer(
+          retry: noProviderRetry,
+          overrides: [connectionProvider.overrideWith(() => mine)],
+        );
+        addTearDown(own.dispose);
+
+        final other = _Tabs();
+        addTearDown(other.dispose);
+        final elsewhere = other.newTab()
+          ..connectionId = 'other'
+          ..repoPath = '/srv/other';
+        elsewhere.container.read(connectionProvider.notifier);
+        other.activate(elsewhere.id);
+
+        final f = WorkspaceFlow(origin: own, tabsOverride: other);
+
+        final ok = await f.openResult(
+          const WorkspaceOpenRequest(
+            dest: '/Users/me/app',
+            isLocalTarget: true,
+            saveLocal: false,
+            localLabel: 'App',
+          ),
+        );
+
+        expect(ok, isTrue);
+        expect(mine.recordedConnectLocalRepoPath, '/Users/me/app');
+        expect(
+          theirs.recordedConnectLocalRepoPath,
+          isNull,
+          reason: 'the active tab is not where the result belongs',
+        );
+      },
+    );
+
+    test('an SSH result with no connection or token reports false', () async {
+      final f = flow();
+      expect(
+        await f.openResult(
+          const WorkspaceOpenRequest(
+            dest: '/srv/app',
+            isLocalTarget: false,
+            saveLocal: false,
+          ),
+        ),
+        isFalse,
+        reason: 'a silent true here flashes green Complete (0009 H19)',
+      );
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Ported from `workspace_registration_test.dart` (MADR 0038, maintainer's
+  // decision 2026-09-08). The function moved from a `WidgetRef` to a
+  // `ProviderContainer` in this phase (F3), so these no longer need a pumped
+  // `_RefHarness` widget to obtain a ref — which is the whole point of the
+  // port, not an incidental tidy.
+  //
+  // NOTE, recorded not acted on: `registerAndActivateLocal`'s single
+  // production caller (`WorkspaceFlow.openResult`) always passes
+  // `save: false`, and did so before this refactor too — a saved local result
+  // goes through `saveLocalRepo` + `openLocalRepoInTab` instead. The
+  // `save: true` branch below is therefore unreachable in production today.
+  // Pre-existing, adjacent to MADR 0038 F6, and out of scope here.
+  // -------------------------------------------------------------------------
+  group('registerAndActivateLocal', () {
+    const bookmarks = MethodChannel('magicgit/bookmarks');
+    const dest = '/Users/test/my-repo';
+
+    setUp(() {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(bookmarks, (call) async => null);
+    });
+    tearDown(() {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(bookmarks, null);
+    });
+
+    ({
+      ProviderContainer container,
+      _FakeConnection conn,
+      _FakeLocalRepoStore store,
+    })
+    build({bool failing = false}) {
+      final conn = failing ? _FailingConnection() : _FakeConnection();
+      final store = _FakeLocalRepoStore();
+      final c = ProviderContainer(
+        retry: noProviderRetry,
+        overrides: [
+          connectionProvider.overrideWith(() => conn),
+          localRepoStoreProvider.overrideWithValue(store),
+          savedLocalReposProvider.overrideWith((ref) async => const []),
+        ],
+      );
+      addTearDown(c.dispose);
+      return (container: c, conn: conn, store: store);
+    }
+
+    test('save:false calls connectLocal without persisting', () async {
+      final h = build();
+
+      await registerAndActivateLocal(h.container, dest: dest, save: false);
+
+      expect(h.conn.recordedConnectLocalRepoPath, dest);
+      expect(h.conn.recordedConnectLocalId, isNull);
+      expect(h.store.saved, isNull);
+    });
+
+    // 0009 H19: a connect that never lands must report false — the sheets used
+    // to flash the green Complete state regardless.
+    test('a failed connect reports false and persists nothing', () async {
+      final h = build(failing: true);
+
+      final result = await registerAndActivateLocal(
+        h.container,
+        dest: dest,
+        save: true,
+      );
+
+      expect(result, isFalse);
+      expect(h.conn.recordedConnectLocalRepoPath, dest);
+      expect(h.store.saved, isNull);
+    });
+
+    test('save:true persists SavedLocalRepo with bookmark data', () async {
+      final h = build();
+
+      await registerAndActivateLocal(
+        h.container,
+        dest: dest,
+        label: 'My Repo',
+        save: true,
+      );
+
+      expect(h.conn.recordedConnectLocalId, isNotNull);
+      expect(h.store.saved, isNotNull);
+      expect(h.store.saved!.repoPath, dest);
+      expect(h.store.saved!.label, 'My Repo');
+      expect(
+        h.store.saved!.id,
+        h.conn.recordedConnectLocalId,
+        reason: 'the session id must match the persisted record',
+      );
+    });
+
+    test('save:true with empty label passes null to connectLocal', () async {
+      final h = build();
+
+      await registerAndActivateLocal(h.container, dest: dest, save: true);
+
+      expect(h.conn.recordedConnectLocalLabel, isNull);
+      expect(h.store.saved!.label, '');
+    });
   });
 
   group('the grant registry', () {

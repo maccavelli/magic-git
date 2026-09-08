@@ -9,8 +9,13 @@ import '../../core/local/security_scoped_bookmark.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/storage/saved_connection.dart';
 import '../../core/storage/saved_local_repo.dart';
-import 'workspace_targets.dart';
 
+/// **Takes a [ProviderContainer], not a `WidgetRef`.** A `WidgetRef` in a sheet
+/// re-resolves to whichever tab is active (`tabs_host.dart:500-505`), so a tab
+/// switch during a create or clone would connect the finished repository into
+/// the wrong tab's session — MADR 0038 F3. The caller is `WorkspaceFlow`, which
+/// holds a container captured once and cannot drift.
+///
 /// Opens [dest] as the active local session and (optionally) saves it to
 /// Local Repositories with a security-scoped bookmark — the same sequence as
 /// `AddExistingRepoSheet._openLocal`, minus the validation that `connectLocal`
@@ -21,7 +26,7 @@ import 'workspace_targets.dart';
 /// used to let the sheets flash green Complete while the user was still on
 /// the previous workspace (0009 H19). Save failures stay warnings (true).
 Future<bool> registerAndActivateLocal(
-  WidgetRef ref, {
+  ProviderContainer ref, {
   required String dest,
   String label = '',
   required bool save,
@@ -46,7 +51,7 @@ Future<bool> registerAndActivateLocal(
 /// live, which it is for the whole sheet. Unsigned builds return null from the
 /// bookmark call → stored as '' (the local repo form's degraded path).
 Future<SavedLocalRepo?> saveLocalRepo(
-  WidgetRef ref, {
+  ProviderContainer ref, {
   required String id,
   required String dest,
   String label = '',
@@ -116,56 +121,4 @@ Future<bool> registerAndActivateSshActive(
   if (!ref.read(connectionProvider).isConnected) return false;
   ref.read(connectionProvider.notifier).setRepoPath(dest);
   return true;
-}
-
-/// The whole registration matrix in one place: dispatches [dest] to the right
-/// activation for [target], and reports whether it actually became the live
-/// workspace.
-///
-/// This `switch` was itself duplicated byte-for-byte in both sheets — the
-/// shared functions above had one implementation while the code choosing
-/// between them had two (MADR 0033). Everything the branches need is passed
-/// in, so the function has no opinion about which sheet is calling: [connection]
-/// resolves the chosen saved connection (the sheets get it from
-/// `WorkspaceProvisioning.connectionById`), and [provisionToken] is that
-/// mixin's adopted-session token.
-Future<bool> registerAndActivate(
-  WidgetRef ref, {
-  required WorkspaceTarget target,
-  required String dest,
-  required String localLabel,
-  required bool saveLocal,
-  required String remoteLabel,
-  required bool fsmonitor,
-  required Future<SavedConnection?> Function() connection,
-  required int? provisionToken,
-}) async {
-  switch (target) {
-    case WorkspaceTarget.localMac:
-      return registerAndActivateLocal(
-        ref,
-        dest: dest,
-        label: localLabel,
-        save: saveLocal,
-      );
-    case WorkspaceTarget.sshActive:
-      return registerAndActivateSshActive(
-        ref,
-        dest: dest,
-        fsmonitor: fsmonitor,
-        label: remoteLabel,
-      );
-    case WorkspaceTarget.sshProvision:
-      final conn = await connection();
-      if (conn == null || provisionToken == null) return false;
-      return ref
-          .read(connectionProvider.notifier)
-          .finalizeProvisioned(
-            token: provisionToken,
-            conn: conn,
-            repoPath: dest,
-            enableFsmonitor: fsmonitor,
-            label: remoteLabel,
-          );
-  }
 }
