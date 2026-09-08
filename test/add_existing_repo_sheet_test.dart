@@ -237,6 +237,32 @@ void main() {
   // tab routing. It already offered every saved host; what it lacked were this
   // record's decisions, and it carried the third hand-rolled copy of the dial.
   // -------------------------------------------------------------------------
+  testWidgets('Open stays on screen at the smallest window the app allows', (
+    tester,
+  ) async {
+    // It used to sit INSIDE the scroll view, so on a short window it — and the
+    // caption naming why it is disabled (0009 L18) — scrolled off the bottom,
+    // where a tap dispatches to nothing at all, silently. The app's floor is
+    // WindowBoundsStore.minWidth/minHeight = 640x480; at that size Open was
+    // ~180 px past the edge. Create and clone pin their action row; this
+    // sheet now does too.
+    for (final size in [
+      const Size(640, 480),
+      const Size(800, 600),
+      const Size(1280, 800),
+    ]) {
+      await tester.binding.setSurfaceSize(size);
+      await _pump(tester, initialPickedPath: '/Users/me/repo');
+      final rect = tester.getRect(_openButton());
+      expect(
+        rect.bottom,
+        lessThanOrEqualTo(size.height),
+        reason: 'Open must be visible at $size without scrolling',
+      );
+    }
+    await tester.binding.setSurfaceSize(null);
+  });
+
   group('opening lands in its own tab (MADR 0036 Phase 7)', () {
     testWidgets('choosing a host does not dial (6B)', (tester) async {
       final stub = StubConnection(const ConnectionState());
@@ -325,11 +351,8 @@ void main() {
       // Turn "Save to Local Repositories" off.
       await tester.tap(_switchNear('Save repository'));
       await tester.pumpAndSettle();
-      // The sheet is taller than the default surface and Open sits below the
-      // fold, where a tap dispatches to nothing at all — silently, which is
-      // why this read as "the code did not run" rather than a miss.
-      await tester.ensureVisible(_openButton());
-      await tester.pumpAndSettle();
+      // No ensureVisible: the action row is pinned below the scroll area now,
+      // so Open is on screen at every window size the app permits.
       await tester.tap(_openButton());
       await tester.pumpAndSettle();
 

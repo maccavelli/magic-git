@@ -745,178 +745,191 @@ class _AddExistingRepoSheetState extends ConsumerState<AddExistingRepoSheet>
 
     return SizedSheet(
       width: kSheetWidth,
-      // Scroll when the content exceeds the sheet's max height (SizedSheet caps
-      // it near the window height) — the location list + scoped-repo git-dir
-      // field can push a short window over. Mirrors the SSH form's body.
-      child: SingleChildScrollView(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      'Add Existing Repository',
-                      style: typography.title2,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+      // Content scrolls; **Open does not**. The button used to sit inside the
+      // scroll view, so on any window shorter than ~810 px it — and the
+      // caption naming why it is disabled (0009 L18) — scrolled off the
+      // bottom. The app's floor is 640x480, so at the smallest permitted
+      // window it was ~180 px past the edge. Create and clone pin their
+      // action row the same way; this sheet was the one that did not.
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Flexible(
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            'Add Existing Repository',
+                            style: typography.title2,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        ToolIconButton(
+                          icon: CupertinoIcons.xmark,
+                          tooltip: 'Close',
+                          size: 16,
+                          // Popping disposes this State, which aborts any connection
+                          // dialed only to browse (see [dispose]).
+                          onPressed: () => Navigator.of(context).pop(),
+                        ),
+                      ],
                     ),
-                  ),
-                  ToolIconButton(
-                    icon: CupertinoIcons.xmark,
-                    tooltip: 'Close',
-                    size: 16,
-                    // Popping disposes this State, which aborts any connection
-                    // dialed only to browse (see [dispose]).
-                    onPressed: () => Navigator.of(context).pop(),
-                  ),
-                ],
-              ),
-              const SheetDescription(
-                'Adds a Git repository that already exists — on this Mac or on '
-                'a saved SSH host — and makes it the active workspace. Nothing '
-                'is copied or changed.',
-              ),
-              const SizedBox(height: 16),
-              Text('Location', style: typography.caption1),
-              const SizedBox(height: 4),
-              MacosPopupButton<String?>(
-                value: _connectionId,
-                // Disabled while a host is still dialing: switching mid-dial
-                // otherwise adopts the in-flight session under the newly
-                // selected connection. The post-await guard in
-                // [ensureProvisioned] is the backstop; this removes the race
-                // at the UI level so it can't be triggered at all.
-                onChanged: (_submitting || provisioning)
-                    ? null
-                    : _onLocationChanged,
-                items: [
-                  const MacosPopupMenuItem<String?>(
-                    value: null,
-                    child: Text('Local (this Mac)'),
-                  ),
-                  for (final c in conns)
-                    MacosPopupMenuItem<String?>(
-                      value: c.id,
-                      child: Text(c.displayName),
+                    const SheetDescription(
+                      'Adds a Git repository that already exists — on this Mac or on '
+                      'a saved SSH host — and makes it the active workspace. Nothing '
+                      'is copied or changed.',
                     ),
-                ],
-              ),
-              FieldHint(
-                _isLocal
-                    ? 'The repository already exists on this Mac\'s own '
-                          'filesystem.'
-                    : 'The repository already exists on the selected SSH host — '
-                          'browse its filesystem to pick it.',
-              ),
-              if (provisioning)
-                Padding(
-                  padding: const EdgeInsets.only(top: 6),
-                  child: Row(
-                    children: [
-                      const SizedBox(
-                        width: 12,
-                        height: 12,
-                        child: ProgressCircle(radius: 6),
-                      ),
-                      const SizedBox(width: 8),
-                      Text('Connecting…', style: typography.caption1),
-                    ],
-                  ),
-                ),
-              const SizedBox(height: 16),
-              Text('Folder', style: typography.caption1),
-              const SizedBox(height: 4),
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 10,
-                        vertical: 8,
-                      ),
-                      decoration: BoxDecoration(
-                        border: Border.all(color: MacosColors.separatorColor),
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                      child: Text(
-                        _pickedPath ?? 'No folder chosen',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: typography.body.copyWith(
-                          color: _pickedPath == null
-                              ? MacosColors.systemGrayColor
-                              : null,
+                    const SizedBox(height: 16),
+                    Text('Location', style: typography.caption1),
+                    const SizedBox(height: 4),
+                    MacosPopupButton<String?>(
+                      value: _connectionId,
+                      // Disabled while a host is still dialing: switching mid-dial
+                      // otherwise adopts the in-flight session under the newly
+                      // selected connection. The post-await guard in
+                      // [ensureProvisioned] is the backstop; this removes the race
+                      // at the UI level so it can't be triggered at all.
+                      onChanged: (_submitting || provisioning)
+                          ? null
+                          : _onLocationChanged,
+                      items: [
+                        const MacosPopupMenuItem<String?>(
+                          value: null,
+                          child: Text('Local (this Mac)'),
+                        ),
+                        for (final c in conns)
+                          MacosPopupMenuItem<String?>(
+                            value: c.id,
+                            child: Text(c.displayName),
+                          ),
+                      ],
+                    ),
+                    FieldHint(
+                      _isLocal
+                          ? 'The repository already exists on this Mac\'s own '
+                                'filesystem.'
+                          : 'The repository already exists on the selected SSH host — '
+                                'browse its filesystem to pick it.',
+                    ),
+                    if (provisioning)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 6),
+                        child: Row(
+                          children: [
+                            const SizedBox(
+                              width: 12,
+                              height: 12,
+                              child: ProgressCircle(radius: 6),
+                            ),
+                            const SizedBox(width: 8),
+                            Text('Connecting…', style: typography.caption1),
+                          ],
                         ),
                       ),
+                    const SizedBox(height: 16),
+                    Text('Folder', style: typography.caption1),
+                    const SizedBox(height: 4),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 8,
+                            ),
+                            decoration: BoxDecoration(
+                              border: Border.all(
+                                color: MacosColors.separatorColor,
+                              ),
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: Text(
+                              _pickedPath ?? 'No folder chosen',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: typography.body.copyWith(
+                                color: _pickedPath == null
+                                    ? MacosColors.systemGrayColor
+                                    : null,
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        AppPushButton(
+                          controlSize: ControlSize.regular,
+                          secondary: true,
+                          onPressed: (_picking || (!_isLocal && provisioning))
+                              ? null
+                              : (_isLocal ? _pickFolder : _browseRemote),
+                          child: Text(_isLocal ? 'Choose…' : 'Browse…'),
+                        ),
+                      ],
                     ),
-                  ),
-                  const SizedBox(width: 8),
-                  AppPushButton(
-                    controlSize: ControlSize.regular,
-                    secondary: true,
-                    onPressed: (_picking || (!_isLocal && provisioning))
-                        ? null
-                        : (_isLocal ? _pickFolder : _browseRemote),
-                    child: Text(_isLocal ? 'Choose…' : 'Browse…'),
-                  ),
-                ],
-              ),
-              FieldHint(
-                _isLocal
-                    ? 'Pick the repository\'s root folder (the one containing '
-                          '.git).'
-                    : 'Browse the host and pick the repository\'s root folder '
-                          '(the one containing .git).',
-              ),
-              const SizedBox(height: 16),
-              if (_isLocal)
-                ..._localOptions(typography)
-              else
-                ..._remoteOptions(typography),
-              const SizedBox(height: 20),
-              if (localConnecting)
-                const Center(child: ProgressCircle())
-              else ...[
-                AppPushButton(
-                  controlSize: ControlSize.large,
-                  onPressed: _canSubmit ? _submit : null,
-                  child: const Text('Open'),
-                ),
-                if (_firstInvalidCaption != null) ...[
-                  const SizedBox(height: 8),
-                  Text(
-                    _firstInvalidCaption!,
-                    style: typography.caption1.copyWith(
-                      color: MacosColors.systemGrayColor,
+                    FieldHint(
+                      _isLocal
+                          ? 'Pick the repository\'s root folder (the one containing '
+                                '.git).'
+                          : 'Browse the host and pick the repository\'s root folder '
+                                '(the one containing .git).',
                     ),
-                  ),
-                ],
-              ],
-              if (_saveWarning != null) ...[
-                const SizedBox(height: 12),
-                Text(
-                  _saveWarning!,
-                  style: typography.body.copyWith(
-                    color: MacosColors.systemOrangeColor,
-                  ),
+                    const SizedBox(height: 16),
+                    if (_isLocal)
+                      ..._localOptions(typography)
+                    else
+                      ..._remoteOptions(typography),
+                  ],
                 ),
-              ],
-              if (phase == ConnectionPhase.error && error != null) ...[
-                const SizedBox(height: 16),
+              ),
+            ),
+            const SizedBox(height: 20),
+            if (localConnecting)
+              const Center(child: ProgressCircle())
+            else ...[
+              AppPushButton(
+                controlSize: ControlSize.large,
+                onPressed: _canSubmit ? _submit : null,
+                child: const Text('Open'),
+              ),
+              if (_firstInvalidCaption != null) ...[
+                const SizedBox(height: 8),
                 Text(
-                  error,
-                  style: typography.body.copyWith(
-                    color: MacosColors.systemRedColor,
+                  _firstInvalidCaption!,
+                  style: typography.caption1.copyWith(
+                    color: MacosColors.systemGrayColor,
                   ),
                 ),
               ],
             ],
-          ),
+            if (_saveWarning != null) ...[
+              const SizedBox(height: 12),
+              Text(
+                _saveWarning!,
+                style: typography.body.copyWith(
+                  color: MacosColors.systemOrangeColor,
+                ),
+              ),
+            ],
+            if (phase == ConnectionPhase.error && error != null) ...[
+              const SizedBox(height: 16),
+              Text(
+                error,
+                style: typography.body.copyWith(
+                  color: MacosColors.systemRedColor,
+                ),
+              ),
+            ],
+          ],
         ),
       ),
     );

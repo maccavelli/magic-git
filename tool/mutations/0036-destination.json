@@ -259,5 +259,14 @@
     "tests": [
       "test/add_existing_repo_sheet_test.dart"
     ]
+  },
+  {
+    "label": "phase7: the content area no longer shrinks, pushing Open off screen",
+    "file": "lib/features/connection/local_repo_form.dart",
+    "find": "            Flexible(\n              child: SingleChildScrollView(",
+    "replace": "            SizedBox(\n              height: 2000,\n              child: SingleChildScrollView(",
+    "tests": [
+      "test/add_existing_repo_sheet_test.dart"
+    ]
   }
 ]

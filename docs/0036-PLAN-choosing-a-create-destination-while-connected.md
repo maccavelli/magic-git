@@ -970,13 +970,35 @@ had hit this: they submit via Enter, or tap `Browse…`, which is higher up.
   not at an assertion. Rewritten to route the unsaved case to a tab, which
   compiles; it now fails *"an unsaved local open stays in this tab (5B)"*.
 
+**A real UI defect the tap failure exposed, fixed here.** `Open` sat **inside**
+the `SingleChildScrollView`, so on a short window it — and
+`_firstInvalidCaption`, the 0009 L18 caption whose whole job is explaining why
+Open is disabled — scrolled off the bottom. The app's floor is
+`WindowBoundsStore.minWidth/minHeight` = **640x480**, where Open was ~180 px
+past the edge; it only became visible above ~810 px of window height. **Create
+and clone both pin their action row outside the scroll view**; this sheet was
+the only one that did not — the same "third sheet does it differently" shape
+as the provisioning copy. Now content in a `Flexible` scroll area with the
+action row pinned below: measured **454/480**, **526/600**, **626/800**. The
+`ensureVisible` the old layout forced into the test is gone.
+
+**Two mutations were discarded for passing on their own merits.**
+`Flexible` → `Expanded` survived (both keep the button outside the scroll
+view), and uncapping `SizedSheet`'s height survived (the parent's constraint
+already wins). Neither reproduced anything, so neither was kept — a check that
+cannot fail is worse than no check. The one that ships makes the content area
+a fixed 2000 px box, pushing the action row out; verified in a scratch
+worktree that **the new regression test itself** catches it
+(`Expected: ≤ 480.0, Actual: 2072.0`), not merely that some older test does.
+
 **Verification:**
 
 ```
 flutter analyze (whole project)   No issues found!
 dart format                       0 changed
-flutter test (full suite)         03:22 +3731 ~3: All tests passed!
-tool/mutate.py (29 mutations)     29 killed, 0 survived, 0 did not apply
+flutter test (full suite)         03:22 +3732 ~3: All tests passed!
+tool/mutate.py (30 mutations)     30 killed, 0 survived, 0 did not apply
+Open visible at 640x480           454/480 (was ~180 px off screen)
 ```
 
 **Acceptance.** The Phase 4 table holds for this sheet: no dial on selection;
