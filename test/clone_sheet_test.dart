@@ -18,6 +18,9 @@ import 'package:remote_magic_git/core/storage/saved_connection.dart';
 import 'package:remote_magic_git/features/common/buttons.dart';
 import 'package:remote_magic_git/features/workspace/clone_sheet.dart';
 
+import 'helpers/create_repo_harness.dart'
+    show RecordingTabs, installTabs, destinationPopup;
+
 class _FakeHandle implements SSHStreamHandle {
   final _stdout = StreamController<String>.broadcast();
   final _stderr = StreamController<String>.broadcast();
@@ -383,6 +386,35 @@ void main() {
       isTrue,
       reason: 'a namespace never cloned from is not a namespace used',
     );
+  });
+
+  // -------------------------------------------------------------------------
+  // MADR 0036 Phase 2 — today's connected behaviour, pinned (clone).
+  // Phase 5 inverts the first two on purpose and must say so.
+  // -------------------------------------------------------------------------
+  testWidgets('pinned: a connected SSH clone lands in the current tab', (
+    tester,
+  ) async {
+    final tabs = RecordingTabs();
+    installTabs(tabs);
+    final (stub, exec, _) = await _pumpConnected(tester);
+    await _toReviewViaUrl(tester, 'https://example.com/my-repo.git');
+    exec.results.add(_ok('absent')); // probe
+    await tester.tap(_cloneButton());
+    await tester.pump();
+    await tester.pump();
+    await exec.handle.finish(0);
+    await tester.pumpAndSettle();
+
+    expect(stub.repoPathsSet, ['/srv/my-repo'], reason: 'this tab');
+    expect(tabs.opened, isEmpty, reason: 'no tab was opened');
+  });
+
+  testWidgets('pinned: a connected clone sheet shows no Destination step', (
+    tester,
+  ) async {
+    await _pumpConnected(tester);
+    expect(destinationPopup(), findsNothing);
   });
 
   testWidgets('a failed clone keeps the sheet open with the error', (

@@ -1426,6 +1426,76 @@ void main() {
   );
 
   // -------------------------------------------------------------------------
+  // MADR 0036 Phase 2 — today's connected behaviour, pinned.
+  //
+  // These pass against unedited `lib/`. Phase 3 changes two of them ON
+  // PURPOSE (the SSH create will open its own tab; the Destination step will
+  // appear) and must say so in the test when it does.
+  // -------------------------------------------------------------------------
+  group("connected: today's behaviour, pinned (MADR 0036 Phase 2)", () {
+    testWidgets(
+      'a connected SSH create runs on the current session and switches '
+      'the current tab',
+      (tester) async {
+        final tabs = RecordingTabs();
+        installTabs(tabs);
+        final (stub, exec, _) = await pumpConnected(tester);
+        await nextStep(tester); // Source
+        await nextStep(tester); // Remote (None)
+        await tester.enterText(nameField(), 'new-proj');
+        await tester.pumpAndSettle();
+        await nextStep(tester); // Details → Review
+
+        exec.results.add(okResult('absent')); // probe
+        await tester.tap(createButton());
+        await tester.pumpAndSettle();
+
+        expect(stub.repoPathsSet, ['/srv/new-proj'], reason: 'this tab');
+        expect(tabs.opened, isEmpty, reason: 'no tab was opened');
+        expect(tabs.connectRan, 0);
+      },
+    );
+
+    testWidgets('a connected local create opens in the current tab', (
+      tester,
+    ) async {
+      final tabs = RecordingTabs();
+      installTabs(tabs);
+      installFolderPicker('/Users/me/projects');
+      final (stub, exec, _) = await pumpConnectedLocal(tester);
+
+      await tester.tap(chooseFolderButton()); // Source: parent folder
+      await tester.pumpAndSettle();
+      await nextStep(tester); // Source → Remote
+      await nextStep(tester); // Remote (None) → Details
+      await tester.enterText(nameField(), 'new-proj');
+      await tester.pumpAndSettle();
+      await nextStep(tester); // Details → Review
+
+      exec.respond = localCreateOk;
+      // pumpCreate, not tap+settle: the Review step's long local path
+      // overflows the test surface's row chrome, and the helper drains that
+      // non-fatal layout exception the way every other create test does.
+      await pumpCreate(tester);
+
+      expect(
+        exec.calls.map((c) => c.join(' ')),
+        containsAllInOrder(['git init -b main -- new-proj']),
+        reason: 'ran on the LOCAL executor',
+      );
+      expect(stub.localConnects, [
+        '/Users/me/projects/new-proj',
+      ], reason: 'opened in place, in this tab');
+      expect(tabs.opened, isEmpty, reason: 'no tab was opened');
+    });
+
+    testWidgets('a connected sheet shows no Destination step', (tester) async {
+      await pumpConnected(tester);
+      expect(destinationPopup(), findsNothing);
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // MADR 0036 Phase 1 — a create on a chosen saved host, end to end.
   //
   // Before this group, the only landing-mode tests dialled (1339) or guarded

@@ -11,17 +11,25 @@
 
 import 'dart:async';
 import 'dart:convert';
+import 'package:file_selector_platform_interface/file_selector_platform_interface.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
+import 'package:plugin_platform_interface/plugin_platform_interface.dart';
+import 'package:remote_magic_git/core/exec/local_command_executor.dart';
 import 'package:remote_magic_git/core/git/git_service.dart';
+import 'package:remote_magic_git/core/local/scoped_access.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
+import 'package:remote_magic_git/core/providers/provider_retry_policy.dart';
 import 'package:remote_magic_git/core/settings/app_settings.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 import 'package:remote_magic_git/core/storage/connection_store.dart';
 import 'package:remote_magic_git/core/storage/saved_connection.dart';
+import 'package:remote_magic_git/core/storage/saved_workspace_set.dart';
 import 'package:remote_magic_git/features/common/buttons.dart';
+import 'package:remote_magic_git/features/tabs/tabs_controller.dart';
 import 'package:remote_magic_git/features/workspace/create_repo_sheet.dart';
 import 'package:riverpod/misc.dart' show Override;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -89,11 +97,27 @@ class StubConnection extends ConnectionController {
   final ConnectionState _state;
   final List<String> repoPathsSet = [];
 
+  /// Paths a local create asked this session to open in place
+  /// (`registerAndActivateLocal` → `connectLocal`). Recorded, never run: the
+  /// real controller would validate with real git.
+  final List<String> localConnects = [];
+
   @override
   ConnectionState build() => _state;
 
   @override
   void setRepoPath(String path) => repoPathsSet.add(path);
+
+  @override
+  Future<void> connectLocal(
+    String repoPath, {
+    String? label,
+    String? id,
+    String? mainRepoPath,
+    String? gitDir,
+  }) async {
+    localConnects.add(repoPath);
+  }
 }
 
 class FakeConnectionStore extends ConnectionStore {
@@ -375,3 +399,240 @@ Future<void> chooseDestination(WidgetTester tester, String displayName) async {
 Finder parentField() => find.byWidgetPredicate(
   (w) => w is MacosTextField && w.placeholder == '/srv/git',
 );
+
+// ---------------------------------------------------------------------------
+// MADR 0036 Phase 2 — doubles for "which tab did this land in".
+// ---------------------------------------------------------------------------
+
+/// A [LocalCommandExecutor] that answers from a queue, like
+/// [FakeCreateExecutor] does for SSH. `localExecutorProvider` is typed to the
+/// concrete class, so the SSH fake cannot stand in for it.
+class FakeLocalExecutor extends LocalCommandExecutor {
+  final List<List<String>> calls = [];
+  final List<SSHCommandResult> results = [];
+
+  /// Answers by REQUEST, taking precedence over [results]. On the local path
+  /// the environment probe (`localEnvironmentProvider.ensure()`) runs through
+  /// this executor *before* the create's own existence probe, so a positional
+  /// queue hands the probe's answer to the wrong command — the same lesson
+  /// [FakeCreateExecutor.respond] records for the SSH fake.
+  SSHCommandResult? Function(List<String> args)? respond;
+
+  @override
+  Future<SSHCommandResult> execute({
+    required String repoPath,
+    required List<String> gitArgs,
+    Map<String, String>? extraEnv,
+    String? stdin,
+    Duration timeout = SSHCommandExecutor.defaultTimeout,
+    int retries = 0,
+    ExecLane lane = ExecLane.exclusive,
+    bool compress = false,
+    Duration? activityIdle,
+    OperationDescriptor? operation,
+    OperationEventCallback? onOperationEvent,
+    CommandOutputCallback? onOutput,
+  }) async {
+    calls.add(gitArgs);
+    final routed = respond?.call(gitArgs);
+    if (routed != null) return routed;
+    return results.isNotEmpty
+        ? results.removeAt(0)
+        : const SSHCommandResult(exitCode: 0, stdout: '', stderr: '');
+  }
+}
+
+/// Answers the create's existence probe with "absent" and everything else
+/// (the environment probe, `git init`, …) with success — the router a local
+/// create test wants unless it is testing a failure.
+SSHCommandResult? localCreateOk(List<String> args) =>
+    args.join(' ').contains('if test -e') ? okResult('absent') : null;
+
+/// A [TabsController] that records instead of dialling. Every tab it opens
+/// gets a real, empty container, so code that reads providers from "the
+/// target tab" has somewhere to read from; `connect` callbacks are counted,
+/// not run against a host. [capReached] mirrors the real cap's behaviour
+/// exactly: `openOrFocus` returns the active tab and never runs `connect`
+/// (`tabs_controller.dart:289-292`).
+class RecordingTabs extends TabsController {
+  RecordingTabs()
+    : super(
+        containerFactory: (overrides) =>
+            ProviderContainer(retry: noProviderRetry, overrides: overrides),
+      );
+
+  final List<({String? connectionId, String? repoPath})> opened = [];
+  final List<String> closed = [];
+  int connectRan = 0;
+  bool capReached = false;
+
+  @override
+  bool get canOpenTab => !capReached;
+
+  @override
+  RepoTab openOrFocus({
+    String? connectionId,
+    String? repoPath,
+    SavedRepositoryKind? savedKind,
+    String? savedReferencePath,
+    List<Override> overrides = const [],
+    required void Function(ProviderContainer container) connect,
+  }) {
+    if (capReached) return active ?? ensureInitialTab();
+    opened.add((connectionId: connectionId, repoPath: repoPath));
+    return super.openOrFocus(
+      connectionId: connectionId,
+      repoPath: repoPath,
+      savedKind: savedKind,
+      savedReferencePath: savedReferencePath,
+      overrides: overrides,
+      connect: (container) {
+        connectRan++;
+        connect(container);
+      },
+    );
+  }
+
+  @override
+  RepoTab newTab() {
+    final tab = super.newTab();
+    opened.add((connectionId: null, repoPath: null));
+    return tab;
+  }
+
+  @override
+  Future<void> close(String id) async {
+    closed.add(id);
+    await super.close(id);
+  }
+}
+
+/// Installs [tabs] as the controller sheets reach through
+/// `TabsController.current`, and undoes it when the test ends — the same
+/// pair `tabs_host.dart:126` / `:166-167` performs.
+void installTabs(RecordingTabs tabs) {
+  TabsController.current = tabs;
+  addTearDown(() {
+    if (identical(TabsController.current, tabs)) TabsController.current = null;
+    tabs.dispose();
+  });
+}
+
+/// A [ScopedAccess] whose acquire/release are counted. A grant acquired for a
+/// session that never started leaks for the app's lifetime; here it is a
+/// failing assertion instead. Every bookmark resolves to [resolvedPath].
+class CountingScopedAccess {
+  CountingScopedAccess({this.resolvedPath = '/resolved'});
+
+  final String resolvedPath;
+  final List<String> acquired = [];
+  final List<String> released = [];
+
+  late final ScopedAccess access = ScopedAccess(
+    startAccessing: (bookmark) async {
+      acquired.add(bookmark);
+      return resolvedPath;
+    },
+    stopAccessing: (path) async {
+      released.add(path);
+    },
+  );
+}
+
+/// The native folder panel, answered from a test. `pickLocalDirectory()` goes
+/// through `file_selector`, whose platform instance is swappable — the
+/// standard way to drive a picker under `flutter test`.
+class FakeFolderPicker extends FileSelectorPlatform
+    with MockPlatformInterfaceMixin {
+  FakeFolderPicker(this.path);
+
+  /// What the panel "chooses"; null is a cancel.
+  String? path;
+  int shown = 0;
+
+  @override
+  Future<String?> getDirectoryPathWithOptions(FileDialogOptions options) async {
+    shown++;
+    return path;
+  }
+
+  @override
+  Future<String?> getDirectoryPath({
+    String? initialDirectory,
+    String? confirmButtonText,
+  }) async {
+    shown++;
+    return path;
+  }
+}
+
+/// Makes the next folder panel answer [path], restoring the real platform
+/// when the test ends.
+FakeFolderPicker installFolderPicker(String? path) {
+  final previous = FileSelectorPlatform.instance;
+  final fake = FakeFolderPicker(path);
+  FileSelectorPlatform.instance = fake;
+  addTearDown(() => FileSelectorPlatform.instance = previous);
+  return fake;
+}
+
+/// The "Choose…" button of the local parent-folder row (Source step).
+Finder chooseFolderButton() => find.widgetWithText(AppPushButton, 'Choose…');
+
+/// A **local** session — the twin of [pumpConnected], whose session is SSH.
+/// The local executor is [FakeLocalExecutor], which also keeps
+/// `localEnvironmentProvider.ensure()` from probing a real shell.
+Future<(StubConnection, FakeLocalExecutor, FakeConnectionStore)>
+pumpConnectedLocal(
+  WidgetTester tester, {
+  List<Override> extraOverrides = const [],
+}) async {
+  SharedPreferences.setMockInitialValues({});
+  // `registerAndActivateLocal` bookmarks the new folder through the
+  // `magicgit/bookmarks` channel. A platform channel with no handler never
+  // settles under `testWidgets` (its reply needs `runAsync`) — the same
+  // mechanism that hung `SharedPreferences` in MADR 0032 — so `_submit` would
+  // spin forever at the bookmark step. Answer it the way a signed build does.
+  const bookmarks = MethodChannel('magicgit/bookmarks');
+  TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+      .setMockMethodCallHandler(
+        bookmarks,
+        (call) async => 'bookmark:${call.arguments}',
+      );
+  addTearDown(
+    () => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(bookmarks, null),
+  );
+  await tester.binding.setSurfaceSize(const Size(1200, 900));
+  final stub = StubConnection(
+    const ConnectionState(
+      phase: ConnectionPhase.connected,
+      backend: ConnectionBackend.local,
+      repoPath: '/Users/me/repo',
+      repoPaths: ['/Users/me/repo'],
+      connectionId: 'l1',
+      connectionLabel: 'Mine',
+    ),
+  );
+  final exec = FakeLocalExecutor();
+  final store = FakeConnectionStore();
+  await tester.pumpWidget(
+    appProviderScope(
+      overrides: [
+        connectionProvider.overrideWith(() => stub),
+        localExecutorProvider.overrideWithValue(exec),
+        activeExecutorProvider.overrideWithValue(FakeCreateExecutor()),
+        connectionStoreProvider.overrideWithValue(store),
+        savedConnectionsProvider.overrideWith((ref) async => [testConn]),
+        gitServiceProvider.overrideWithValue(GitService(FakeCreateExecutor())),
+        ...extraOverrides,
+      ],
+      child: const MacosApp(
+        debugShowCheckedModeBanner: false,
+        home: CreateRepositorySheet.connected(),
+      ),
+    ),
+  );
+  await tester.pumpAndSettle();
+  return (stub, exec, store);
+}

@@ -550,6 +550,69 @@ expect=9330 testWidgets=1044
 > `_submit` branch, which Phase 4 changes, would ship unverified end to end).
 > **Scope added to Phase 2:** `pubspec.yaml`, `pubspec.lock`.
 
+### Phase 2 — 2026-09-08 — *complete*
+
+**Tests only; `git diff --cached --stat -- lib/` empty at commit.** Plus the
+two dev dependencies Deviation 1 approved, both pinned to their locked
+versions so `--enforce-lockfile` stays satisfied — the lock diff is exactly
+two lines, `transitive` → `direct dev`: `file_selector_platform_interface`
+2.7.0 and `plugin_platform_interface` 2.1.8 (the second supplies
+`MockPlatformInterfaceMixin`, without which a fake platform cannot be
+installed; same class of change, recorded here rather than re-prompted).
+
+**Doubles, in `test/helpers/create_repo_harness.dart`:** `RecordingTabs`
+(records opens/closes, counts `connect`, mirrors the cap's silent no-op),
+`installTabs`, `CountingScopedAccess`, `FakeFolderPicker` + `installFolderPicker`
+(via `FileSelectorPlatform.instance`), `FakeLocalExecutor` with a request
+router, `localCreateOk`, `chooseFolderButton`, `pumpConnectedLocal`.
+`StubConnection` gained a recording `connectLocal` so a local create never
+runs the real controller.
+
+**Pins.** Create: *a connected SSH create runs on the current session and
+switches the current tab*; *a connected local create opens in the current
+tab*; *a connected sheet shows no Destination step*. Clone: the SSH and
+no-Destination-step twins. All pass against unedited `lib/`. Phase 3 and 5
+invert the SSH and Destination pins **on purpose** and must say so in the
+test.
+
+**Deliberately not written: the clone local pin.** A local clone runs its
+job through a *streaming* local executor (`exec.handle.finish(0)` in the
+clone tests), which `FakeLocalExecutor` does not model. Building a streaming
+local double for a pin that Phase 5 would invert anyway is deferred to Phase
+5, where clone's local routing is actually touched. Named here so it is not
+mistaken for coverage.
+
+**Three fixture facts, each learned by a failing run:**
+
+* **On the local path the environment probe runs first.** `localEnvironmentProvider.ensure()`
+  goes through the local executor *before* the create's existence probe, so
+  a positional queue hands `absent` to the wrong command and the create stops
+  before `git init`. `FakeLocalExecutor` got a request router (`respond`) —
+  the same lesson `FakeCreateExecutor` learned in MADR 0032.
+* **`SecurityScopedBookmark.create` never settles under `testWidgets`.** A
+  platform channel with no handler does not throw here; it hangs (the reply
+  needs `runAsync`) — the same mechanism that hung `SharedPreferences` in
+  MADR 0032. The footer's `Creating…` spinner then animates forever and
+  `pumpAndSettle` times out. `pumpConnectedLocal` answers the
+  `magicgit/bookmarks` channel, as `add_existing_repo_sheet_test.dart:80`
+  does for its own channel.
+* **`exec.calls.last` is not the init on the local path** — the router's
+  trailing calls follow it. Asserted as `containsAllInOrder` on joined argv,
+  the form the file's identity test already uses; no weaker.
+
+**Sabotage.** These are baselines, not new contracts: their "seen to fail"
+is Phase 3 inverting them, which is the point of pinning them first.
+
+**Verification:**
+
+```
+flutter analyze (3 files)         No issues found!
+dart format                       0 changed
+flutter test (full suite)         03:39 +3715 ~3: All tests passed!
+expect=9316 -> 9340   testWidgets=1041 -> 1049
+git diff --cached --stat -- lib/  (empty)
+```
+
 ## Rollout and Rollback
 
 **Rollout.** Six commits: Phase 1, Phase 2, **Phases 3+4 together**, Phase 5,
