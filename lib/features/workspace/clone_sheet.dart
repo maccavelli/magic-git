@@ -225,11 +225,16 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet>
       // Mac: the wizard silently pointed at the Mac while the user worked on a
       // host (MADR 0038 F2).
       final conn = ref.read(connectionProvider);
-      _dest = conn.isLocal
-          ? const LocalMacDestination()
-          : (conn.connectionId == null
-                ? const ActiveSessionDestination()
-                : SavedConnectionDestination(conn.connectionId!));
+      _dest = switch (conn) {
+        // `isConnected` is load-bearing, not defensive: a DISCONNECTED session
+        // still reports the default `ssh` backend, so testing `isLocal` alone
+        // seeded ActiveSession for a sheet with no session at all — and the
+        // Target control only offers that row while one is live, so
+        // `MacosPopupButton` asserted on a value with no item.
+        _ when !conn.isConnected || conn.isLocal => const LocalMacDestination(),
+        _ when conn.connectionId == null => const ActiveSessionDestination(),
+        _ => SavedConnectionDestination(conn.connectionId!),
+      };
     }
     _recomputeTarget();
   }

@@ -23,15 +23,19 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
+import 'package:remote_magic_git/core/storage/local_repo_store.dart';
 import 'package:remote_magic_git/core/storage/saved_connection.dart';
+import 'package:remote_magic_git/core/storage/saved_local_repo.dart';
 import 'package:remote_magic_git/features/common/buttons.dart';
 import 'package:remote_magic_git/features/connection/local_repo_form.dart';
+import 'package:remote_magic_git/features/workspace/workspace_targets.dart';
 
 import 'helpers/create_repo_harness.dart'
     show
         CountingScopedAccess,
         RecordingTabs,
         StubConnection,
+        connectedState,
         installTabs,
         testConn;
 
@@ -48,13 +52,17 @@ Future<void> _pump(
   WidgetTester tester, {
   String? initialPickedPath,
   List<SavedConnection> connections = const [],
+  List<SavedLocalRepo> localRepos = const [],
+  LocalRepoStore? localStore,
   StubConnection? connection,
 }) async {
   await tester.pumpWidget(
     ProviderScope(
       overrides: [
         savedConnectionsProvider.overrideWith((ref) async => connections),
-        savedLocalReposProvider.overrideWith((ref) async => const []),
+        savedLocalReposProvider.overrideWith((ref) async => localRepos),
+        if (localStore != null)
+          localRepoStoreProvider.overrideWithValue(localStore),
         if (connection != null)
           connectionProvider.overrideWith(() => connection),
       ],
@@ -67,7 +75,136 @@ Future<void> _pump(
   await tester.pumpAndSettle();
 }
 
+/// Records what the sheet persists, so a duplicate save is visible.
+class _RecordingLocalStore extends LocalRepoStore {
+  final List<SavedLocalRepo> saved = [];
+
+  @override
+  Future<void> save(SavedLocalRepo repo) async => saved.add(repo);
+}
+
 void main() {
+  // MADR 0038 F5 — opening one folder twice must not produce two of
+  // everything. `LocalRepoStore.save` de-duplicates by id alone, and this
+  // sheet minted a fresh id every time, so the same path became two saved
+  // records, two recents slots and two tabs.
+  testWidgets('re-opening a saved folder reuses its record, not a new one', (
+    tester,
+  ) async {
+    // `_persistLocal` mints a security-scoped bookmark before it saves, and an
+    // unhandled method channel throws MissingPluginException — the save would
+    // never be reached and the assertion would pass for the wrong reason.
+    const bookmarks = MethodChannel('magicgit/bookmarks');
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      bookmarks,
+      (call) async => 'Ym0=',
+    );
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        bookmarks,
+        null,
+      ),
+    );
+    final store = _RecordingLocalStore();
+    const already = SavedLocalRepo(
+      id: 'already-saved',
+      label: 'App',
+      repoPath: '/Users/me/app',
+      bookmarkData: 'bm',
+    );
+    await _pump(
+      tester,
+      initialPickedPath: '/Users/me/app',
+      localRepos: const [already],
+      localStore: store,
+      // Without a session the in-place open reports "not connected" and never
+      // reaches the save at all — the assertion would pass on an empty store
+      // for the wrong reason.
+      connection: StubConnection(
+        const ConnectionState(
+          phase: ConnectionPhase.connected,
+          backend: ConnectionBackend.local,
+          repoPath: '/Users/me/app',
+        ),
+      ),
+    );
+
+    await tester.tap(find.widgetWithText(AppPushButton, 'Open'));
+    await tester.pumpAndSettle();
+
+    expect(store.saved, hasLength(1));
+    expect(
+      store.saved.single.id,
+      'already-saved',
+      reason: 'the same folder keeps one identity, as SSH profiles do',
+    );
+  });
+
+  // MADR 0038 F4 — the sheet opens on the location the user is in. It always
+  // opened on This Mac, so a user connected to a host re-picked it every time,
+  // even though MADR 0036 decision 2A had already been applied to both wizards.
+  group('it opens on the location the user is in (MADR 0038 F4)', () {
+    testWidgets('a saved SSH session seeds that connection', (tester) async {
+      await _pump(
+        tester,
+        connections: const [
+          SavedConnection(
+            id: 'c1',
+            label: 'Prod',
+            host: 'h',
+            port: 22,
+            username: 'u',
+            repoPath: '/srv/repo',
+            repoPaths: ['/srv/repo'],
+          ),
+        ],
+        connection: StubConnection(connectedState()),
+      );
+
+      expect(
+        tester
+            .widget<MacosPopupButton<WorkspaceDestination>>(
+              find.byType(MacosPopupButton<WorkspaceDestination>),
+            )
+            .value,
+        const SavedConnectionDestination('c1'),
+      );
+    });
+
+    // MADR 0038 F2 in this sheet, per deviation 2: an ad-hoc session has no id
+    // to seed from, and treating that as This Mac is the same defect the
+    // wizards had.
+    testWidgets('an ad-hoc SSH session seeds itself', (tester) async {
+      await _pump(
+        tester,
+        connection: StubConnection(connectedState(adHoc: true)),
+      );
+
+      expect(
+        tester
+            .widget<MacosPopupButton<WorkspaceDestination>>(
+              find.byType(MacosPopupButton<WorkspaceDestination>),
+            )
+            .value,
+        const ActiveSessionDestination(),
+      );
+    });
+
+    testWidgets('no session at all stays on This Mac', (tester) async {
+      // A disconnected session still reports the default `ssh` backend, so
+      // this is not the same assertion as "a local session seeds This Mac".
+      await _pump(tester);
+
+      expect(
+        tester
+            .widget<MacosPopupButton<WorkspaceDestination>>(
+              find.byType(MacosPopupButton<WorkspaceDestination>),
+            )
+            .value,
+        const LocalMacDestination(),
+      );
+    });
+  });
   // 0009 L18: a dimmed Open names the first missing field, and Enter on
   // the label field is wired to submit.
   testWidgets('Open names the first invalid field and submits on Enter', (
@@ -270,7 +407,7 @@ void main() {
       installTabs(tabs);
       await _pump(tester, connections: [testConn], connection: stub);
 
-      await tester.tap(find.byType(MacosPopupButton<String?>));
+      await tester.tap(find.byType(MacosPopupButton<WorkspaceDestination>));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Prod').last);
       await tester.pumpAndSettle();
@@ -290,7 +427,7 @@ void main() {
       final tabs = RecordingTabs();
       installTabs(tabs);
       await _pump(tester, connections: [testConn], connection: stub);
-      await tester.tap(find.byType(MacosPopupButton<String?>));
+      await tester.tap(find.byType(MacosPopupButton<WorkspaceDestination>));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Prod').last);
       await tester.pumpAndSettle();

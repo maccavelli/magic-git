@@ -22,6 +22,7 @@ import '../workspace/remote_directory_browser.dart';
 import '../workspace/workspace_flow.dart';
 import '../workspace/workspace_open_in_tab.dart';
 import '../workspace/workspace_provisioning.dart';
+import '../workspace/workspace_targets.dart';
 
 /// The sandbox grants needed to open one local repo.
 ///
@@ -224,7 +225,15 @@ class _AddExistingRepoSheetState extends ConsumerState<AddExistingRepoSheet>
   final _gitDir = TextEditingController();
 
   /// Location: null = this Mac (local), else a saved SSH connection's id.
-  String? _connectionId;
+  /// What the Location control points at (MADR 0038 F2/F4). Three states, not
+  /// a nullable id: an **ad-hoc** SSH session has no saved id to name, and
+  /// treating that as This Mac is what made this sheet always open on the Mac.
+  WorkspaceDestination _dest = const LocalMacDestination();
+
+  String? get _connectionId => switch (_dest) {
+    SavedConnectionDestination(:final id) => id,
+    _ => null,
+  };
 
   late String? _pickedPath = widget.initialPickedPath;
   bool _save = true;
@@ -255,8 +264,10 @@ class _AddExistingRepoSheetState extends ConsumerState<AddExistingRepoSheet>
   @override
   String? get destConnectionId => _connectionId;
 
+  /// Only a **saved** connection is dialled: This Mac needs no session, and
+  /// the session this tab already holds needs no second one.
   @override
-  bool get needsProvisioning => !_isLocal;
+  bool get needsProvisioning => _dest is SavedConnectionDestination;
 
   @override
   void onProvisioningError(String? message) {
@@ -264,7 +275,12 @@ class _AddExistingRepoSheetState extends ConsumerState<AddExistingRepoSheet>
     setState(() => _saveWarning = message);
   }
 
-  bool get _isLocal => _connectionId == null;
+  bool get _isLocal => _dest is LocalMacDestination;
+
+  /// The repository lives on the session this tab already holds — no dial, no
+  /// tab, and nothing to persist when that session was never saved
+  /// (MADR 0038 F2).
+  bool get _isActiveSession => _dest is ActiveSessionDestination;
 
   @override
   void initState() {
@@ -275,6 +291,18 @@ class _AddExistingRepoSheetState extends ConsumerState<AddExistingRepoSheet>
       origin: ProviderScope.containerOf(context, listen: false),
       accessOverride: AddExistingRepoSheet.scopedAccess,
     );
+    // Open on the location the user is in (MADR 0036, 2A), which this sheet
+    // never did — it always opened on This Mac, so a user connected to a host
+    // had to re-pick it every time (MADR 0038 F4).
+    final conn = ref.read(connectionProvider);
+    _dest = switch (conn) {
+      // See the wizards' twin: a disconnected session still reports the `ssh`
+      // backend, so `isConnected` is what keeps a session-less sheet on This
+      // Mac rather than seeding a row the control does not offer.
+      _ when !conn.isConnected || conn.isLocal => const LocalMacDestination(),
+      _ when conn.connectionId == null => const ActiveSessionDestination(),
+      _ => SavedConnectionDestination(conn.connectionId!),
+    };
   }
 
   @override
@@ -313,18 +341,20 @@ class _AddExistingRepoSheetState extends ConsumerState<AddExistingRepoSheet>
   /// Whether this open ends by opening a tab (MADR 0036, 3B). The exception is
   /// an unsaved local open: with no bookmark to reopen from it opens in place,
   /// as it always did (decision 5B).
-  bool get _opensNewTab => !_isLocal || _save;
+  /// An open onto the session this tab already holds opens no new tab, so the
+  /// cap must not refuse it (MADR 0038 F2).
+  bool get _opensNewTab => !_isActiveSession && (!_isLocal || _save);
 
   bool get _refusedAtTabCap => _flow.refusedAtTabCap(opensNewTab: _opensNewTab);
 
-  Future<void> _onLocationChanged(String? id) async {
-    if (id == _connectionId || _submitting) return;
+  Future<void> _onLocationChanged(WorkspaceDestination dest) async {
+    if (dest == _dest || _submitting) return;
     // Switching location abandons any in-flight provisioning, and a path picked
     // on one host is meaningless on another.
     await _abandonProvisionTab();
     if (!mounted) return;
     setState(() {
-      _connectionId = id;
+      _dest = dest;
       _pickedPath = null;
       _saveWarning = null;
       // Scope state is per-host: a git-dir detected (or typed) for one
@@ -362,11 +392,15 @@ class _AddExistingRepoSheetState extends ConsumerState<AddExistingRepoSheet>
     if (_picking) return;
     setState(() => _picking = true);
     try {
-      if (!await _flow.ensureTab()) {
-        setState(() => _saveWarning = AddExistingRepoSheet.capMessage);
-        return;
+      // The session this tab already holds needs neither a tab nor a dial —
+      // browsing runs straight against it (MADR 0038 F2).
+      if (!_isActiveSession) {
+        if (!await _flow.ensureTab()) {
+          setState(() => _saveWarning = AddExistingRepoSheet.capMessage);
+          return;
+        }
+        if (!await ensureProvisioned() || !mounted) return;
       }
-      if (!await ensureProvisioned() || !mounted) return;
       final picked = await showMacosSheet<String>(
         context: context,
         builder: (_) => EscapeDismissible(
@@ -467,8 +501,57 @@ class _AddExistingRepoSheetState extends ConsumerState<AddExistingRepoSheet>
     if (!_canSubmit) return;
     if (_isLocal) {
       _openLocal();
+    } else if (_isActiveSession) {
+      _openOnActiveSession();
     } else {
       _openRemote();
+    }
+  }
+
+  /// Opens the picked folder on the session this tab **already holds**.
+  ///
+  /// No dial, no new tab, and — when that session was never saved — nothing
+  /// persisted: the repository simply becomes the live one. The contract is
+  /// `WorkspaceFlow._placeOnActiveSession`, ported in Phase 4 from the
+  /// registration branch MADR 0036 orphaned (MADR 0038 F2/F6).
+  Future<void> _openOnActiveSession() async {
+    final path = _pickedPath;
+    if (path == null || _submitting) return;
+    setState(() {
+      _submitting = true;
+      _saveWarning = null;
+    });
+    try {
+      final ok = await _flow.openResult(
+        WorkspaceOpenRequest(
+          dest: path,
+          isLocalTarget: false,
+          activeSession: true,
+          saveLocal: false,
+          remoteLabel: _label.text.trim(),
+          fsmonitor: _fsmonitor,
+        ),
+      );
+      if (!mounted) return;
+      if (!ok) {
+        setState(
+          () => _saveWarning =
+              'The session is no longer connected — reconnect and try again.',
+        );
+        return;
+      }
+      final nav = Navigator.of(context);
+      if (nav.canPop()) nav.pop();
+    } catch (e) {
+      if (mounted) {
+        setState(
+          () => _saveWarning =
+              "Couldn't open this folder as a repository on the host — make "
+              'sure it contains a Git repository. ($e)',
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _submitting = false);
     }
   }
 
@@ -536,6 +619,19 @@ class _AddExistingRepoSheetState extends ConsumerState<AddExistingRepoSheet>
     }
   }
 
+  /// The id of a saved local repo already pointing at [path], or null.
+  ///
+  /// Best-effort: an unreadable store means "not saved", which mints a fresh
+  /// id — the pre-MADR-0038 behaviour, and never worse than it.
+  Future<String?> _existingLocalRepoIdFor(String path) async {
+    try {
+      for (final r in await ref.read(savedLocalReposProvider.future)) {
+        if (r.repoPath == path) return r.id;
+      }
+    } catch (_) {}
+    return null;
+  }
+
   Future<void> _openLocal() async {
     final path = _pickedPath;
     if (path == null || _submitting) return;
@@ -545,7 +641,25 @@ class _AddExistingRepoSheetState extends ConsumerState<AddExistingRepoSheet>
       // `SavedLocalRepo.id` persisted below — otherwise the just-opened
       // session wouldn't read as "active" against its own freshly-saved entry
       // in the switcher panel.
-      final id = DateTime.now().microsecondsSinceEpoch.toString();
+      //
+      // **Reused when this folder is already saved** (MADR 0038 F5).
+      // `LocalRepoStore.save` de-duplicates by id alone
+      // (`local_repo_store.dart:61-64`), so a fresh id for a folder already in
+      // the list produced a SECOND record for one path — two rows in Local
+      // Repositories, two of the 30 recents slots, and a second tab, because
+      // `TabsController._find` matches on (connectionId, repoPath) together
+      // and the new id never matched. `connection_form.dart:182-194` has
+      // solved the same problem for SSH profiles all along, by host+user.
+      //
+      // Reused at the SHEET, not in the store: two records for one path is a
+      // legitimate state for a caller that means it, and collapsing them
+      // inside `save` would silently change `updateMetadata` too.
+      final id =
+          await _existingLocalRepoIdFor(path) ??
+          DateTime.now().microsecondsSinceEpoch.toString();
+      // The lookup above is the sheet's first await on this path, so `context`
+      // below now crosses an async gap that did not exist before.
+      if (!mounted) return;
       final label = _label.text.trim();
       final gitDir = _scoped ? _gitDir.text.trim() : '';
       // The picked folder may be a linked worktree, whose git data lives in the
@@ -710,7 +824,7 @@ class _AddExistingRepoSheetState extends ConsumerState<AddExistingRepoSheet>
     if (_pickedPath == null || _submitting) return false;
     if (_scoped && _gitDir.text.trim().isEmpty) return false;
     if (_refusedAtTabCap) return false;
-    if (_isLocal) return true;
+    if (_isLocal || _isActiveSession) return true;
     return !provisioning && provisionToken != null;
   }
 
@@ -734,6 +848,7 @@ class _AddExistingRepoSheetState extends ConsumerState<AddExistingRepoSheet>
       connectionProvider.select((c) => (c.phase, c.error)),
     );
     final conns = ref.watch(savedConnectionsProvider).value ?? const [];
+    final session = ref.watch(connectionProvider);
     final typography = MacosTheme.of(context).typography;
     // Only the local open drives a `connecting` phase we should replace the
     // button with a spinner for. A provisioned remote session also sits at
@@ -789,8 +904,8 @@ class _AddExistingRepoSheetState extends ConsumerState<AddExistingRepoSheet>
                     const SizedBox(height: 16),
                     Text('Location', style: typography.caption1),
                     const SizedBox(height: 4),
-                    MacosPopupButton<String?>(
-                      value: _connectionId,
+                    MacosPopupButton<WorkspaceDestination>(
+                      value: _dest,
                       // Disabled while a host is still dialing: switching mid-dial
                       // otherwise adopts the in-flight session under the newly
                       // selected connection. The post-await guard in
@@ -798,16 +913,45 @@ class _AddExistingRepoSheetState extends ConsumerState<AddExistingRepoSheet>
                       // at the UI level so it can't be triggered at all.
                       onChanged: (_submitting || provisioning)
                           ? null
-                          : _onLocationChanged,
+                          : (v) => v == null ? null : _onLocationChanged(v),
                       items: [
-                        const MacosPopupMenuItem<String?>(
-                          value: null,
+                        const MacosPopupMenuItem<WorkspaceDestination>(
+                          value: LocalMacDestination(),
                           child: Text('Local (this Mac)'),
                         ),
+                        // Only for an **ad-hoc** session: a saved one is
+                        // already in the list below by id, and two rows for
+                        // one host is two ways to say one thing.
+                        if (session.isConnected &&
+                            !session.isLocal &&
+                            session.connectionId == null)
+                          MacosPopupMenuItem<WorkspaceDestination>(
+                            value: const ActiveSessionDestination(),
+                            child: Text(
+                              session.host == null || session.host!.isEmpty
+                                  ? 'This session'
+                                  : '${session.host} (this session)',
+                            ),
+                          ),
                         for (final c in conns)
-                          MacosPopupMenuItem<String?>(
-                            value: c.id,
+                          MacosPopupMenuItem<WorkspaceDestination>(
+                            value: SavedConnectionDestination(c.id),
                             child: Text(c.displayName),
+                          ),
+                        // The seeded selection must exist from the FIRST frame:
+                        // `savedConnectionsProvider` is async, and
+                        // `MacosPopupButton` asserts its value is among its
+                        // items. The wizards' shared control has always carried
+                        // this row; this sheet needed it only once it started
+                        // seeding from the session (MADR 0038 F4).
+                        if (_dest case SavedConnectionDestination(
+                          :final id,
+                        ) when !conns.any((c) => c.id == id))
+                          MacosPopupMenuItem<WorkspaceDestination>(
+                            value: SavedConnectionDestination(id),
+                            child: Text(
+                              session.connectionLabel ?? 'Saved connection',
+                            ),
                           ),
                       ],
                     ),
@@ -815,6 +959,9 @@ class _AddExistingRepoSheetState extends ConsumerState<AddExistingRepoSheet>
                       _isLocal
                           ? 'The repository already exists on this Mac\'s own '
                                 'filesystem.'
+                          : _isActiveSession
+                          ? 'The repository already exists on the host this tab is '
+                                'connected to — browse its filesystem to pick it.'
                           : 'The repository already exists on the selected SSH host — '
                                 'browse its filesystem to pick it.',
                     ),

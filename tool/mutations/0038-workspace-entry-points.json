@@ -147,8 +147,8 @@
   {
     "label": "phase4: an ad-hoc session is treated as This Mac again",
     "file": "lib/features/workspace/create_repo_sheet.dart",
-    "find": "      _dest = conn.isLocal\n          ? const LocalMacDestination()\n          : (conn.connectionId == null\n                ? const ActiveSessionDestination()\n                : SavedConnectionDestination(conn.connectionId!));",
-    "replace": "      _dest = conn.isLocal || conn.connectionId == null\n          ? const LocalMacDestination()\n          : SavedConnectionDestination(conn.connectionId!);",
+    "find": "        _ when conn.connectionId == null => const ActiveSessionDestination(),",
+    "replace": "        _ when conn.connectionId == null => const LocalMacDestination(),",
     "tests": [
       "test/create_repo_sheet_test.dart"
     ]
@@ -188,6 +188,51 @@
     "replace": "    return true;",
     "tests": [
       "test/workspace_flow_test.dart"
+    ]
+  },
+  {
+    "label": "phase5: the add-existing sheet always opens on This Mac again",
+    "file": "lib/features/connection/local_repo_form.dart",
+    "find": "    _dest = switch (conn) {",
+    "replace": "    _dest = const LocalMacDestination();\n    if (false) _dest = switch (conn) {",
+    "tests": [
+      "test/add_existing_repo_sheet_test.dart"
+    ]
+  },
+  {
+    "label": "phase5: an ad-hoc session is seeded as This Mac",
+    "file": "lib/features/connection/local_repo_form.dart",
+    "find": "      _ when conn.connectionId == null => const ActiveSessionDestination(),",
+    "replace": "      _ when conn.connectionId == null => const LocalMacDestination(),",
+    "tests": [
+      "test/add_existing_repo_sheet_test.dart"
+    ]
+  },
+  {
+    "label": "phase5: a disconnected session seeds a live-only target",
+    "file": "lib/features/connection/local_repo_form.dart",
+    "find": "      _ when !conn.isConnected || conn.isLocal => const LocalMacDestination(),",
+    "replace": "      _ when conn.isLocal => const LocalMacDestination(),",
+    "tests": [
+      "test/add_existing_repo_sheet_test.dart"
+    ]
+  },
+  {
+    "label": "phase5: re-opening a saved folder mints a fresh id",
+    "file": "lib/features/connection/local_repo_form.dart",
+    "find": "          await _existingLocalRepoIdFor(path) ??\n          DateTime.now().microsecondsSinceEpoch.toString();",
+    "replace": "          DateTime.now().microsecondsSinceEpoch.toString();",
+    "tests": [
+      "test/add_existing_repo_sheet_test.dart"
+    ]
+  },
+  {
+    "label": "phase5: the unresolved-selection row is dropped from the popup",
+    "file": "lib/features/connection/local_repo_form.dart",
+    "find": "                        if (_dest case SavedConnectionDestination(\n                          :final id,\n                        ) when !conns.any((c) => c.id == id))",
+    "replace": "                        if (_dest case SavedConnectionDestination(\n                          :final id,\n                        ) when false)",
+    "tests": [
+      "test/add_existing_repo_sheet_test.dart"
     ]
   }
 ]

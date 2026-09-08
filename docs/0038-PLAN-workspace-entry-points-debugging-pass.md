@@ -820,6 +820,116 @@ expect=9527 testWidgets=1069
 F6 proof                          no `registerAndActivate*` outside the local pair
 ```
 
+
+#### Deviation 2 — 2026-09-08 — the add-existing sheet cannot seed a target it cannot open
+
+**Found while starting Phase 5.** F4's step says the sheet should seed from the
+live session "through the same helper both wizards use — the three-shape
+mapping from Phase 4, so an ad-hoc session seeds correctly here too". It
+cannot, as written: `_openRemote` resolves a `SavedConnection` and a
+provisioning token before it can finalize (`local_repo_form.dart:492-494`), and
+an ad-hoc session has neither. Seeding `ActiveSessionDestination` without an
+open path would leave `_canOpen` false forever
+(`local_repo_form.dart:725`) — a selection the user can make and nothing can
+service.
+
+**Decision — full ad-hoc support in this sheet too.** It seeds the third shape,
+browses on the session it already holds, and opens through
+`WorkspaceFlow.openResult(activeSession: true)` — the path Phase 4 built. All
+three entry points then honour the F2 decision the same way, and the machinery
+is already written.
+
+**Rejected — seeding only the two shapes it can service.** Smaller, and it
+would still fix the "always opens on This Mac" half of F4. But it leaves "open
+an existing repository on the unsaved host I am already on" with no route,
+which is F2 in the one sheet F2 was not originally reported against.
+
+**Scope added to Phase 5.** `_isLocal` (14 call sites) becomes a three-way
+target, and the sheet's own popup moves from `MacosPopupButton<String?>` to
+`MacosPopupButton<WorkspaceDestination>` as the wizards' did in Phase 4.
+### Phase 5 — 2026-09-08 — *complete*
+
+**F4 — the sheet opens on the location the user is in.** It never did: MADR
+0036 decision 2A had been applied to both wizards, and `AddExistingRepoSheet`
+had no `initState` at all, so a user connected to a host re-picked it every
+time.
+
+**F5 — one folder keeps one identity.** `_openLocal` now reuses the id of a
+saved local repo already pointing at the picked path. `LocalRepoStore.save`
+de-duplicates by id alone (`local_repo_store.dart:61-64`) and this sheet minted
+a fresh id every open, so the same folder became **two** saved records — two
+rows in Local Repositories, two of the 30 recents slots, and a second tab,
+because `TabsController._find` matches on (connectionId, repoPath) together and
+the new id never matched. Reused at the **sheet**, not in the store: two
+records for one path is a legitimate state for a caller that means it, and
+collapsing them inside `save` would silently change `updateMetadata` too.
+`connection_form.dart:182-194` has solved the same problem for SSH profiles all
+along.
+
+**Deviation 2 — full ad-hoc support, per the maintainer.** The sheet takes the
+third target properly: it seeds it, browses on the session it already holds
+(no dial, no tab), and opens through `WorkspaceFlow.openResult(activeSession:
+true)`. All three entry points now honour the F2 decision identically.
+
+**A bug I introduced, caught by the existing tests.** The first seeding read
+`conn.isLocal` alone — but a **disconnected** session still reports the default
+`ssh` backend, so a sheet with no session at all seeded
+`ActiveSessionDestination`, which the control only offers while a session is
+live. `MacosPopupButton` asserts its value is among its items, and four tests
+failed on that assertion. `isConnected` is now part of the guard in **all
+three** sheets, and its own test ("no session at all stays on This Mac")
+distinguishes it from the local case, which is not the same assertion.
+
+**A second one, same cause, different symptom.** Seeding a saved connection
+made this sheet's popup assert on the first frame: `savedConnectionsProvider`
+is async, so the matching item does not exist yet. The wizards' shared control
+has always carried a fallback row for exactly this; this sheet needed one only
+once it started seeding. Added, with a mutation pinning it.
+
+**Two tests that would have passed for the wrong reason.** The F5 test asserted
+an empty store while the open never reached the save — first because there was
+no session (`connectLocal` reported not-connected), then because
+`SecurityScopedBookmark.create` is a method channel that throws unhandled under
+`testWidgets`. Both are now supplied, and the assertion fails when the id reuse
+is removed.
+
+**Two broken mutations, both re-anchored.** `an ad-hoc session is treated as
+This Mac again` stopped matching when the seeding became a `switch`, and the
+popup-row mutation never matched because `dart format` reflows the pattern
+across three lines. `DID NOT APPLY` is a broken experiment, not a pass.
+
+**Sabotage — 26 mutations (4/8/4/5/5), all killed:**
+
+```
+phase5: the add-existing sheet always opens on This Mac again
+      -> a saved SSH session seeds that connection
+phase5: an ad-hoc session is seeded as This Mac
+      -> an ad-hoc SSH session seeds itself
+phase5: a disconnected session seeds a live-only target
+      -> no session at all stays on This Mac
+phase5: re-opening a saved folder mints a fresh id
+      -> re-opening a saved folder reuses its record, not a new one
+phase5: the unresolved-selection row is dropped from the popup
+      -> a saved SSH session seeds that connection
+```
+
+**Verification:**
+
+```
+flutter analyze (whole project)   No issues found!
+dart format                       0 changed
+flutter test (full suite)         03:28 +3800 ~3: All tests passed!
+tool/mutate.py (26 mutations)     26 killed, 0 survived, 0 did not apply
+expect=9532 testWidgets=1073
+```
+
+**Not done, and named rather than implied:** the F5 follow-on in the plan —
+distinguishing `openLocalRepoInTab`'s two null causes (tab cap vs. dedupe-focus)
+so the sheet stops reporting the cap message for a focus. The id reuse makes
+the dedupe path *reachable* for the first time, so the two causes are now
+genuinely distinguishable; it is a small, separate fix and is carried into
+Phase 6's record as an open item rather than silently dropped.
+
 #### Deviation 1 — 2026-09-08 — Phase 2 cannot move `_openResult` and stay pure
 
 **Found while writing Phase 2.** `WorkspaceFlow` is widget-free by design, so it
