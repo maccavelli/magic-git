@@ -28,22 +28,25 @@ import '../../core/storage/saved_local_repo.dart';
 ///
 /// Returns whether [dest] actually became the live session — a silent false
 /// used to let the sheets flash green Complete while the user was still on
-/// the previous workspace (0009 H19). Save failures stay warnings (true).
+/// the previous workspace (0009 H19).
+///
+/// **Opens without persisting, always.** It once took a `save` flag and
+/// bookmarked the folder itself, but its only caller
+/// (`WorkspaceFlow.openResult`) has always passed `save: false`: a result the
+/// user *does* want saved goes through [saveLocalRepo] + `openLocalRepoInTab`
+/// instead, so it lands in its own tab (MADR 0036, 3B). The flag was therefore
+/// unreachable, and with it the second call to [saveLocalRepo] — two ways to
+/// persist one thing, one of them dead. Removed 2026-09-08 (MADR 0038
+/// residual).
 Future<bool> registerAndActivateLocal(
   ProviderContainer ref, {
   required String dest,
   String label = '',
-  required bool save,
 }) async {
-  final id = save ? DateTime.now().microsecondsSinceEpoch.toString() : null;
   await ref
       .read(connectionProvider.notifier)
-      .connectLocal(dest, label: label.isEmpty ? null : label, id: id);
-  if (!ref.read(connectionProvider).isConnected) return false;
-  if (id != null) {
-    await saveLocalRepo(ref, id: id, dest: dest, label: label);
-  }
-  return true;
+      .connectLocal(dest, label: label.isEmpty ? null : label);
+  return ref.read(connectionProvider).isConnected;
 }
 
 /// The bookmark-and-save half of [registerAndActivateLocal], on its own so a

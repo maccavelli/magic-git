@@ -138,8 +138,8 @@
   {
     "label": "phase3: a failed local connect is reported as success",
     "file": "lib/features/workspace/workspace_registration.dart",
-    "find": "      .connectLocal(dest, label: label.isEmpty ? null : label, id: id);\n  if (!ref.read(connectionProvider).isConnected) return false;",
-    "replace": "      .connectLocal(dest, label: label.isEmpty ? null : label, id: id);\n  if (!ref.read(connectionProvider).isConnected) return true;",
+    "find": "  return ref.read(connectionProvider).isConnected;",
+    "replace": "  return true;",
     "tests": [
       "test/workspace_flow_test.dart"
     ]
@@ -242,6 +242,42 @@
     "replace": "  const matched = false;",
     "tests": [
       "test/add_existing_repo_sheet_test.dart"
+    ]
+  },
+  {
+    "label": "residual: a local open persists a record it was told not to",
+    "file": "lib/features/workspace/workspace_registration.dart",
+    "find": "      .connectLocal(dest, label: label.isEmpty ? null : label);",
+    "replace": "      .connectLocal(\n        dest,\n        label: label.isEmpty ? null : label,\n        id: 'x',\n      );",
+    "tests": [
+      "test/workspace_flow_test.dart"
+    ]
+  },
+  {
+    "label": "residual: saveLocalRepo drops the bookmark it just minted",
+    "file": "lib/features/workspace/workspace_registration.dart",
+    "find": "    bookmarkData: bookmark ?? '',",
+    "replace": "    bookmarkData: '',",
+    "tests": [
+      "test/workspace_flow_test.dart"
+    ]
+  },
+  {
+    "label": "residual: a failed store write is reported as a save",
+    "file": "lib/features/workspace/workspace_registration.dart",
+    "find": "  } catch (_) {\n    return null;\n  }\n  return repo;",
+    "replace": "  } catch (_) {}\n  return repo;",
+    "tests": [
+      "test/workspace_flow_test.dart"
+    ]
+  },
+  {
+    "label": "residual: the namespace of a saved-host create goes to the This-Mac store",
+    "file": "lib/features/workspace/create_repo_sheet.dart",
+    "find": "          connection: await connectionById(_destConnectionId),",
+    "replace": "          connection: await connectionById(null),",
+    "tests": [
+      "test/create_repo_namespace_search_test.dart"
     ]
   }
 ]

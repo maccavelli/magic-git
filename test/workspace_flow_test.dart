@@ -131,6 +131,12 @@ class _FakeLocalRepoStore extends LocalRepoStore {
   Future<void> save(SavedLocalRepo repo) async => saved = repo;
 }
 
+class _ThrowingLocalRepoStore extends LocalRepoStore {
+  @override
+  Future<void> save(SavedLocalRepo repo) async =>
+      throw StateError('store unwritable');
+}
+
 class _FakeConnectionStore extends ConnectionStore {
   SavedConnection? updated;
 
@@ -596,17 +602,7 @@ void main() {
   // Pre-existing, adjacent to MADR 0038 F6, and out of scope here.
   // -------------------------------------------------------------------------
   group('registerAndActivateLocal', () {
-    const bookmarks = MethodChannel('magicgit/bookmarks');
     const dest = '/Users/test/my-repo';
-
-    setUp(() {
-      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-          .setMockMethodCallHandler(bookmarks, (call) async => null);
-    });
-    tearDown(() {
-      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-          .setMockMethodCallHandler(bookmarks, null);
-    });
 
     ({
       ProviderContainer container,
@@ -628,61 +624,137 @@ void main() {
       return (container: c, conn: conn, store: store);
     }
 
-    test('save:false calls connectLocal without persisting', () async {
+    test('opens the folder and persists nothing', () async {
       final h = build();
 
-      await registerAndActivateLocal(h.container, dest: dest, save: false);
+      expect(await registerAndActivateLocal(h.container, dest: dest), isTrue);
 
       expect(h.conn.recordedConnectLocalRepoPath, dest);
-      expect(h.conn.recordedConnectLocalId, isNull);
+      expect(
+        h.conn.recordedConnectLocalId,
+        isNull,
+        reason: 'an unsaved open has no record to be the active one against',
+      );
       expect(h.store.saved, isNull);
     });
 
     // 0009 H19: a connect that never lands must report false — the sheets used
     // to flash the green Complete state regardless.
-    test('a failed connect reports false and persists nothing', () async {
+    test('a failed connect reports false', () async {
       final h = build(failing: true);
 
-      final result = await registerAndActivateLocal(
-        h.container,
-        dest: dest,
-        save: true,
-      );
+      expect(await registerAndActivateLocal(h.container, dest: dest), isFalse);
 
-      expect(result, isFalse);
       expect(h.conn.recordedConnectLocalRepoPath, dest);
       expect(h.store.saved, isNull);
     });
 
-    test('save:true persists SavedLocalRepo with bookmark data', () async {
+    test('an empty label passes null to connectLocal', () async {
       final h = build();
 
-      await registerAndActivateLocal(
+      await registerAndActivateLocal(h.container, dest: dest);
+
+      expect(h.conn.recordedConnectLocalLabel, isNull);
+    });
+
+    test('a label is passed through', () async {
+      final h = build();
+
+      await registerAndActivateLocal(h.container, dest: dest, label: 'My Repo');
+
+      expect(h.conn.recordedConnectLocalLabel, 'My Repo');
+    });
+  });
+
+  // The two `save: true` tests that used to live above covered a parameter no
+  // caller ever passed (MADR 0038 residual, resolved 2026-09-08). What they
+  // were really exercising — bookmark, then persist — is `saveLocalRepo`,
+  // which IS live: `WorkspaceFlow.openResult` calls it for a saved local
+  // result. It had no direct test at all, so the coverage moves here rather
+  // than being dropped.
+  group('saveLocalRepo', () {
+    const bookmarks = MethodChannel('magicgit/bookmarks');
+    const dest = '/Users/test/my-repo';
+
+    setUp(() {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(bookmarks, (call) async => 'Ym0=');
+    });
+    tearDown(() {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(bookmarks, null);
+    });
+
+    ({ProviderContainer container, _FakeLocalRepoStore store}) build() {
+      final store = _FakeLocalRepoStore();
+      final c = ProviderContainer(
+        retry: noProviderRetry,
+        overrides: [
+          localRepoStoreProvider.overrideWithValue(store),
+          savedLocalReposProvider.overrideWith((ref) async => const []),
+        ],
+      );
+      addTearDown(c.dispose);
+      return (container: c, store: store);
+    }
+
+    test('persists the repo with its bookmark data', () async {
+      final h = build();
+
+      final saved = await saveLocalRepo(
         h.container,
+        id: 'id-1',
         dest: dest,
         label: 'My Repo',
-        save: true,
       );
 
-      expect(h.conn.recordedConnectLocalId, isNotNull);
-      expect(h.store.saved, isNotNull);
+      expect(saved, isNotNull);
+      expect(h.store.saved!.id, 'id-1');
       expect(h.store.saved!.repoPath, dest);
       expect(h.store.saved!.label, 'My Repo');
       expect(
-        h.store.saved!.id,
-        h.conn.recordedConnectLocalId,
-        reason: 'the session id must match the persisted record',
+        h.store.saved!.bookmarkData,
+        'Ym0=',
+        reason: 'the grant that lets this folder reopen without a Finder panel',
       );
     });
 
-    test('save:true with empty label passes null to connectLocal', () async {
-      final h = build();
+    test(
+      'an unsigned build stores an empty bookmark rather than failing',
+      () async {
+        // `SecurityScopedBookmark.create` answers null when the app is not
+        // sandboxed; the repo is still saved, and reopening re-picks the folder.
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(bookmarks, (call) async => null);
+        final h = build();
 
-      await registerAndActivateLocal(h.container, dest: dest, save: true);
+        final saved = await saveLocalRepo(h.container, id: 'id-1', dest: dest);
 
-      expect(h.conn.recordedConnectLocalLabel, isNull);
-      expect(h.store.saved!.label, '');
-    });
+        expect(saved, isNotNull);
+        expect(h.store.saved!.bookmarkData, isEmpty);
+      },
+    );
+
+    test(
+      'a store that throws yields null, and the repo still exists',
+      () async {
+        final store = _ThrowingLocalRepoStore();
+        final c = ProviderContainer(
+          retry: noProviderRetry,
+          overrides: [
+            localRepoStoreProvider.overrideWithValue(store),
+            savedLocalReposProvider.overrideWith((ref) async => const []),
+          ],
+        );
+        addTearDown(c.dispose);
+
+        expect(
+          await saveLocalRepo(c, id: 'id-1', dest: dest),
+          isNull,
+          reason: 'the caller reports "created but not saved", not a failure',
+        );
+      },
+    );
   });
 
   group('the grant registry', () {

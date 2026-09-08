@@ -164,7 +164,6 @@ class WorkspaceFlow {
           container,
           dest: request.dest,
           label: request.localLabel,
-          save: false,
         );
       }
       final saved = await saveLocalRepo(

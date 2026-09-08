@@ -962,23 +962,6 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
     );
   }
 
-  /// The saved connection a create actually targets, or null for This Mac and
-  /// for a session with nothing to persist into.
-  ///
-  /// **Not simply [_destConnectionId].** MADR 0036 made the connected wizard
-  /// seed its destination from the live session, so the raw field is usually
-  /// right — but an **ad-hoc** SSH session has no saved id to seed from, and
-  /// then both are null. The fallback keeps that case pointed at the session's
-  /// own connection when it has one, rather than sending an SSH create's
-  /// history to the This-Mac store — the wrong half of the two-store split
-  /// `NamespaceHistory` documents.
-  ///
-  /// (This comment previously described the pre-0036 world, where the
-  /// destination defaulted to `sshActive` and "the picker never sets an id".
-  /// It does now. MADR 0038 F2 covers the ad-hoc gap the fallback papers over.)
-  String? _effectiveConnectionId(String? activeId) =>
-      _isLocalTarget ? null : (_destConnectionId ?? activeId);
-
   /// Records the namespace a successful forge create used, for the next
   /// create's suggestions. Best-effort by contract — see [NamespaceHistory].
   ///
@@ -1002,11 +985,11 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
           forge: _forge,
           host: host,
           namespace: namespace,
-          connection: await connectionById(
-            _effectiveConnectionId(
-              _flow.container.read(connectionProvider).connectionId,
-            ),
-          ),
+          // `_destConnectionId` IS the answer now: it is null for This Mac
+          // and for an ad-hoc session (which has no connection to hang
+          // history on, so it goes to the This-Mac store — NamespaceHistory's
+          // documented rule), and the id otherwise.
+          connection: await connectionById(_destConnectionId),
         );
   }
 
@@ -1048,9 +1031,7 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
             forge: _forge,
             host: _resolvedHost,
             isLocalTarget: _isLocalTarget,
-            connectionId: _effectiveConnectionId(
-              ref.watch(connectionProvider.select((c) => c.connectionId)),
-            ),
+            connectionId: _destConnectionId,
             controller: _namespace,
             onChanged: () => setState(() {}),
             hint: WizardHint(

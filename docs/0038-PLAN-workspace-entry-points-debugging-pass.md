@@ -993,7 +993,7 @@ tool/mutate.py (27 mutations)     27 killed, 0 survived, 0 did not apply
 expect=9536 testWidgets=1074      (baseline 9471 / 1072)
 ```
 
-**Two observations recorded, not acted on:**
+**Two observations recorded, and since closed** — see "Residuals" below:
 
 * `registerAndActivateLocal`'s only production caller always passes
   `save: false`, so its `save: true` branch is unreachable — pre-existing,
@@ -1002,6 +1002,75 @@ expect=9536 testWidgets=1074      (baseline 9471 / 1072)
   load-bearing only for the ad-hoc case, which Phase 4 gave a real target. It is
   correct as written; whether it should collapse now that the destination is a
   type is a question for a later pass.
+
+### Residuals — 2026-09-08 — *closed*
+
+The two items Phase 6 recorded as "observed, not acted on". Both resolved at
+the maintainer's request; neither changes behaviour.
+
+**1. `registerAndActivateLocal`'s unreachable `save: true`.** Its only
+production caller has always passed `save: false` — a result the user *does*
+want saved goes through `saveLocalRepo` + `openLocalRepoInTab` instead, so it
+lands in its own tab (MADR 0036, 3B). The flag is gone, and with it the second
+call to `saveLocalRepo`: two ways to persist one thing, one of them dead. The
+function is now three lines.
+
+**Coverage moved rather than dropped.** Two of the four ported tests exercised
+that dead flag. What they were really about — bookmark, then persist — is
+`saveLocalRepo`, which is live and had **no direct test at all**; its coverage
+came only from sheet-level tests of the saved-local path. It now has three
+(bookmark stored, unsigned build degrades to an empty bookmark, a throwing
+store yields null while the repository still exists), which is strictly more
+than was there before.
+
+**2. `_effectiveConnectionId` collapses — the question is answered "yes".** It
+read `_isLocalTarget ? null : (_destConnectionId ?? activeId)`. The `?? activeId`
+fallback was written for the pre-0036 world where connected mode never set a
+destination id. Case by case against the sealed type:
+
+* `LocalMacDestination` → `_isLocalTarget` is true → null; `_destConnectionId`
+  is also null.
+* `ActiveSessionDestination` → `_destConnectionId` is null, so it falls back to
+  `activeId` — which is **null in every producible state**, because that row is
+  offered and seeded only when `session.connectionId == null`
+  (`workspace_destination.dart:64`, `local_repo_form.dart:942`, and the three
+  seeders), and an ad-hoc session cannot acquire an id: a drop-triggered
+  reconnect reuses `_lastProfile`, which carries the same null.
+* `SavedConnectionDestination(id)` → the id.
+
+So the helper was exactly `_destConnectionId` in all three cases, and is
+deleted. The `?? activeId` was a fossil of the model deficiency that produced
+F2; with the deficiency fixed, the workaround has nothing left to do. Removing
+it also drops a `connectionProvider.select` watch from the create sheet's build
+path that existed only to feed it.
+
+**Sabotage — 31 mutations, all killed.** Four new, and one existing entry
+re-anchored: *"a failed local connect is reported as success"* stopped matching
+when `registerAndActivateLocal` collapsed to a single `return`, which the
+harness reported as `DID NOT APPLY` rather than a pass.
+
+```
+residual: a local open persists a record it was told not to
+      -> opens the folder and persists nothing
+residual: saveLocalRepo drops the bookmark it just minted
+      -> persists the repo with its bookmark data
+residual: a failed store write is reported as a save
+      -> a store that throws yields null, and the repo still exists
+residual: the namespace of a saved-host create goes to the This-Mac store
+      -> a successful forge create records it
+```
+
+**Verification:**
+
+```
+flutter analyze (whole project)   No issues found!
+dart format                       0 changed
+flutter test (full suite)         03:34 +3804 ~3: All tests passed!
+tool/mutate.py (31 mutations)     31 killed, 0 survived, 0 did not apply
+expect=9540 testWidgets=1074
+```
+
+Nothing from MADR 0038 is now outstanding.
 
 #### Deviation 1 — 2026-09-08 — Phase 2 cannot move `_openResult` and stay pure
 
