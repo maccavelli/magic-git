@@ -549,9 +549,32 @@ void main() {
   });
 
   group('watcher ceiling', () {
-    test('the ceiling is a named constant', () {
-      // One active repo plus one background. Beyond that, poll and say so.
-      expect(RemoteWatchService.maxConcurrentWatchers, 2);
+    test('the ceiling is derived from the transport stream budget', () {
+      // AMENDED for MADR 0040. This used to read
+      // `expect(cap, 2)` and pin the
+      // constant as such — "one active repo plus one background". That is no
+      // longer the contract: 2 was chosen in isolation and sat in front of the
+      // executor's own budget of 8 concurrent streams, which is the resource a
+      // watcher actually holds and which is already enforced at `executeStream`.
+      // The cap is now that budget minus the channels reserved for the CI trace
+      // and clone progress, floored at 1.
+      expect(
+        RemoteWatchService(
+          _FakeExecutor(),
+          streamBudget: () => 8,
+        ).maxConcurrentWatchers,
+        8 - RemoteWatchService.reservedStreams,
+      );
+      expect(
+        RemoteWatchService(
+          _FakeExecutor(),
+          streamBudget: () => 2,
+        ).maxConcurrentWatchers,
+        1,
+        reason:
+            'a degraded single-client session still watches ONE repo — a '
+            'cap of 0 would silently disable watching altogether',
+      );
     });
 
     test(
@@ -561,11 +584,17 @@ void main() {
         addTearDown(RemoteWatchService.resetWatcherCount);
         final exec = _MultiArmExecutor();
         final diagnostics = <String>[];
-        final service = RemoteWatchService(exec, onDiagnostic: diagnostics.add);
+        final service = RemoteWatchService(
+          exec,
+          onDiagnostic: diagnostics.add,
+          // The budget that yields the cap of 2 this test was written for.
+          streamBudget: () => RemoteWatchService.reservedStreams + 2,
+        );
+        final cap = service.maxConcurrentWatchers;
 
         final subs = <StreamSubscription<RepoWatchEvent>>[];
         final modes = <int, List<WatchMode>>{};
-        for (var i = 0; i <= RemoteWatchService.maxConcurrentWatchers; i++) {
+        for (var i = 0; i <= cap; i++) {
           modes[i] = [];
           subs.add(
             service
@@ -579,12 +608,12 @@ void main() {
         // why — the failure mode that produced 19 orphans was accumulating in
         // silence instead.
         expect(
-          modes[RemoteWatchService.maxConcurrentWatchers],
+          modes[cap],
           contains(WatchMode.polling),
           reason: 'the arm past the ceiling must degrade, not accumulate',
         );
         expect(diagnostics.join(' '), contains('ceiling reached'));
-        expect(exec.handles.length, RemoteWatchService.maxConcurrentWatchers);
+        expect(exec.handles.length, cap);
 
         for (final sub in subs) {
           await sub.cancel();

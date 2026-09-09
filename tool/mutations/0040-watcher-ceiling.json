@@ -17,5 +17,53 @@
       "test/watch_slot_leak_test.dart",
       "test/remote_watch_service_test.dart"
     ]
+  },
+  {
+    "label": "p2: the cap is hardcoded again",
+    "file": "lib/core/git/remote_watch_service.dart",
+    "find": "    final derived = _streamBudget() - reservedStreams;\n    return derived < 1 ? 1 : derived;",
+    "replace": "    return 2;",
+    "tests": [
+      "test/watch_ceiling_derived_test.dart",
+      "test/remote_watch_service_test.dart"
+    ]
+  },
+  {
+    "label": "p2: the floor is removed, so a degraded session watches nothing",
+    "file": "lib/core/git/remote_watch_service.dart",
+    "find": "    return derived < 1 ? 1 : derived;",
+    "replace": "    return derived;",
+    "tests": [
+      "test/watch_ceiling_derived_test.dart"
+    ]
+  },
+  {
+    "label": "p2: the reserved headroom is dropped, so watchers can starve the CI trace",
+    "file": "lib/core/git/remote_watch_service.dart",
+    "find": "  static const int reservedStreams = 2;",
+    "replace": "  static const int reservedStreams = 0;",
+    "tests": [
+      "test/watch_ceiling_derived_test.dart"
+    ]
+  },
+  {
+    "label": "p2: the counter key ignores the session again",
+    "file": "lib/core/git/remote_watch_service.dart",
+    "find": "        final key = (_scope, host);",
+    "replace": "        final key = (_noScope, host);",
+    "tests": [
+      "test/watch_ceiling_derived_test.dart",
+      "test/watch_ceiling_per_host_test.dart"
+    ]
+  },
+  {
+    "label": "p2: the release announcement ignores the session",
+    "file": "lib/core/git/remote_watch_service.dart",
+    "find": "  static String _releaseKey(Object scope, String host) => '$scope\\u0000$host';",
+    "replace": "  static String _releaseKey(Object scope, String host) => host;",
+    "tests": [
+      "test/watch_ceiling_derived_test.dart",
+      "test/watch_ceiling_per_host_test.dart"
+    ]
   }
 ]

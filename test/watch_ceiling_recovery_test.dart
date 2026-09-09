@@ -63,12 +63,21 @@ class _ArmsAlways extends SSHCommandExecutor {
   }) async => _Handle();
 }
 
+/// The cap is derived from the transport's stream budget (MADR 0040): a
+/// service built without one is conservative and gets a cap of 1. These
+/// tests were written against the old constant 2, so they state the budget
+/// that yields it — 4 streams minus 2 reserved.
+int _budgetFor2() => RemoteWatchService.reservedStreams + 2;
+
 void main() {
   setUp(RemoteWatchService.resetWatcherCount);
   tearDown(RemoteWatchService.resetWatcherCount);
 
   test('a repo refused by the ceiling arms as soon as a slot frees', () async {
-    final service = RemoteWatchService(_ArmsAlways());
+    final service = RemoteWatchService(
+      _ArmsAlways(),
+      streamBudget: _budgetFor2,
+    );
     final events = <RepoWatchEvent>[];
 
     final a = service.watch('/a').listen((_) {});
@@ -76,7 +85,7 @@ void main() {
     await pumpEventQueue();
     expect(
       RemoteWatchService.liveWatchers,
-      RemoteWatchService.maxConcurrentWatchers,
+      service.maxConcurrentWatchers,
       reason: 'the ceiling is full',
     );
 
@@ -117,8 +126,14 @@ void main() {
       // per-connection are the same set. If simultaneous connections to
       // different hosts ever land, this test is where that stops being true and
       // the counter needs keying by host.
-      final first = RemoteWatchService(_ArmsAlways());
-      final second = RemoteWatchService(_ArmsAlways());
+      final first = RemoteWatchService(
+        _ArmsAlways(),
+        streamBudget: _budgetFor2,
+      );
+      final second = RemoteWatchService(
+        _ArmsAlways(),
+        streamBudget: _budgetFor2,
+      );
 
       final a = first.watch('/a').listen((_) {});
       final b = second.watch('/b').listen((_) {});
@@ -150,9 +165,12 @@ void main() {
       // `noTool` means the host has no inotifywait/fswatch. A freed watcher slot
       // changes nothing about that, and re-probing on every release would spend
       // round trips discovering the same answer.
-      final service = RemoteWatchService(_ArmsAlways(tool: ''));
+      final service = RemoteWatchService(
+        _ArmsAlways(tool: ''),
+        streamBudget: _budgetFor2,
+      );
       final events = <RepoWatchEvent>[];
-      final held = RemoteWatchService(_ArmsAlways());
+      final held = RemoteWatchService(_ArmsAlways(), streamBudget: _budgetFor2);
 
       final x = held.watch('/x').listen((_) {});
       await pumpEventQueue();

@@ -72,12 +72,16 @@ Future<void> _armAndFail(Object error) async {
   final service = RemoteWatchService(
     _StreamFails(error),
     hostKey: () => 'bastion',
+    streamBudget: _budgetFor2,
   );
   final events = <RepoWatchEvent>[];
   final sub = service.watch('/repo').listen(events.add);
   await pumpEventQueue();
   await sub.cancel();
 }
+
+int _budgetFor2() => RemoteWatchService.reservedStreams + 2;
+const _cap = 2;
 
 void main() {
   setUp(() {
@@ -112,7 +116,7 @@ void main() {
   test('repeated stream-open failures do not exhaust the host budget', () async {
     // The reported shape: every repo on the bastion polling, "watchers held 2",
     // with no watcher process alive to hold them.
-    for (var i = 0; i < RemoteWatchService.maxConcurrentWatchers; i++) {
+    for (var i = 0; i < _cap; i++) {
       await _armAndFail(const SSHCommandSuperseded('watch'));
     }
 
@@ -123,6 +127,7 @@ void main() {
     final service = RemoteWatchService(
       _StreamFails(const SSHCommandSuperseded('watch')),
       hostKey: () => 'bastion',
+      streamBudget: _budgetFor2,
     );
     final sub = service.watch('/later').listen(events.add);
     await pumpEventQueue();
@@ -144,7 +149,7 @@ void main() {
     );
     expect(
       RemoteWatchService.liveWatchersFor('bastion'),
-      lessThan(RemoteWatchService.maxConcurrentWatchers),
+      lessThan(_cap),
       reason: 'the budget must not be spent by arms that never armed',
     );
   });
