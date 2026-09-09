@@ -1059,10 +1059,10 @@ publication is a local operation.
 maintainer's instruction to run those five; committed as `3ece3b6` (code) +
 `0cc1897` (docs) and pushed. **Phase 4 executed 2026-09-09** on the instruction
 to proceed, and committed separately per the maintainer's standing request that
-each phase get its own commit so rollback is easier. **Phase 7 executed
+each phase get its own commit so rollback is easier. **Phases 7 and 8 executed
 2026-09-09.**
 
-Phases 8 (A1), 9 (A3) and 10 (A2) follow.
+Phases 9 (A3) and 10 (A2) follow.
 
 **Commit cadence.** Each phase is its own commit, `git commit --no-edit` only —
 `AGENTS.md` forbids composing message text and a global `prepare-commit-msg`
@@ -1084,11 +1084,11 @@ The tree was **not** empty, and that is deviation D1 below.
 
 ### Baselines and outcomes
 
-| | before | phases 1/2/3/5/6 | phase 4 | phase 7 |
-|---|---|---|---|---|
-| `flutter analyze` | clean | clean | clean | clean |
-| `flutter test` | 3804 passed, 3 skipped | 3841 (+37) | 3849 (+8) | 3861 (+12) |
-| mutations killed | — | 20 of 20 | 24 of 24 | 30 of 30, 0 survived, 0 did not apply |
+| | before | phases 1/2/3/5/6 | phase 4 | phase 7 | phase 8 |
+|---|---|---|---|---|---|
+| `flutter analyze` | clean | clean | clean | clean | clean |
+| `flutter test` | 3804 passed, 3 skipped | 3841 (+37) | 3849 (+8) | 3861 (+12) | 3872 (+11) |
+| mutations killed | — | 20 of 20 | 24 of 24 | 30 of 30 | 36 of 36, 0 survived, 0 did not apply |
 
 ### Phase 1 — session-scope seam
 
@@ -1251,12 +1251,48 @@ than needing three fresh successes. `onSuccess` moved inside the executor's
 Both H1 tests are present, and the negative one is what makes the positive one
 mean anything: a bucket whose own durations inflate 3× still sheds the cap.
 
+### Phase 8 — single-walk ahead/behind (A1)
+
+Built on the gate that already existed rather than a new one — see MADR
+amendment 0039.2. Beside `kMergeTreeMinGit` and
+`mergePreviewCapabilityForVersion` there is now
+`kAheadBehindAtomMinGit = ToolVersion(2, 41)` and `aheadBehindAtomForVersion`,
+which returns **false** for an unknown version where its neighbour returns null:
+merge preview has no fallback, this gates an optimisation that does.
+
+`branchReviewSummaries` takes `useAheadBehindAtom`, defaulting to false — which
+is why no existing caller or test changed except one fake's `@override`
+signature. `_branchReviewFastPath` issues **one** command,
+`git for-each-ref --format='%(refname)<US>%(objectname)<US>%(ahead-behind:<base>)'
+refs/heads/`, and joins the rows to the caller's list by ref name. No branch OID
+and no ref name enters argv at all: the refs come back in *output*, which is a
+strictly stronger form of the injection property the ordinal join was built for.
+
+Two host answers mean "I cannot do this" and fall back for the whole call — a
+non-zero exit (an older Git rejects the atom with "unknown field name") and a
+line the parser cannot read. A *per-branch* problem is a result, not a reason to
+re-ask everything the slow way: an absent ref is `missingRecord`, and a ref whose
+tip moved since the caller's snapshot is `oidMismatch`. Both codes already
+existed. That mismatch case is the one semantic difference from the fallback,
+which computes against the OID it was handed; reporting counts for a tip the
+caller never asked about would be worse than reporting that it could not answer.
+
+`branchReviewBatchSize`, `branchReviewBatchTimeout`, the shell script and
+`_parseBranchReviewBatch` are untouched, and
+`branches_phase7_command_budget_test.dart` still pins them.
+
+**The field order is the whole risk of the phase, and it is inverted between the
+two primitives** — `%(ahead-behind:)` emits ahead first and space-separated,
+`rev-list --left-right --count` emits behind first and tab-separated. Verified
+on git 2.55.0 before the plan was written; the assertion that pins it is the
+mutation catalogue's primary target here.
+
 ### Sabotage
 
-`tool/mutations/0039-globals-and-heuristics.json`, 30 entries, final run:
+`tool/mutations/0039-globals-and-heuristics.json`, 36 entries, final run:
 
 ```
-30 killed, 0 survived, 0 did not apply
+36 killed, 0 survived, 0 did not apply
 ```
 
 Every check this work introduced has been observed failing against a deliberately
@@ -1375,6 +1411,10 @@ every phase boundary, because a later phase can un-arm an earlier phase's check.
 
 ### Not done, and why
 
-* **Phases 8–10 (A1, A3, A2)** — in progress. Each is independent of what
-  landed here; Phase 9 (A3) builds on Phase 2 and is unblocked by it.
+* **Phases 9–10 (A3, A2)** — in progress. Phase 9 builds on Phase 2 and is
+  unblocked by it; Phase 10 is independent and the most droppable.
+* **The A1 measurement on a real host is still owed.** The unit tests pin one
+  command for any number of branches; the wall-clock and `countsByLabel`
+  comparison on the 500-ref repository is a maintainer step and has not been
+  run.
 
