@@ -381,5 +381,59 @@
       "test/session_cache_isolation_test.dart",
       "test/keep_alive_lru_test.dart"
     ]
+  },
+  {
+    "label": "a2: the naive resume \u2014 carry the END state, not the boundary's",
+    "file": "lib/core/git/commit_graph.dart",
+    "find": "    var nextResumeFrom = commits.length;\n    for (var i = startRow; i < commits.length; i++) {\n      if (commits[i].parents.any((p) => !allHashes.contains(p))) {\n        nextResumeFrom = i;\n        break;\n      }\n    }",
+    "replace": "    final nextResumeFrom = commits.length;",
+    "tests": [
+      "test/commit_graph_incremental_test.dart"
+    ]
+  },
+  {
+    "label": "a2: the primary chain is frozen instead of extended",
+    "file": "lib/core/git/commit_graph.dart",
+    "find": "    final primaryChain = <String>{...state.primaryChain};\n    String? currentSha = state.chainNext;",
+    "replace": "    final primaryChain = <String>{...state.primaryChain};\n    String? currentSha = null;",
+    "tests": [
+      "test/commit_graph_incremental_test.dart"
+    ]
+  },
+  {
+    "label": "a2: the appended page forgets the earlier page's hashes",
+    "file": "lib/core/git/commit_graph.dart",
+    "find": "    final commits = [for (final r in previousRows) r.commit, ...newCommits];",
+    "replace": "    final commits = [\n      for (final r in previousRows.skip(state.resumeFromRow)) r.commit,\n      ...newCommits,\n    ];",
+    "tests": [
+      "test/commit_graph_incremental_test.dart"
+    ]
+  },
+  {
+    "label": "a2: the lane-count maximum from the retained prefix is dropped",
+    "file": "lib/core/git/commit_graph.dart",
+    "find": "    var laneCount = resume?.laneCountBefore ?? 0;",
+    "replace": "    var laneCount = 0;",
+    "tests": [
+      "test/commit_graph_incremental_test.dart"
+    ]
+  },
+  {
+    "label": "a2: History rebuilds from scratch instead of resuming",
+    "file": "lib/features/history/history_view.dart",
+    "find": "    if (state != null &&\n        previous != null &&\n        headSha == _lastHeadSha &&\n        _isPrefixExtensionOfLast(commits)) {",
+    "replace": "    if (state != null &&\n        previous != null &&\n        headSha == _lastHeadSha &&\n        false &&\n        _isPrefixExtensionOfLast(commits)) {",
+    "tests": [
+      "test/commit_graph_incremental_test.dart"
+    ]
+  },
+  {
+    "label": "a2: the retained prefix is laid out again instead of reused",
+    "file": "lib/core/git/commit_graph.dart",
+    "find": "    final rows = <GraphRow>[...previousRows.take(startRow)];",
+    "replace": "    final rows = <GraphRow>[\n      for (final r in previousRows.take(startRow))\n        GraphRow(commit: r.commit, column: r.column, edges: r.edges),\n    ];",
+    "tests": [
+      "test/commit_graph_incremental_test.dart"
+    ]
   }
 ]

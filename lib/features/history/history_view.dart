@@ -521,6 +521,25 @@ class _HistoryViewState extends ConsumerState<HistoryView>
   /// repeated rebuilds with the same list don't schedule duplicate builds.
   List<GitCommit>? _pendingGraphCommits;
 
+  /// Lane state from the last completed layout, so the next page can resume it
+  /// (MADR 0039 A2). Null before the first layout, and dropped whenever the
+  /// list is not a prefix-extension of the one it describes.
+  GraphLayoutState? _graphState;
+
+  /// Whether [commits] is [_lastCommits] with more appended — the case a page
+  /// load produces. Element-wise `identical`, not `==`: Riverpod hands back the
+  /// same [GitCommit] instances for rows it already had, so this is a pointer
+  /// walk over the prefix and it fails fast on a filter change or a refresh,
+  /// which re-parse and so produce new instances throughout.
+  bool _isPrefixExtensionOfLast(List<GitCommit> commits) {
+    final previous = _lastCommits;
+    if (previous == null || commits.length <= previous.length) return false;
+    for (var i = 0; i < previous.length; i++) {
+      if (!identical(previous[i], commits[i])) return false;
+    }
+    return true;
+  }
+
   /// Returns the laid-out graph for [commits], always synchronously. Small
   /// histories are laid out inline and memoized on list identity. Large ones
   /// are laid out on a background isolate; until that lands we keep serving the
@@ -532,11 +551,41 @@ class _HistoryViewState extends ConsumerState<HistoryView>
         _graph != null) {
       return _graph!;
     }
+    // A page load: resume the previous layout instead of redoing it. Only the
+    // rows from `resumeFromRow` on can have changed — see [GraphLayoutState] —
+    // so the work is proportional to the new page plus the open boundary, not
+    // to everything loaded so far. That is also why this runs inline even for a
+    // large history: the resumed span is small, and skipping the isolate skips
+    // the copy of the whole list that was the other half of the cost.
+    final state = _graphState;
+    final previous = _graph;
+    if (state != null &&
+        previous != null &&
+        headSha == _lastHeadSha &&
+        _isPrefixExtensionOfLast(commits)) {
+      final page = commits.sublist(_lastCommits!.length);
+      final resumedSpan = commits.length - state.resumeFromRow;
+      if (resumedSpan < _graphIsolateThreshold) {
+        _lastCommits = commits;
+        _pendingGraphCommits = null;
+        final next = CommitGraph.append(
+          state,
+          previous.rows,
+          page,
+          headSha: headSha,
+        );
+        _graphState = next.state;
+        return _graph = next.graph;
+      }
+    }
+
     _lastCommits = commits;
     _lastHeadSha = headSha;
     if (commits.length < _graphIsolateThreshold) {
       _pendingGraphCommits = null;
-      return _graph = CommitGraph.build(commits, headSha: headSha);
+      final built = CommitGraph.buildResumable(commits, headSha: headSha);
+      _graphState = built.state;
+      return _graph = built.graph;
     }
     if (!identical(commits, _pendingGraphCommits)) {
       _pendingGraphCommits = commits;
@@ -551,15 +600,16 @@ class _HistoryViewState extends ConsumerState<HistoryView>
     int id, {
     String? headSha,
   }) async {
-    final graph = await Isolate.run(
-      () => CommitGraph.build(commits, headSha: headSha),
+    final built = await Isolate.run(
+      () => CommitGraph.buildResumable(commits, headSha: headSha),
     );
     // Superseded by a newer list (or a repo switch) while we were building.
     if (!mounted || id != _graphBuildId) return;
     setState(() {
       _lastCommits = commits;
       _pendingGraphCommits = null;
-      _graph = graph;
+      _graph = built.graph;
+      _graphState = built.state;
     });
   }
 
@@ -624,6 +674,9 @@ class _HistoryViewState extends ConsumerState<HistoryView>
       _commitRowKeys.clear();
       _lastCommits = null;
       _graph = null;
+      // The resume state describes the OLD repo's lanes; carrying it would let
+      // the next page of a different history resume from someone else's.
+      _graphState = null;
       // Invalidate any in-flight off-isolate layout for the old repo so it
       // can't land and paint the wrong history.
       _pendingGraphCommits = null;
