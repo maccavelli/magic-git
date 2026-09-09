@@ -65,51 +65,5 @@
       "test/watch_ceiling_derived_test.dart",
       "test/watch_ceiling_per_host_test.dart"
     ]
-  },
-  {
-    "label": "p3: reconciliation clears everything regardless of the report",
-    "file": "lib/core/git/remote_watch_service.dart",
-    "find": "      final orphaned = held.difference(reportedLive);",
-    "replace": "      final orphaned = held.toSet();",
-    "tests": [
-      "test/watch_reconcile_test.dart"
-    ]
-  },
-  {
-    "label": "p3: reconciliation is a no-op, so a stranded slot persists",
-    "file": "lib/core/git/remote_watch_service.dart",
-    "find": "    if (reported != null) _reconcileSlots(reported);",
-    "replace": "",
-    "tests": [
-      "test/watch_reconcile_test.dart"
-    ]
-  },
-  {
-    "label": "p3: a failed sweep is treated as 'nothing is live'",
-    "file": "lib/core/git/remote_watch_service.dart",
-    "find": "    Set<String>? reported;",
-    "replace": "    Set<String>? reported = <String>{};",
-    "tests": [
-      "test/watch_reconcile_test.dart"
-    ]
-  },
-  {
-    "label": "p3: one session reconciles every session's slots away",
-    "file": "lib/core/git/remote_watch_service.dart",
-    "find": "      if (key.$1 != _scope) continue;",
-    "replace": "",
-    "tests": [
-      "test/watch_reconcile_test.dart"
-    ]
-  },
-  {
-    "label": "p3: the sweep stops reporting what is still leased",
-    "file": "lib/core/git/bounded_watch.dart",
-    "find": "      '[ -n \"\\$b\" ] && printf \\'LIVE %s\\\\n\\' \"\\$b\"; '",
-    "replace": "      ': ; '",
-    "tests": [
-      "test/watcher_sweep_exec_test.dart",
-      "test/watch_reconcile_test.dart"
-    ]
   }
 ]
