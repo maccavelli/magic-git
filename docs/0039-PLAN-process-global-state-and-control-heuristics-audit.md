@@ -1059,11 +1059,12 @@ publication is a local operation.
 maintainer's instruction to run those five; committed as `3ece3b6` (code) +
 `0cc1897` (docs) and pushed. **Phase 4 executed 2026-09-09** on the instruction
 to proceed, and committed separately per the maintainer's standing request that
-each phase get its own commit so rollback is easier. **Phases 7, 8 and 9
+each phase get its own commit so rollback is easier. **Phases 7, 8, 9 and 10
 executed 2026-09-09.**
 
-Phase 10 (A2) follows — the last, and the one MADR amendment 0039.1 flagged as
-the most droppable.
+**All ten phases are executed.** Two residuals are named under "Not done" and
+neither is engineering work: the A1 wall-clock measurement on a real host, and
+one optional sub-step of Phase 10 that was deliberately not taken.
 
 **Commit cadence.** Each phase is its own commit, `git commit --no-edit` only —
 `AGENTS.md` forbids composing message text and a global `prepare-commit-msg`
@@ -1085,11 +1086,11 @@ The tree was **not** empty, and that is deviation D1 below.
 
 ### Baselines and outcomes
 
-| | before | 1/2/3/5/6 | 4 | 7 | 8 | 9 |
-|---|---|---|---|---|---|---|
-| `flutter analyze` | clean | clean | clean | clean | clean | clean |
-| `flutter test` | 3804, 3 skipped | 3841 (+37) | 3849 (+8) | 3861 (+12) | 3872 (+11) | 3879 (+7) |
-| mutations killed | — | 20/20 | 24/24 | 30/30 | 36/36 | 41 of 41, 0 survived, 0 did not apply |
+| | before | 1/2/3/5/6 | 4 | 7 | 8 | 9 | 10 |
+|---|---|---|---|---|---|---|---|
+| `flutter analyze` | clean | clean | clean | clean | clean | clean | clean |
+| `flutter test` | 3804, 3 skipped | 3841 (+37) | 3849 (+8) | 3861 (+12) | 3872 (+11) | 3879 (+7) | 3892 (+13) |
+| mutations killed | — | 20/20 | 24/24 | 30/30 | 36/36 | 41/41 | 47 of 47, 0 survived, 0 did not apply |
 
 ### Phase 1 — session-scope seam
 
@@ -1308,12 +1309,43 @@ before the future is created.
 One thing the plan's sketch got wrong, found by its own test — see D10: the score
 must be **stored at admission**, not recomputed from the live clock.
 
+### Phase 10 — incremental commit-graph layout (A2)
+
+`CommitGraph.build` is now a wrapper over `buildResumable`, which also returns a
+`GraphLayoutState`, and `append` resumes from it. The state carries the lane
+bookkeeping **as it was entering `resumeFromRow`**, not as it was at the end of
+the walk — that is the correction amendment 0039.1 forced, and the field's doc
+says why.
+
+`resumeFromRow` is found by a cheap pre-scan: the first row with a parent that is
+not in the loaded history, which is exactly the condition under which
+`build` draws a stub instead of reserving a lane. Rows before it are provably
+unaffected and are reused **by identity**; everything from it on is laid out
+again over the combined history. The spine walk continues from where it stopped
+(`chainNext`) rather than being redone, and the lane-count maximum over the
+retained prefix is carried in `laneCountBefore`.
+
+`HistoryView` takes the resume path when the new list is a prefix-extension of
+the memoised one — an element-wise `identical` walk, which fails fast on a filter
+change or refresh, since those re-parse and produce new instances throughout. It
+runs the resume **inline** rather than on an isolate: the resumed span is the new
+page plus the open boundary, so skipping the isolate also skips the copy of the
+whole list, which was the other half of the cost A2 named. A repo switch drops
+the state.
+
+The differential test is the phase's precondition, and it passed on the first
+run: eight hand-built fixtures (merge across the boundary, octopus, a long-lived
+side branch, a filtered log whose parents never arrive, a page that supplies the
+spine itself, three sequential appends) plus 200 randomised DAGs, each asserting
+the appended layout is row-for-row and edge-for-edge what a from-scratch build
+produces.
+
 ### Sabotage
 
-`tool/mutations/0039-globals-and-heuristics.json`, 41 entries, final run:
+`tool/mutations/0039-globals-and-heuristics.json`, 47 entries, final run:
 
 ```
-41 killed, 0 survived, 0 did not apply
+47 killed, 0 survived, 0 did not apply
 ```
 
 Every check this work introduced has been observed failing against a deliberately
@@ -1449,13 +1481,47 @@ test observed a provider's cost reaching the cache; a membership scan now assert
 all twelve `reportSize` call sites carry `cost:`, the same instrument used for the
 LRU clear list and the telemetry call sites.
 
+**D12 — 2026-09-09 — Phase 10's first mutation run had two survivors and a
+broken entry, and all three were about tests that could not see the thing they
+named.**
+
+* `a2: the primary chain is frozen instead of extended` survived. The spine
+  fixture was a plain linear history, where every commit reaches lane 0 through
+  the waiting-lane path regardless of whether it is on the chain — so freezing
+  the chain changed nothing observable. A new fixture makes the spine decide:
+  HEAD is absent from page 1, so `primaryChain` is **empty** and the side commit
+  takes lane 0; page 2 brings HEAD in, and unless the walk continues, the side
+  commit keeps a lane it is no longer entitled to.
+* `a2: History rebuilds from scratch instead of resuming` survived. By design a
+  resumed layout and a rebuilt one are the same graph, so no behavioural
+  assertion can separate them — which is exactly why the wiring could be dead
+  with every test still green. The membership scan was too weak as first
+  written (it looked for the predicate by name, which an inserted `false &&`
+  leaves intact); it now pins the **exact** guard, the same rule the LRU
+  clear-list guard follows.
+* The third was a stale `find` string after `dart format` reflowed a list
+  literal — the same class as D9.
+
+**Also worth recording: the saving itself needed its own assertion.** Every
+identity test in that file passes just as happily against an implementation that
+rebuilds the prefix and produces an equal result, having proved nothing about
+cost. `rows before the resume point are reused, not rebuilt` asserts *identity*
+of the retained `GraphRow` instances, and it is what kills the
+lay-the-prefix-out-again mutation.
+
 **No deviation was found in Phases 1, 2 or 3.**
 
 ### Not done, and why
 
-* **Phase 10 (A2)** — in progress, and the most droppable: MADR amendment 0039.1
-  raised its risk, and its differential test is a precondition rather than a
-  nicety.
+* **Phase 10's optional sub-step was deliberately not taken.** Step 5 asked to
+  report `laneCount` over the *rendered* range rather than over all history, so
+  one messy region stops widening the gutter for the whole view. That is a UI
+  change with no bearing on A2's O(page) goal, and the plan itself attaches a
+  stop-and-prompt to it because of the minimap's density source. Left undone
+  rather than bundled into a performance phase; it is a self-contained
+  improvement whenever it is wanted.
+* **The A1 measurement on a real host is still owed** (see above). It is the one
+  acceptance criterion in this plan that only the maintainer can run.
 * **The A1 measurement on a real host is still owed.** The unit tests pin one
   command for any number of branches; the wall-clock and `countsByLabel`
   comparison on the 500-ref repository is a maintainer step and has not been
