@@ -308,6 +308,27 @@ limit. But it cannot be raised until the multiplication defect is understood,
 because the cap is currently the only thing bounding it. That is a new decision
 needing its own record and its own evidence, not a resumption of this one.
 
+**Pointer added 2026-09-09 — this amendment's evidence was re-measured and is
+partly wrong.** See
+[0041-MADR-the-watcher-the-client-cannot-kill.md](0041-MADR-the-watcher-the-client-cannot-kill.md),
+findings F3 and F4. The count above was taken with `pgrep -af mg-watch | wc -l`,
+which reads about **three times high** — a live watcher is two matching shells
+(the lease loop plus the backgrounded subshell that runs the watcher) and the
+query matches its own command line, measured as six matches for two live
+watchers. The per-repository tallies are **registry files, not concurrent
+watchers**, and a re-armed repository carries two token pairs whose older
+heartbeat reads *fresh* to any `-mmin -5` test for nearly five minutes after its
+watcher is gone. So "several armed watchers per repository, every one
+heartbeated" is not what was observed; litter and residue are.
+
+The revert **stands**, for the reason 0041 F5 gives instead: phase 2 re-keyed the
+ceiling from host to (session, host), taking the host-wide bound from 2 to as
+much as 8 x 6 and leaving no host-wide bound at all — handed to a lease whose
+reclaim latency is up to six minutes, because the client cannot kill the watcher
+it started (0041 F1, proven on the same host). The text above is left as
+written: it records what was believed at the time, and editing it would hide
+that the misreading happened.
+
 ## Considered Options
 
 * **Fix the leak only** (the original Option 1). Release the slot on every arm
