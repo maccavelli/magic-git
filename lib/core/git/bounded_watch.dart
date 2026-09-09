@@ -147,19 +147,46 @@ typedef BoundedWatchSpecSource = Future<BoundedWatchSpec> Function();
 /// retrying on the recovery timer (0022 M6).
 const int boundedWatchNoPathsExit = 97;
 
-/// Wraps [inner] — a watcher invocation that exits on its own timeout — in a
-/// loop that re-checks the client's [heartbeat] on every wake.
+/// Supervises [inner] — a watcher invocation, which must `exec` — so that it
+/// dies when the client that started it does.
 ///
-/// This is what closes the leak, and it has to live on the host because the
-/// client is exactly what is missing at the moment of failure. `inotifywait`
-/// blocks in `select()`; with no event to write it never gets a `SIGPIPE` and
-/// never learns its reader is gone, so it runs forever — 19 of them, the
-/// oldest 16.9 days (0025 A). A bounded `-t` is what forces `select()` to
-/// return often enough to ask whether anyone is still listening.
+/// This has to live on the host because the client is exactly what is missing
+/// at the moment of failure, and because **the client cannot kill it**:
+/// `session.kill(TERM)` is an RFC 4254 `"signal"` channel request OpenSSH's
+/// sshd does not implement, and closing the channel reaches a watcher blocked
+/// in `select()` not at all — with no event to write it never takes `EPIPE`
+/// (0025 A). Proven on a real host: without what follows, killing the client
+/// leaves the whole tree running indefinitely; with it, the tree is gone in
+/// under five seconds (MADR 0041 F1, F11).
 ///
-/// The loop shell survives where `exec` did not, so it owns its child's death:
-/// without the trap, a TERM would kill the loop and orphan the watcher —
-/// reproducing the defect this closes.
+/// Three things watch the watcher, each covering what the others cannot:
+///
+///  * **stdin EOF** — the fast path, and the only immediate one. The client
+///    cannot signal this shell, but closing the channel closes its stdin, so a
+///    reader on it learns at once.
+///  * **the lease poll** — the backstop for a client that stops refreshing
+///    [heartbeat] while the connection stays up. It re-reads the lease every
+///    [leasePoll] *without touching the watcher*. The previous design could
+///    only check the lease when the watcher exited, so the check landed at
+///    unpredictable intervals and cost a full recursive re-walk each time
+///    (0041 F2).
+///  * **the trap** — turns a signal into the same orderly shutdown.
+///
+/// `exec 3<&0` runs before anything is backgrounded and the watchdog reads fd
+/// 3, never fd 0. POSIX assigns `/dev/null` to an asynchronous list's standard
+/// input when job control is off, so `( cat … ) &` reading fd 0 sees EOF the
+/// instant it starts and kills the watcher milliseconds after it arms — which
+/// is indistinguishable from 0027 deviation (b), where every arm died in ~5 ms
+/// and the repository polled forever at 48 host processes a minute.
+///
+/// `kill -TERM "$$"` from inside a watchdog: `$$` is the *invoking* shell's pid
+/// and does not change in a subshell, so it reaches this loop and runs its
+/// trap. Signalling the watcher directly would leave the other watchdogs behind.
+///
+/// [inner] must `exec`. Without it `$w` is the subshell that `{ …; } &` forked
+/// and the watcher is that subshell's child, so killing `$w` orphans the very
+/// process this exists to own — which is precisely what the previous
+/// `kill "$c"` did (0041 F1's process tree).
 ///
 /// `find -mmin` rather than `stat`: `stat -c %Y` is GNU-only and the fswatch
 /// arm targets macOS.
@@ -167,24 +194,46 @@ String _leaseLoop({
   required String inner,
   required String heartbeat,
   required Duration staleAfter,
+  required Duration leasePoll,
+  String? pidFile,
 }) {
   final hb = ShellEscaper.escape(heartbeat);
   final mins = staleAfter.inMinutes < 1 ? 1 : staleAfter.inMinutes;
-  return 'c=; '
-      'cleanup() { [ -n "\$c" ] && kill "\$c" 2>/dev/null; exit 0; }; '
+  final poll = leasePoll.inSeconds < 1 ? 1 : leasePoll.inSeconds;
+  // The prelude records the pid before the lease is examined, so every exit
+  // path removes it again. Without this a lease-absent arm left a pid file only
+  // a connect-time sweep could reclaim, and litter of exactly that shape is
+  // what made a re-armed repository look like two live watchers (0041 F4).
+  final rmPid = pidFile == null
+      ? ''
+      : 'rm -f ${ShellEscaper.escape(pidFile)}; ';
+  final leaseAlive =
+      '[ -f $hb ] && [ -n "\$(find $hb -mmin -$mins 2>/dev/null)" ]';
+  return 'exec 3<&0; '
+      'w=; e=; l=; '
+      'cleanup() { '
+      '[ -n "\$w" ] && kill -TERM "\$w" 2>/dev/null; '
+      '[ -n "\$e" ] && kill -TERM "\$e" 2>/dev/null; '
+      '[ -n "\$l" ] && kill -TERM "\$l" 2>/dev/null; '
+      '${rmPid}exit 0; }; '
       'trap cleanup TERM INT HUP; '
-      'while :; do '
-      '[ -f $hb ] || exit 0; '
-      '[ -n "\$(find $hb -mmin -$mins 2>/dev/null)" ] || exit 0; '
-      '{ $inner; } & c=\$!; wait "\$c"; '
-      'done';
+      '{ $leaseAlive; } || { ${rmPid}exit 0; }; '
+      '{ $inner; } & w=\$!; '
+      '( cat <&3 >/dev/null 2>&1; kill -TERM "\$\$" 2>/dev/null ) & e=\$!; '
+      '( while :; do '
+      'kill -0 "\$w" 2>/dev/null || exit 0; '
+      '{ $leaseAlive; } || { kill -TERM "\$\$" 2>/dev/null; exit 0; }; '
+      'sleep $poll; '
+      'done ) & l=\$!; '
+      'wait "\$w"; '
+      'cleanup';
 }
 
 String boundedInotifyScript(
   List<String> watchDirs, {
   String? pidFile,
   String? heartbeat,
-  Duration wakeInterval = const Duration(minutes: 2),
+  Duration leasePoll = const Duration(seconds: 60),
   Duration staleAfter = const Duration(minutes: 5),
 }) {
   final joined = watchDirs.map(ShellEscaper.escape).join(' ');
@@ -203,13 +252,16 @@ String boundedInotifyScript(
         'exec stdbuf -oL inotifywait $fmt "\$@"; '
         'else exec inotifywait $fmt "\$@"; fi';
   }
-  final t = wakeInterval.inSeconds;
-  final inner =
+  // Identical to the legacy form above, and deliberately so: the watcher runs
+  // until it is killed. The `-t` that used to bound it existed only so the
+  // shell could wake and re-check the lease, which the poll now does without
+  // tearing the watch down (0041 F2).
+  const inner =
       'if command -v stdbuf >/dev/null 2>&1; then '
-      'stdbuf -oL inotifywait -t $t $fmt "\$@"; '
-      'else inotifywait -t $t $fmt "\$@"; fi';
+      'exec stdbuf -oL inotifywait $fmt "\$@"; '
+      'else exec inotifywait $fmt "\$@"; fi';
   return '$prelude'
-      '${_leaseLoop(inner: inner, heartbeat: heartbeat, staleAfter: staleAfter)}';
+      '${_leaseLoop(inner: inner, heartbeat: heartbeat, staleAfter: staleAfter, leasePoll: leasePoll, pidFile: pidFile)}';
 }
 
 /// fswatch equivalent of [boundedInotifyScript]: watch exactly [watchDirs],
@@ -230,7 +282,7 @@ String boundedFswatchScript(
   List<String> watchDirs, {
   String? pidFile,
   String? heartbeat,
-  Duration wakeInterval = const Duration(minutes: 2),
+  Duration leasePoll = const Duration(seconds: 60),
   Duration staleAfter = const Duration(minutes: 5),
 }) {
   final joined = watchDirs.map(ShellEscaper.escape).join(' ');
@@ -242,16 +294,13 @@ String boundedFswatchScript(
   if (heartbeat == null) {
     return '${prelude}exec fswatch -0 --latency 0.5 "\$@"';
   }
-  // fswatch has no -t of its own, so the bound comes from `timeout` where it
-  // exists. Where it does not (a bare macOS host without coreutils) the
-  // watcher cannot self-terminate; the connect-time sweep is the backstop.
-  final t = wakeInterval.inSeconds;
-  const fs = 'fswatch -0 --latency 0.5 "\$@"';
-  const inner =
-      'if command -v timeout >/dev/null 2>&1; then '
-      'timeout TSECS $fs; else $fs; fi';
+  // The `timeout` wrapper is gone, and with it the caveat that a bare macOS
+  // host without coreutils could not self-terminate: fswatch has no `-t` of its
+  // own, but it no longer needs one — stdin EOF reaches it through the trap on
+  // every host (0041 F11).
+  const inner = 'exec fswatch -0 --latency 0.5 "\$@"';
   return '$prelude'
-      '${_leaseLoop(inner: inner.replaceAll('TSECS', '$t'), heartbeat: heartbeat, staleAfter: staleAfter)}';
+      '${_leaseLoop(inner: inner, heartbeat: heartbeat, staleAfter: staleAfter, leasePoll: leasePoll, pidFile: pidFile)}';
 }
 
 /// Records the arming shell's pid so a later sweep can find the watcher.
@@ -368,27 +417,26 @@ String recursiveWatchScript({
   required String excludes,
   String? pidFile,
   String? heartbeat,
-  Duration wakeInterval = const Duration(minutes: 2),
+  Duration leasePoll = const Duration(seconds: 60),
   Duration staleAfter = const Duration(minutes: 5),
 }) {
-  final t = wakeInterval.inSeconds;
   final prelude = _recordPid(pidFile);
   if (inotify) {
     const fmt = '-m -r -e modify,create,delete,move';
+    // `exec`, so the pid the lease loop holds is the watcher's own — see
+    // [_leaseLoop]. No `-t`: the watch is established once and kept, rather
+    // than torn down and re-walked every two minutes (0041 F2).
     final inner =
         'if command -v stdbuf >/dev/null 2>&1; then '
-        'stdbuf -oL inotifywait -t $t $fmt $excludes--format %w%f .; '
-        'else inotifywait -t $t $fmt $excludes--format %w%f .; fi';
+        'exec stdbuf -oL inotifywait $fmt $excludes--format %w%f .; '
+        'else exec inotifywait $fmt $excludes--format %w%f .; fi';
     return '$prelude'
-        '${_leaseLoop(inner: inner, heartbeat: heartbeat!, staleAfter: staleAfter)}';
+        '${_leaseLoop(inner: inner, heartbeat: heartbeat!, staleAfter: staleAfter, leasePoll: leasePoll, pidFile: pidFile)}';
   }
-  const fs =
-      "fswatch -0 --latency 0.5 --exclude '\\.git/.*\\.lock\$' "
+  const inner =
+      "exec fswatch -0 --latency 0.5 --exclude '\\.git/.*\\.lock\$' "
       r"--exclude '\.git/objects/' --exclude '\.git/logs/' "
       r"--exclude '\.git/fsmonitor--daemon/' .";
-  final inner =
-      'if command -v timeout >/dev/null 2>&1; then timeout $t $fs; '
-      'else $fs; fi';
   return '$prelude'
-      '${_leaseLoop(inner: inner, heartbeat: heartbeat!, staleAfter: staleAfter)}';
+      '${_leaseLoop(inner: inner, heartbeat: heartbeat!, staleAfter: staleAfter, leasePoll: leasePoll, pidFile: pidFile)}';
 }

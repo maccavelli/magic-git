@@ -137,7 +137,16 @@ void main() {
   // binary is unavailable here, but the lease loop wrapped around it is pure
   // shell — so the real script text runs with an `inotifywait` shim ahead of it
   // on PATH. What is under test is the loop: does it record its pid, does it
-  // re-arm while its lease is fresh, and does it give up when the lease is not.
+  // arm while its lease is fresh, and does it give up when the lease is not.
+  //
+  // MADR 0041 reversed one contract here. The loop used to re-arm the watcher
+  // on every `-t` wake, and a test asserted it did (`arms() > 1`). It now arms
+  // ONCE and keeps that watch: the wake existed only so the shell could
+  // re-check the lease, and a poll does that without tearing the watch down —
+  // and a watcher that dies should reach the client's lifecycle engine rather
+  // than being silently replaced on the host. The teardown behaviour the loop
+  // gained (stdin EOF, the lease poll, the correct kill target) is executed in
+  // watch_lease_teardown_exec_test.dart.
 
   group('watcher lease loop', () {
     late Directory dir;
@@ -147,12 +156,12 @@ void main() {
       dir = await Directory.systemTemp.createTemp('mg-lease-');
       shimDir = '${dir.path}/bin';
       Directory(shimDir).createSync();
-      // Counts its invocations, then exits as `-t` would on a quiet tree.
+      // Counts its invocations, then blocks the way `inotifywait -m` does now
+      // that nothing bounds it with `-t`.
       File('$shimDir/inotifywait').writeAsStringSync(
         '#!/bin/sh\n'
         'echo x >> "${dir.path}/arms"\n'
-        'sleep 0.2\n'
-        'exit 2\n',
+        'exec sleep 300\n',
       );
       await Process.run('chmod', ['+x', '$shimDir/inotifywait']);
       Directory('${dir.path}/.git').createSync();
@@ -259,12 +268,17 @@ void main() {
       expect(arms(), greaterThan(0), reason: 'the fswatch arm ran');
     });
 
-    test('records its pid and re-arms while the lease is fresh', () async {
+    test('records its pid and arms exactly once, keeping that watch', () async {
+      // Was `arms() > 1`, reversed deliberately by MADR 0041 — see the group
+      // comment. A second arm would mean the watch had been torn down and
+      // re-walked, which is the cost this removed, and would also mean a
+      // watcher death the client never heard about.
       File('${dir.path}/.git/mg-watch.t.hb').writeAsStringSync('');
       final p = await run();
       addTearDown(() => p.kill(ProcessSignal.sigkill));
 
-      // Give the loop time for several shim cycles (each ~0.2s).
+      // Comfortably longer than the old 0.2 s re-arm cycle, so a loop that
+      // still re-armed is caught rather than merely unobserved.
       await Future<void>.delayed(const Duration(milliseconds: 1500));
 
       final pidFile = File('${dir.path}/.git/mg-watch.t.pid');
@@ -275,8 +289,8 @@ void main() {
 
       expect(
         arms(),
-        greaterThan(1),
-        reason: 'a fresh lease must make the loop re-arm, not exit after one',
+        1,
+        reason: 'the watch is established once and kept, never re-walked',
       );
     });
   });

@@ -89,7 +89,9 @@ const _reviewedBoundarySites = <String, String>{
 const _compositionOnly = <String, String>{
   'bounded_watch_test.dart':
       'asserts the script is built from the paths it was given; behaviour is '
-      'executed in watcher_sweep_exec_test.dart and host_script_exec_test.dart',
+      'executed in watcher_sweep_exec_test.dart, host_script_exec_test.dart '
+      'and watch_lease_teardown_exec_test.dart (MADR 0041 — the lease loop\'s '
+      'teardown, against real processes)',
   'snapshot_fallback_test.dart':
       'pins that the ref parse is handed to the parse worker at all — a '
       'structural gate with no behavioural signature (see its own comment)',

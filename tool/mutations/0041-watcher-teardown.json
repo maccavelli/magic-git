@@ -1,0 +1,56 @@
+[
+  {
+    "label": "p1: the eof watchdog reads fd 0 instead of the saved descriptor",
+    "file": "lib/core/git/bounded_watch.dart",
+    "find": "      '( cat <&3 >/dev/null 2>&1; kill -TERM \"\\$\\$\" 2>/dev/null ) & e=\\$!; '",
+    "replace": "      '( cat >/dev/null 2>&1; kill -TERM \"\\$\\$\" 2>/dev/null ) & e=\\$!; '",
+    "tests": [
+      "test/watch_lease_teardown_exec_test.dart"
+    ]
+  },
+  {
+    "label": "p1: stdin EOF is not wired, so a dead client leaves a live watcher",
+    "file": "lib/core/git/bounded_watch.dart",
+    "find": "      '( cat <&3 >/dev/null 2>&1; kill -TERM \"\\$\\$\" 2>/dev/null ) & e=\\$!; '",
+    "replace": "      ''",
+    "tests": [
+      "test/watch_lease_teardown_exec_test.dart"
+    ]
+  },
+  {
+    "label": "p1: the kill target is the wrapper, not the watcher (no exec)",
+    "file": "lib/core/git/bounded_watch.dart",
+    "find": "        'exec stdbuf -oL inotifywait $fmt $excludes--format %w%f .; '",
+    "replace": "        'stdbuf -oL inotifywait $fmt $excludes--format %w%f .; '",
+    "tests": [
+      "test/watch_lease_teardown_exec_test.dart"
+    ]
+  },
+  {
+    "label": "p1: the lease backstop is gone, so a silent client is never noticed",
+    "file": "lib/core/git/bounded_watch.dart",
+    "find": "      '{ $leaseAlive; } || { kill -TERM \"\\$\\$\" 2>/dev/null; exit 0; }; '",
+    "replace": "      ''",
+    "tests": [
+      "test/watch_lease_teardown_exec_test.dart"
+    ]
+  },
+  {
+    "label": "p1: a lease-absent exit leaves its pid file behind as litter",
+    "file": "lib/core/git/bounded_watch.dart",
+    "find": "      '{ $leaseAlive; } || { ${rmPid}exit 0; }; '",
+    "replace": "      '{ $leaseAlive; } || { exit 0; }; '",
+    "tests": [
+      "test/watch_lease_teardown_exec_test.dart"
+    ]
+  },
+  {
+    "label": "p1: the bounded arm is bounded by -t again, re-walking its watch",
+    "file": "lib/core/git/bounded_watch.dart",
+    "find": "  const inner =\n      'if command -v stdbuf >/dev/null 2>&1; then '\n      'exec stdbuf -oL inotifywait $fmt \"\\$@\"; '",
+    "replace": "  const inner =\n      'if command -v stdbuf >/dev/null 2>&1; then '\n      'exec stdbuf -oL inotifywait -t 120 $fmt \"\\$@\"; '",
+    "tests": [
+      "test/bounded_watch_test.dart"
+    ]
+  }
+]

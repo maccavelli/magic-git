@@ -203,42 +203,56 @@ void main() {
     });
   });
 
-  // 0025 C1. The leak's mechanism is upstream: inotifywait blocks in select()
-  // and, with no event to write, never discovers its reader is gone — there is
-  // no SIGPIPE without a write. So no client-side teardown can reach it, and
-  // `-t` is the documented lever. Verified on the host: `-m -t 3` exits rc=2
-  // after exactly 3s of silence and still reports events meanwhile
-  // (inotifywait 3.22.1.0).
-  group('self-terminating watcher', () {
+  // 0025 C1 established that no client-side teardown can reach the watcher:
+  // inotifywait blocks in select() and, with no event to write, never takes a
+  // SIGPIPE. `-t` was the lever chosen then — a watcher that exits on its own
+  // timeout so the shell can wake and re-check the lease.
+  //
+  // MADR 0041 replaced that lever. `-t` bounded the leak at ~6 minutes and paid
+  // a full recursive re-walk per wake, and the loop's `kill "$c"` signalled the
+  // subshell rather than the watcher, so it orphaned what it claimed to own.
+  // The watcher now runs until it is killed, and three watchdogs kill it: stdin
+  // EOF (immediate, and the only thing that reaches a process the client cannot
+  // signal), a lease poll that does not disturb the watch, and the trap.
+  //
+  // COMPOSITION ONLY, per 0029. Everything about how these actually behave is
+  // executed against real processes in watch_lease_teardown_exec_test.dart and
+  // host_script_exec_test.dart. The two assertions this group used to make —
+  // `contains('-t 120')` and `contains('trap')` + `contains('kill')` — are gone
+  // rather than updated: the second was true for months while the kill went to
+  // the wrong pid, which is exactly the failure text assertions cannot see.
+  group('leased watcher', () {
     String armed() => boundedInotifyScript(
       ['/r/.git'],
       pidFile: '/r/.git/mg-watch.pid',
       heartbeat: '/r/.git/mg-watch.hb',
-      wakeInterval: const Duration(minutes: 2),
+      leasePoll: const Duration(seconds: 60),
       staleAfter: const Duration(minutes: 5),
     );
 
-    test('wakes on a bounded timeout instead of blocking forever', () {
-      expect(armed(), contains('-t 120'));
+    test('the lease it polls is the one it was given', () {
+      final s = armed();
+      expect(s, contains('mg-watch.hb'));
+      expect(s, contains('-mmin -5'), reason: 'staleAfter as find minutes');
+      expect(s, contains('sleep 60'), reason: 'leasePoll as sleep seconds');
     });
 
-    test(
-      're-checks the heartbeat on every wake and exits when it is stale',
-      () {
-        final s = armed();
-        expect(s, contains('mg-watch.hb'));
-        expect(s, contains('-mmin -5'), reason: 'staleAfter as find minutes');
-        expect(s, contains('exit 0'));
-      },
-    );
+    test('the watcher is exec-ed, so the supervised pid is the watcher', () {
+      // Composition of the one detail that decides whether `kill "$w"` reaches
+      // the watcher or an intermediate subshell. The behaviour — that the
+      // loop's direct child IS the watcher — is asserted against a real
+      // process table in watch_lease_teardown_exec_test.dart.
+      expect(armed(), contains('exec stdbuf -oL inotifywait'));
+      expect(armed(), isNot(contains('-t ')));
+    });
 
-    test('kills its child before exiting, so a signal orphans nothing', () {
-      // The loop shell survives where `exec` did not, so it owns the child's
-      // death. Without the trap, TERM would kill the loop and orphan the
-      // watcher — reproducing the very defect this closes.
+    test('the eof watchdog reads the saved descriptor, never fd 0', () {
+      // POSIX gives an asynchronous list /dev/null for stdin when job control
+      // is off, so `( cat … ) &` on fd 0 would fire instantly and kill the
+      // watcher milliseconds after it arms (0027 deviation (b) all over again).
       final s = armed();
-      expect(s, contains('trap'));
-      expect(s, contains('kill'));
+      expect(s, contains('exec 3<&0'));
+      expect(s, contains('cat <&3'));
     });
 
     test('without a heartbeat the script is the old unbounded form', () {

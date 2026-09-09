@@ -624,7 +624,23 @@ void main() {
         matches(RegExp(r'mg-watch\.[\w]+\.hb')),
         reason: 'checks its own heartbeat, not the repo-wide one',
       );
-      expect(script, contains('-t '), reason: 'bounded wait, not blocking');
+      // Was `contains('-t ')` — "bounded wait, not blocking". MADR 0041
+      // removed that lever: `-t` bounded the residue at ~6 minutes and paid a
+      // full recursive re-walk per wake, and the loop it woke signalled the
+      // wrong pid. What bounds the watcher now is the client's own stdin, read
+      // from a SAVED descriptor because POSIX hands an asynchronous list
+      // /dev/null (0041 F11).
+      expect(
+        script,
+        isNot(contains('-t ')),
+        reason: 'the watch is kept, not re-walked',
+      );
+      expect(
+        script,
+        contains('exec 3<&0'),
+        reason: 'the channel stdin is saved',
+      );
+      expect(script, contains('cat <&3'), reason: 'and the watchdog reads it');
       expect(script, contains('trap'), reason: 'owns its child on signal');
       await sub.cancel();
     },
