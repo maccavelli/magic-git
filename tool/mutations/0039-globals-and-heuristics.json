@@ -211,8 +211,8 @@
   {
     "label": "f5: the SSH executor records into the singleton",
     "file": "lib/core/ssh/ssh_command_executor.dart",
-    "find": "  SSHCommandExecutor(this._clientManager, {CommandTelemetry? telemetry})\n    : _telemetry = telemetry ?? CommandTelemetry.instance {",
-    "replace": "  SSHCommandExecutor(this._clientManager, {CommandTelemetry? telemetry})\n    : _telemetry = CommandTelemetry.instance {",
+    "find": "  }) : _telemetry = telemetry ?? CommandTelemetry.instance,",
+    "replace": "  }) : _telemetry = CommandTelemetry.instance,",
     "tests": [
       "test/session_telemetry_isolation_test.dart",
       "test/ssh_command_executor_test.dart"

@@ -1059,9 +1059,10 @@ publication is a local operation.
 maintainer's instruction to run those five; committed as `3ece3b6` (code) +
 `0cc1897` (docs) and pushed. **Phase 4 executed 2026-09-09** on the instruction
 to proceed, and committed separately per the maintainer's standing request that
-each phase get its own commit so rollback is easier.
+each phase get its own commit so rollback is easier. **Phase 7 executed
+2026-09-09.**
 
-Phases 7 (H1/H3), 8 (A1), 9 (A3) and 10 (A2) follow.
+Phases 8 (A1), 9 (A3) and 10 (A2) follow.
 
 **Commit cadence.** Each phase is its own commit, `git commit --no-edit` only —
 `AGENTS.md` forbids composing message text and a global `prepare-commit-msg`
@@ -1083,11 +1084,11 @@ The tree was **not** empty, and that is deviation D1 below.
 
 ### Baselines and outcomes
 
-| | before | after phases 1/2/3/5/6 | after phase 4 |
-|---|---|---|---|
-| `flutter analyze` | clean | clean | clean |
-| `flutter test` | 3804 passed, 3 skipped | 3841 passed, 3 skipped (+37) | 3849 passed, 3 skipped (+8) |
-| mutations killed | — | 20 of 20 | 24 of 24, 0 survived, 0 did not apply |
+| | before | phases 1/2/3/5/6 | phase 4 | phase 7 |
+|---|---|---|---|---|
+| `flutter analyze` | clean | clean | clean | clean |
+| `flutter test` | 3804 passed, 3 skipped | 3841 (+37) | 3849 (+8) | 3861 (+12) |
+| mutations killed | — | 20 of 20 | 24 of 24 | 30 of 30, 0 survived, 0 did not apply |
 
 ### Phase 1 — session-scope seam
 
@@ -1228,12 +1229,34 @@ Eight tests. Three go beyond the plan's sketch, and deviation D5 says why:
 the first draft asserted only that the constructor argument existed, and two
 mutations walked straight through it.
 
+### Phase 7 — conditioning the adaptive read controller (H1, H3)
+
+**H1.** `AdaptiveReadConcurrency`'s single `minRtt`/EWMA/window became a
+`Map<String, _BucketStats>` keyed by `CommandTelemetry.bucketLabel`, bounded at
+64 buckets with least-recently-sampled eviction. Warm-up is per bucket, the
+gradient is computed for the bucket that just reported, and `gradientFor(bucket)`
+joins the un-suffixed getters (which now describe the most-recently-sampled
+bucket, for the Dashboard). The step machinery — `consecutiveRequired`,
+`_desired`, `_commit` — is untouched: the input was wrong, not the law.
+
+The executor passes `bucket: CommandTelemetry.bucketLabel(gitArgs.join(' '))`.
+
+**H3.** `onChannelOpenError` now also arms a dwell: `_recentErrors` (decayed to
+zero after `errorMemory`, 15 min) sizes it as `30 s × 2^(n−1)`, capped at 8 min,
+and `onSuccess` raises the floor only once that dwell has elapsed. The streak is
+*kept* across the hold, so recovery is immediate at the end of the dwell rather
+than needing three fresh successes. `onSuccess` moved inside the executor's
+`lane == ExecLane.read` guard — the argument the sample path has always made.
+
+Both H1 tests are present, and the negative one is what makes the positive one
+mean anything: a bucket whose own durations inflate 3× still sheds the cap.
+
 ### Sabotage
 
-`tool/mutations/0039-globals-and-heuristics.json`, 24 entries, final run:
+`tool/mutations/0039-globals-and-heuristics.json`, 30 entries, final run:
 
 ```
-24 killed, 0 survived, 0 did not apply
+30 killed, 0 survived, 0 did not apply
 ```
 
 Every check this work introduced has been observed failing against a deliberately
@@ -1307,10 +1330,51 @@ as `branch_diff_lru_test`'s clear-list guard, and it fails on a fourth call site
 added later. It reads the file as *bytes* with a lenient decode, because that
 file is the one `grep` treats as binary.
 
+**D6 — 2026-09-09 — H3's dwell hid H3's lane guard from its own test.**
+`h3: a success on any lane lifts the error floor` survived. The test ran six
+successful *exclusive* commands after a channel-open error and asserted the cap
+stayed down — which it does either way, because the 30 s dwell holds the floor
+regardless of lane. The two halves of H3 mask each other, and no assertion
+placed after an instant `onChannelOpenError()` can separate them.
+*Resolution:* an optional `adaptiveReads` constructor parameter on
+`SSHCommandExecutor` (`@visibleForTesting`, alongside the existing
+`noteReadSample` seam), so a test can inject a controller on a clock it owns,
+step past the dwell, and then observe that mutations still do not lift the floor
+while reads do. The control — reads *do* lift it — is asserted in the same test.
+
+**D7 — 2026-09-09 — `bucketLabel` was `@visibleForTesting`.**
+The plan said to reuse it and did not notice the annotation, which makes calling
+it from production an analyzer warning. *Resolution:* drop the annotation and say
+in its doc why it is public — it now has two consumers that must agree on what
+"the same command" means, which is the reason for one definition rather than two.
+The alternative (a second normaliser inside the controller) would have let the
+Dashboard's buckets and the controller's buckets drift apart silently.
+
+**D8 — 2026-09-09 — one pre-existing test pinned exactly what H3 changes.**
+`adaptive_read_concurrency_test.dart`'s "three successes raise the error floor
+back to what the gradient wants" asserts the recovery rule H3 replaces. It was
+**amended, not deleted**: it now injects a clock, asserts that three successes
+are *not* sufficient while the dwell holds, and that the floor still recovers on
+the first success after it. The comment says what it used to assert and why that
+is no longer the contract. (The plan's acceptance criterion about pre-existing
+assertions passing unedited names `ssh_command_executor_test.dart:60-111`, which
+does pass unedited.)
+
+**D9 — 2026-09-09 — a Phase 4 catalogue entry went stale when Phase 7 touched
+the same constructor.** The full run after Phase 7 reported
+`f5: the SSH executor records into the singleton` as DID-NOT-APPLY: Phase 7 added
+an `adaptiveReads` parameter, `dart format` reflowed `SSHCommandExecutor`'s
+constructor, and the entry's `find` string no longer existed. Nothing was wrong
+with the code or the test — the *mutation* had silently stopped testing anything,
+which is the failure mode `tool/mutate.py`'s header calls out and the reason it
+reports rather than skips. Re-anchored on the initialiser line and killed.
+**A per-phase mutation slice is not enough on its own: run the whole catalogue at
+every phase boundary, because a later phase can un-arm an earlier phase's check.**
+
 **No deviation was found in Phases 1, 2 or 3.**
 
 ### Not done, and why
 
-* **Phases 7–10 (H1, H3, A1, A3, A2)** — in progress. Each is independent of
-  what landed here; Phase 9 (A3) builds on Phase 2 and is unblocked by it.
+* **Phases 8–10 (A1, A3, A2)** — in progress. Each is independent of what
+  landed here; Phase 9 (A3) builds on Phase 2 and is unblocked by it.
 
