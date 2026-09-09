@@ -1059,10 +1059,11 @@ publication is a local operation.
 maintainer's instruction to run those five; committed as `3ece3b6` (code) +
 `0cc1897` (docs) and pushed. **Phase 4 executed 2026-09-09** on the instruction
 to proceed, and committed separately per the maintainer's standing request that
-each phase get its own commit so rollback is easier. **Phases 7 and 8 executed
-2026-09-09.**
+each phase get its own commit so rollback is easier. **Phases 7, 8 and 9
+executed 2026-09-09.**
 
-Phases 9 (A3) and 10 (A2) follow.
+Phase 10 (A2) follows — the last, and the one MADR amendment 0039.1 flagged as
+the most droppable.
 
 **Commit cadence.** Each phase is its own commit, `git commit --no-edit` only —
 `AGENTS.md` forbids composing message text and a global `prepare-commit-msg`
@@ -1084,11 +1085,11 @@ The tree was **not** empty, and that is deviation D1 below.
 
 ### Baselines and outcomes
 
-| | before | phases 1/2/3/5/6 | phase 4 | phase 7 | phase 8 |
-|---|---|---|---|---|---|
-| `flutter analyze` | clean | clean | clean | clean | clean |
-| `flutter test` | 3804 passed, 3 skipped | 3841 (+37) | 3849 (+8) | 3861 (+12) | 3872 (+11) |
-| mutations killed | — | 20 of 20 | 24 of 24 | 30 of 30 | 36 of 36, 0 survived, 0 did not apply |
+| | before | 1/2/3/5/6 | 4 | 7 | 8 | 9 |
+|---|---|---|---|---|---|---|
+| `flutter analyze` | clean | clean | clean | clean | clean | clean |
+| `flutter test` | 3804, 3 skipped | 3841 (+37) | 3849 (+8) | 3861 (+12) | 3872 (+11) | 3879 (+7) |
+| mutations killed | — | 20/20 | 24/24 | 30/30 | 36/36 | 41 of 41, 0 survived, 0 did not apply |
 
 ### Phase 1 — session-scope seam
 
@@ -1287,12 +1288,32 @@ two primitives** — `%(ahead-behind:)` emits ahead first and space-separated,
 on git 2.55.0 before the plan was written; the assertion that pins it is the
 mutation catalogue's primary target here.
 
+### Phase 9 — cost-aware eviction (A3)
+
+`reportSize` takes the measured `Duration` the fetch took, and eviction picks the
+lowest Greedy-Dual-Size-Frequency score — `clock + hits × (costMillis / bytes)` —
+rather than the least-recently-used entry. Both bounds use it: the count cap in
+`touch` and the byte budget in `reportSize`. `maxEntryBytes`'s
+release-immediately rule is unchanged, and the caps and budgets themselves are
+untouched.
+
+An entry whose cost is **unknown** is in flight and is never a candidate;
+`reportSize` without a `cost` argument records a *known zero*, which is a
+candidate and ranks first. That distinction is what stops eviction closing the
+link of a provider that is about to publish.
+
+All twelve provider call sites time their own fetch with a `Stopwatch` started
+before the future is created.
+
+One thing the plan's sketch got wrong, found by its own test — see D10: the score
+must be **stored at admission**, not recomputed from the live clock.
+
 ### Sabotage
 
-`tool/mutations/0039-globals-and-heuristics.json`, 36 entries, final run:
+`tool/mutations/0039-globals-and-heuristics.json`, 41 entries, final run:
 
 ```
-36 killed, 0 survived, 0 did not apply
+41 killed, 0 survived, 0 did not apply
 ```
 
 Every check this work introduced has been observed failing against a deliberately
@@ -1407,12 +1428,34 @@ reports rather than skips. Re-anchored on the initialiser line and killed.
 **A per-phase mutation slice is not enough on its own: run the whole catalogue at
 every phase boundary, because a later phase can un-arm an earlier phase's check.**
 
+**D10 — 2026-09-09 — the Greedy-Dual clock did nothing as first written.**
+The plan describes the score as `value = _clock + freq × (cost / size)` and the
+first implementation computed it on demand from the live clock. The ageing test
+failed, correctly: if every entry is rescored against the current clock they all
+rise *together* and their order never changes, so a once-hot expensive entry
+outranks everything admitted after it for the life of the session — the clock
+term is inert. Greedy-Dual stores the score at admission and re-reference; the
+clock is then the floor later admissions start from, and an old high score is
+eventually overtaken. Fixed, and the reason is in the field's doc comment so the
+next reader does not re-derive it.
+
+**D11 — 2026-09-09 — Phase 9's first mutation run had two survivors.**
+`a3: the cost term is dropped` survived because the test had the expensive entry
+and the least-recently-used entry be *different* — so LRU and the cost policy
+agreed on the victim and nothing could tell them apart. Rewritten so they
+disagree: the expensive entry is now the oldest, which any recency-only policy
+takes first. `a3: providers stop measuring what a fetch cost` survived because no
+test observed a provider's cost reaching the cache; a membership scan now asserts
+all twelve `reportSize` call sites carry `cost:`, the same instrument used for the
+LRU clear list and the telemetry call sites.
+
 **No deviation was found in Phases 1, 2 or 3.**
 
 ### Not done, and why
 
-* **Phases 9–10 (A3, A2)** — in progress. Phase 9 builds on Phase 2 and is
-  unblocked by it; Phase 10 is independent and the most droppable.
+* **Phase 10 (A2)** — in progress, and the most droppable: MADR amendment 0039.1
+  raised its risk, and its differential test is a precondition rather than a
+  nicety.
 * **The A1 measurement on a real host is still owed.** The unit tests pin one
   command for any number of branches; the wall-clock and `countsByLabel`
   comparison on the 500-ref repository is a maintainer step and has not been
