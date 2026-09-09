@@ -67,11 +67,8 @@ class _ArmsAlways extends SSHCommandExecutor {
   }) async => _Handle();
 }
 
-RemoteWatchService _serviceOn(String host) => RemoteWatchService(
-  _ArmsAlways(),
-  hostKey: () => host,
-  streamBudget: _budgetFor2,
-);
+RemoteWatchService _serviceOn(String host) =>
+    RemoteWatchService(_ArmsAlways(), hostKey: () => host);
 
 /// Refused arms this repo has recorded. Every ceiling refusal files an
 /// `armFailed` transition, so this counts attempts that could only lose —
@@ -84,8 +81,6 @@ int _ceilingRefusals(String repoPath) => watchDiagnostics
           r.kind == WatchTransition.armFailed && r.cause.startsWith('ceiling'),
     )
     .length;
-
-int _budgetFor2() => RemoteWatchService.reservedStreams + 2;
 
 void main() {
   setUp(() {
@@ -254,11 +249,7 @@ void main() {
     // host's budget permanently short by one.
     var host = 'alpha';
     final exec = _ArmsAlways();
-    final service = RemoteWatchService(
-      exec,
-      hostKey: () => host,
-      streamBudget: _budgetFor2,
-    );
+    final service = RemoteWatchService(exec, hostKey: () => host);
 
     final sub = service.watch('/one').listen((_) {});
     await pumpEventQueue();

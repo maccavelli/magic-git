@@ -74,8 +74,6 @@ class _ArmsAlwaysExecutor extends SSHCommandExecutor {
   }
 }
 
-int _budgetFor2() => RemoteWatchService.reservedStreams + 2;
-
 void main() {
   setUp(() {
     watchDiagnostics.clear();
@@ -92,7 +90,7 @@ void main() {
     'a ceiling refusal is recorded as armFailed with its cause and count',
     () async {
       final executor = _ArmsAlwaysExecutor();
-      final service = RemoteWatchService(executor, streamBudget: _budgetFor2);
+      final service = RemoteWatchService(executor);
       final subs = <StreamSubscription<RepoWatchEvent>>[];
 
       // Fill the ceiling, then ask for one more.
@@ -100,7 +98,10 @@ void main() {
         subs.add(service.watch(repo).listen((_) {}));
       }
       await pumpEventQueue();
-      expect(RemoteWatchService.liveWatchers, service.maxConcurrentWatchers);
+      expect(
+        RemoteWatchService.liveWatchers,
+        RemoteWatchService.maxConcurrentWatchers,
+      );
 
       subs.add(service.watch('/c').listen((_) {}));
       await pumpEventQueue();
@@ -117,7 +118,10 @@ void main() {
           .toList();
       expect(armFailed, hasLength(1));
       expect(armFailed.single.cause, contains('ceiling'));
-      expect(armFailed.single.liveWatchers, service.maxConcurrentWatchers);
+      expect(
+        armFailed.single.liveWatchers,
+        RemoteWatchService.maxConcurrentWatchers,
+      );
 
       // And the engine's own consequence of that refusal.
       expect(
@@ -140,7 +144,7 @@ void main() {
     // inotifywait" is not. The engine cannot tell them apart, so it cannot
     // treat them differently; carrying the reason is the prerequisite.
     final executor = _ArmsAlwaysExecutor();
-    final service = RemoteWatchService(executor, streamBudget: _budgetFor2);
+    final service = RemoteWatchService(executor);
     final subs = <StreamSubscription<RepoWatchEvent>>[];
     for (final repo in ['/a', '/b']) {
       subs.add(service.watch(repo).listen((_) {}));
@@ -167,10 +171,7 @@ void main() {
   });
 
   test('a healthy arm is recorded as armed, not as a failure', () async {
-    final service = RemoteWatchService(
-      _ArmsAlwaysExecutor(),
-      streamBudget: _budgetFor2,
-    );
+    final service = RemoteWatchService(_ArmsAlwaysExecutor());
     final sub = service.watch('/ok').listen((_) {});
     await pumpEventQueue();
 
@@ -187,7 +188,6 @@ void main() {
     final service = RemoteWatchService(
       _ArmsAlwaysExecutor(),
       onDiagnostic: lines.add,
-      streamBudget: _budgetFor2,
     );
     final subs = <StreamSubscription<RepoWatchEvent>>[];
     for (final repo in ['/a', '/b']) {

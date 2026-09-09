@@ -131,11 +131,7 @@ class RemoteWatchService {
     this._executor, {
     this.onDiagnostic,
     String Function()? hostKey,
-    int Function()? streamBudget,
-    Object? scope,
-  }) : _hostKey = hostKey ?? _noHost,
-       _streamBudget = streamBudget ?? _defaultStreamBudget,
-       _scope = scope ?? _noScope;
+  }) : _hostKey = hostKey ?? _noHost;
 
   /// Where a watcher's own stderr goes.
   final void Function(String line)? onDiagnostic;
@@ -151,64 +147,30 @@ class RemoteWatchService {
 
   static String _noHost() => '';
 
-  /// The transport's live ceiling on concurrent long-lived stream channels —
-  /// `SSHCommandExecutor.maxConcurrentStreams`.
-  ///
-  /// A callback for the same reason [_hostKey] is: the answer changes when the
-  /// dedicated stream client degrades onto the command client or is re-dialled,
-  /// and reading it eagerly would either pin a stale number or, if watched,
-  /// rebuild the service and restart every live watcher.
-  final int Function() _streamBudget;
-
-  /// Which session container owns this service. The channel budget belongs to a
-  /// connection and every tab has its own; see [_liveByHost].
-  final Object _scope;
-
-  static const Object _noScope = '(unscoped)';
-
-  /// Assumed budget when none is supplied — the degraded single-client figure,
-  /// so a caller that forgets to wire it is conservative rather than optimistic.
-  static int _defaultStreamBudget() => 2;
-
   /// Diagnostic lines reported per arm.
   static const int maxDiagnosticLines = 20;
 
-  /// Channels reserved for the other two long-lived stream consumers: the CI
-  /// job trace (`glab_service.dart`) and clone progress (`clone_controller`).
-  /// Watchers must not be able to starve either.
-  static const int reservedStreams = 2;
-
-  /// Live watchers one **session** may hold on one **host** at once.
+  /// Live watcher processes one **host** may hold at once.
   ///
-  /// **Derived, not chosen.** A watcher holds exactly one long-lived SSH
-  /// channel, and the executor already caps those at
-  /// `SSHCommandExecutor.maxConcurrentStreams` — 8 with a dedicated stream
-  /// client, 2 degraded — refusing past it with `SSHStreamBudgetExhausted`,
-  /// which the arm below already handles. This is that budget minus
-  /// [reservedStreams], floored at 1 so a degraded single-client session still
-  /// watches the repository the user is looking at.
+  /// One active repo plus one background. Past this the app polls and says so,
+  /// rather than accumulating — 19 orphaned `inotifywait` processes, the
+  /// oldest 16.9 days, is what "no ceiling at all" produced (0025 C3).
   ///
-  /// It used to be the constant 2, and nothing connected it to the 8 it stood in
-  /// front of. On a fifteen-repository host that cap forced thirteen
-  /// repositories onto a poll measured at ~48 git processes per minute each,
-  /// while the host used 0.18 % of its inotify watch budget and the transport
-  /// would have granted four times as many streams (MADR 0040 F3, F5, F6).
+  /// **Per host**, and that word is load-bearing. This used to read "per
+  /// connection too, because the app holds one connection at a time
+  /// (`connectionProvider` is a plain notifier, not a family)" — which was
+  /// already false when it was written on 2026-09-04: multi-tab landed on
+  /// 2026-07-12 (`11689cc`), and `connectionProvider` is indeed not a family
+  /// but there are up to eight of it, one per tab container, each with its own
+  /// live session. The named guard could not see it either:
+  /// `watch_ceiling_recovery_test.dart` asserts two service *instances* share
+  /// one ceiling, which stays true whatever the counter is keyed by.
   ///
-  /// The orphan accumulation this cap was originally introduced for — 19
-  /// `inotifywait` processes, the oldest 16.9 days (0025 C3) — is now the
-  /// lease's job: watchers self-terminate when their heartbeat goes stale
-  /// (0025 A/C1, 0027), and a census of that same host found zero orphans
-  /// (0040 F2).
-  ///
-  /// **Per (session, host).** The channel budget belongs to a connection and
-  /// every tab has its own; the host-level concern the old key served is the
-  /// lease's now. MADR 0039 F4 keyed it by host, which fixed cross-host
-  /// starvation; this adds the session, which is what the budget it derives
-  /// from is actually scoped to.
-  int get maxConcurrentWatchers {
-    final derived = _streamBudget() - reservedStreams;
-    return derived < 1 ? 1 : derived;
-  }
+  /// Counted globally, the budget a host is owed was spent by whichever tab
+  /// asked first, and a second host could be starved having consumed nothing.
+  /// [_liveByHost] keys it where it belongs (MADR 0039 F4);
+  /// `watch_ceiling_per_host_test.dart` is the check that can fail on it.
+  static const int maxConcurrentWatchers = 2;
 
   /// How often the client refreshes a watcher's heartbeat while it is alive.
   static const Duration heartbeatInterval = Duration(seconds: 60);
@@ -279,7 +241,7 @@ class RemoteWatchService {
   /// instance would hand each its own budget and multiply the ceiling (0028
   /// amendment 0028.1). Keyed by host because the process now holds several
   /// sessions at once (MADR 0039 F4).
-  static final Map<(Object, String), int> _liveByHost = {};
+  static final Map<String, int> _liveByHost = {};
 
   /// Broadcasts the host whose watcher slot was just released, so a repo that
   /// was refused by the ceiling can take it immediately instead of polling
@@ -290,30 +252,19 @@ class RemoteWatchService {
   static final StreamController<String> _slotReleases =
       StreamController<String>.broadcast();
 
-  /// Fires once per released watcher slot, carrying that slot's `scope\u0000host`.
+  /// Fires once per released watcher slot, carrying that slot's host.
   static Stream<String> get slotReleases => _slotReleases.stream;
 
-  static String _releaseKey(Object scope, String host) => '$scope\u0000$host';
-
-  /// Releases on one (session, host) alone, in the shape `watchLifecycle` takes.
-  static Stream<void> slotReleasesFor(Object scope, String host) =>
-      _slotReleases.stream
-          .where((k) => k == _releaseKey(scope, host))
-          .map((_) {});
+  /// Releases on [host] alone, in the shape `watchLifecycle` takes.
+  static Stream<void> slotReleasesForHost(String host) =>
+      _slotReleases.stream.where((h) => h == host).map((_) {});
 
   /// Live watcher count across every host — for tests and diagnostics.
   static int get liveWatchers =>
       _liveByHost.values.fold(0, (sum, n) => sum + n);
 
   /// Live watcher count for one host — for tests and diagnostics.
-  static int liveWatchersFor(String host) => _liveByHost.entries
-      .where((e) => e.key.$2 == host)
-      .fold(0, (sum, e) => sum + e.value);
-
-  /// Live watcher count for one session on one host — the number the ceiling
-  /// actually compares against.
-  static int liveWatchersIn(Object scope, String host) =>
-      _liveByHost[(scope, host)] ?? 0;
+  static int liveWatchersFor(String host) => _liveByHost[host] ?? 0;
 
   /// Test seam: the counter is process-global, so a test that arms watchers
   /// must be able to start from a known state.
@@ -390,7 +341,7 @@ class RemoteWatchService {
       pollInterval: pollInterval,
       recoveryInterval: recoveryInterval,
       onPollingRecoveryAttempt: () => cachedTool = null,
-      slotReleased: slotReleasesFor(_scope, _hostKey()),
+      slotReleased: slotReleasesForHost(_hostKey()),
       onTransition: (kind, cause, restarts) {
         _record(repoPath, kind, cause, restarts);
         // Degradation is the expensive state and the one a maintainer needs
@@ -432,8 +383,7 @@ class RemoteWatchService {
         // connection that changes host mid-arm must not credit the slot back
         // to a host that never paid for it.
         final host = _hostKey();
-        final key = (_scope, host);
-        final liveHere = _liveByHost[key] ?? 0;
+        final liveHere = _liveByHost[host] ?? 0;
         if (liveHere >= maxConcurrentWatchers) {
           onDiagnostic?.call(
             'watcher ceiling reached for $host '
@@ -452,23 +402,21 @@ class RemoteWatchService {
         // connect — and every one of them awaits the tool probe before this
         // point, so a check that did not reserve let all of them pass the
         // ceiling together. Released on every path that does not end armed.
-        _liveByHost[key] = liveHere + 1;
+        _liveByHost[host] = liveHere + 1;
         var armCounted = true;
         void releaseSlot() {
           if (!armCounted) return;
           armCounted = false;
-          final n = _liveByHost[key] ?? 0;
+          final n = _liveByHost[host] ?? 0;
           if (n > 1) {
-            _liveByHost[key] = n - 1;
+            _liveByHost[host] = n - 1;
           } else {
-            _liveByHost.remove(key);
+            _liveByHost.remove(host);
           }
           // Announce room on THIS host. Several waiting repos may wake
           // together; the reserve-then-arm ceiling settles who gets it, and the
           // losers are refused exactly as they were before.
-          if (!_slotReleases.isClosed) {
-            _slotReleases.add(_releaseKey(_scope, host));
-          }
+          if (!_slotReleases.isClosed) _slotReleases.add(host);
         }
 
         // EVERY exit from here releases the slot. The four explicit releases
