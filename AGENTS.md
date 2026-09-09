@@ -21,12 +21,19 @@ UI (macos_ui + Riverpod). macOS is the only target platform.
   skipped by default; run only when explicitly asked:
   `flutter test --run-skipped -t live-forge test/create_repo_wire_live_test.dart`.
   See `dart_test.yaml`.
-- **Never commit `macos/Runner/Release.entitlements` with keys stripped.** The
-  committed file must always contain `com.apple.security.app-sandbox` and
-  `keychain-access-groups`. `build_macos.sh --unsigned` strips them
-  *transiently* (gitignored `.bak` backup, restored via an EXIT trap). If
-  `git diff` shows those keys deleted, a build is in flight or died mid-run —
-  restore the file, don't commit that state.
+- **`macos/Runner/Release.entitlements` is never modified by any build.** It
+  always contains `com.apple.security.app-sandbox` and
+  `keychain-access-groups`, and no script strips or restores it — that pattern
+  shipped stripped to git three times and separately broke a build on another
+  machine ("Entitlements file … was modified during the build"), and was
+  removed in MADR 0042. `build_macos.sh --unsigned` instead selects a second
+  tracked file, `Release-unsigned.entitlements` (the same document minus
+  exactly those two keys), via an xcconfig variable
+  (`Configs/Local.xcconfig`, gitignored, rewritten on every run). If `git diff`
+  ever shows `Release.entitlements` with keys missing, that is a direct edit —
+  `git checkout -- macos/Runner/Release.entitlements` and look at what changed
+  it; `test/macos_entitlements_canon_test.dart` enforces both files and their
+  relationship, and should fail before you ever see this in a diff.
 - **Don't commit or push unless asked.** The maintainer commits each work cycle
   himself.
 - **Never write commit message text.** A global `prepare-commit-msg` hook

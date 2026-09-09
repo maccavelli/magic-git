@@ -50,10 +50,13 @@ app.*.map.json
 /RemoteMagicGit-macos.zip
 /.venv-icons/
 
-# Transient backup build_macos.sh --unsigned makes while it strips the
-# entitlements for the build; its EXIT trap restores and removes it. It only
-# exists mid-build (or after a killed build) and must never be committed —
-# it once was, swept up alongside a real change (81aa5cf, repaired since).
+# TOMBSTONE — nothing writes this any more (MADR 0042). The build used to
+# strip Release.entitlements in place and back it up here while it did; that
+# shipped stripped to git three times, so build_macos.sh now selects between
+# TWO tracked files (Release.entitlements / Release-unsigned.entitlements) via
+# an xcconfig variable instead, and never modifies either. The ignore rule
+# stays so a stray copy left by an older checkout of build_macos.sh can never
+# become committable.
 /macos/Runner/Release.entitlements.bak
 
 # Per-machine build selection: build_macos.sh writes this on every run to point
