@@ -25,6 +25,12 @@ COUNT=$("$GIT" -C "$REPO" rev-list --count "$TAG..HEAD")
 VERSION="$BASE.$COUNT"
 
 PLIST="$TARGET_BUILD_DIR/$INFOPLIST_PATH"
+[ -f "$PLIST" ] || {
+  echo "error: $INFOPLIST_PATH is not in the product bundle yet — the app was" >&2
+  echo "not assembled before this phase ran. Clean build/macos and rebuild; if" >&2
+  echo "it recurs, this phase is running before Info.plist processing (MADR 0042 F6)." >&2
+  exit 1
+}
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$PLIST"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $VERSION" "$PLIST"
 echo "note: stamped version $VERSION into $INFOPLIST_PATH"
