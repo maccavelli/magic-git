@@ -38,7 +38,7 @@
   {
     "label": "p1: a lease-absent exit leaves its pid file behind as litter",
     "file": "lib/core/git/bounded_watch.dart",
-    "find": "      '{ $leaseAlive; } || { ${rmPid}exit 0; }; '",
+    "find": "      '{ $leaseAlive; } || { ${release}exit 0; }; '",
     "replace": "      '{ $leaseAlive; } || { exit 0; }; '",
     "tests": [
       "test/watch_lease_teardown_exec_test.dart"
@@ -76,6 +76,69 @@
     "file": "lib/core/git/remote_watch_service.dart",
     "find": "                  'rm -f ${ShellEscaper.escape(heartbeat)}',",
     "replace": "                  'rm -f ${ShellEscaper.escape(watchPidFile(spec?.gitDir ?? '$repoPath/.git', token))}',",
+    "tests": [
+      "test/watch_lease_release_test.dart"
+    ]
+  },
+  {
+    "label": "p3: the repository is never claimed, so two watchers can hold it",
+    "file": "lib/core/git/bounded_watch.dart",
+    "find": "      (lock == null ? '' : _lockPrelude(lock, staleAfter: staleAfter)) +\n      _recordPid(pidFile);",
+    "replace": "      _recordPid(pidFile);",
+    "tests": [
+      "test/watch_lease_teardown_exec_test.dart"
+    ]
+  },
+  {
+    "label": "p3: a fresh claim is stolen instead of respected",
+    "file": "lib/core/git/bounded_watch.dart",
+    "find": "      'then exit $boundedWatchLockedExit; fi; '",
+    "replace": "      'then :; fi; '",
+    "tests": [
+      "test/watch_lease_teardown_exec_test.dart"
+    ]
+  },
+  {
+    "label": "p3: the claim is released without checking who holds it",
+    "file": "lib/core/git/bounded_watch.dart",
+    "find": "  return '[ \"\\$(cat $dir/token 2>/dev/null)\" = $tok ] && rm -rf $dir; ';",
+    "replace": "  return 'rm -rf $dir; ';",
+    "tests": [
+      "test/watch_lease_teardown_exec_test.dart"
+    ]
+  },
+  {
+    "label": "p3: the sweep leaves a stale claim in place",
+    "file": "lib/core/git/bounded_watch.dart",
+    "find": "      'rm -rf \"\\$L\"; '\n      'done; true';",
+    "replace": "      ': ; '\n      'done; true';",
+    "tests": [
+      "test/watch_lease_teardown_exec_test.dart"
+    ]
+  },
+  {
+    "label": "p3: the arm no longer reads a lock refusal",
+    "file": "lib/core/git/remote_watch_service.dart",
+    "find": "            if (early == boundedWatchLockedExit) {",
+    "replace": "            if (false && early == boundedWatchLockedExit) {",
+    "tests": [
+      "test/watch_lease_release_test.dart"
+    ]
+  },
+  {
+    "label": "p3: the early-exit read is bounded-only again",
+    "file": "lib/core/git/remote_watch_service.dart",
+    "find": "            if (early == boundedWatchLockedExit) {",
+    "replace": "            if (spec != null && early == boundedWatchLockedExit) {",
+    "tests": [
+      "test/watch_lease_release_test.dart"
+    ]
+  },
+  {
+    "label": "p3: a recursive arm reads 97 as a refusal",
+    "file": "lib/core/git/remote_watch_service.dart",
+    "find": "            if (spec != null && early == boundedWatchNoPathsExit) {",
+    "replace": "            if (early == boundedWatchNoPathsExit) {",
     "tests": [
       "test/watch_lease_release_test.dart"
     ]

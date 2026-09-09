@@ -15,6 +15,7 @@ import 'package:remote_magic_git/core/git/remote_watch_service.dart';
 import 'package:remote_magic_git/core/git/watch_diagnostics.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
+import 'helpers/watch_settle.dart';
 
 class _Handle implements SSHStreamHandle {
   final _out = StreamController<String>.broadcast();
@@ -67,7 +68,15 @@ void main() {
     watchDiagnostics.clear();
     RemoteWatchService.resetWatcherCount();
   });
-  tearDown(() {
+  // Wait for in-flight arms before resetting the shared counter. Since MADR
+  // 0041 phase 3 an arm takes 250 ms of real time to decide (see [settleArm]),
+  // so a test can end with one still running; that arm then completes into the
+  // NEXT test and releases a slot it reserved under the previous one, leaving
+  // the counter below zero-adjusted. Isolated, every test here passes — it is
+  // only in sequence that the leak shows, which is exactly the kind of failure
+  // that gets rerun rather than read.
+  tearDown(() async {
+    await settleArm();
     watchDiagnostics.clear();
     RemoteWatchService.resetWatcherCount();
   });
@@ -76,7 +85,7 @@ void main() {
     final sub = RemoteWatchService(
       _ArmsAlways(),
     ).watch('/srv/repo').listen((_) {});
-    await pumpEventQueue();
+    await settleArm();
     expect(
       watchDiagnostics.forRepo('/srv/repo').records,
       isNotEmpty,
@@ -93,7 +102,7 @@ void main() {
     addTearDown(() => dir.deleteSync(recursive: true));
 
     final sub = LocalWatchService().watch(dir.path).listen((_) {});
-    await pumpEventQueue();
+    await settleArm();
 
     final records = watchDiagnostics.forRepo(dir.path).records;
     expect(
@@ -135,7 +144,7 @@ void main() {
       final sub = LocalWatchService(
         onDiagnostic: lines.add,
       ).watch(missing).listen((_) {}, onError: (Object _) {});
-      await pumpEventQueue();
+      await settleArm();
 
       expect(
         watchDiagnostics.forRepo(missing).records.map((r) => r.kind),

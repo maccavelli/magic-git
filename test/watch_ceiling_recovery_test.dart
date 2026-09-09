@@ -14,6 +14,7 @@ import 'package:remote_magic_git/core/git/remote_watch_service.dart';
 import 'package:remote_magic_git/core/git/watch_event.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
+import 'helpers/watch_settle.dart';
 
 class _Handle implements SSHStreamHandle {
   final _out = StreamController<String>.broadcast();
@@ -65,7 +66,17 @@ class _ArmsAlways extends SSHCommandExecutor {
 
 void main() {
   setUp(RemoteWatchService.resetWatcherCount);
-  tearDown(RemoteWatchService.resetWatcherCount);
+  // Wait for in-flight arms before resetting the shared counter. Since MADR
+  // 0041 phase 3 an arm takes 250 ms of real time to decide (see [settleArm]),
+  // so a test can end with one still running; that arm then completes into the
+  // NEXT test and releases a slot it reserved under the previous one, leaving
+  // the counter below zero-adjusted. Isolated, every test here passes — it is
+  // only in sequence that the leak shows, which is exactly the kind of failure
+  // that gets rerun rather than read.
+  tearDown(() async {
+    await settleArm();
+    RemoteWatchService.resetWatcherCount();
+  });
 
   test('a repo refused by the ceiling arms as soon as a slot frees', () async {
     final service = RemoteWatchService(_ArmsAlways());
@@ -73,7 +84,7 @@ void main() {
 
     final a = service.watch('/a').listen((_) {});
     final b = service.watch('/b').listen((_) {});
-    await pumpEventQueue();
+    await settleArm();
     expect(
       RemoteWatchService.liveWatchers,
       RemoteWatchService.maxConcurrentWatchers,
@@ -81,7 +92,7 @@ void main() {
     );
 
     final c = service.watch('/c').listen(events.add);
-    await pumpEventQueue();
+    await settleArm();
     expect(
       events.last.mode,
       WatchMode.polling,
@@ -91,7 +102,7 @@ void main() {
     // Room appears. No time is advanced: the recovery timer is three minutes
     // away, so anything that happens now happened because of the release.
     await a.cancel();
-    await pumpEventQueue();
+    await settleArm();
 
     expect(
       events.last.mode,
@@ -122,7 +133,7 @@ void main() {
 
       final a = first.watch('/a').listen((_) {});
       final b = second.watch('/b').listen((_) {});
-      await pumpEventQueue();
+      await settleArm();
       expect(
         RemoteWatchService.liveWatchers,
         2,
@@ -131,7 +142,7 @@ void main() {
 
       final events = <RepoWatchEvent>[];
       final c = second.watch('/c').listen(events.add);
-      await pumpEventQueue();
+      await settleArm();
       expect(
         events.last.mode,
         WatchMode.polling,
@@ -155,15 +166,15 @@ void main() {
       final held = RemoteWatchService(_ArmsAlways());
 
       final x = held.watch('/x').listen((_) {});
-      await pumpEventQueue();
+      await settleArm();
 
       final n = service.watch('/notool').listen(events.add);
-      await pumpEventQueue();
+      await settleArm();
       expect(events.last.mode, WatchMode.polling);
       final armsBefore = events.length;
 
       await x.cancel();
-      await pumpEventQueue();
+      await settleArm();
 
       expect(
         events.last.mode,

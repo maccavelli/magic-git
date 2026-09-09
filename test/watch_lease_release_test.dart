@@ -15,7 +15,9 @@
 import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:remote_magic_git/core/git/bounded_watch.dart';
 import 'package:remote_magic_git/core/git/remote_watch_service.dart';
+import 'package:remote_magic_git/core/git/watch_diagnostics.dart';
 import 'package:remote_magic_git/core/git/watch_event.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
@@ -40,6 +42,72 @@ class _OpenHandle implements CommandStreamHandle {
     if (!_exit.isCompleted) _exit.complete(null);
     await _out.close();
     await _err.close();
+  }
+}
+
+/// A handle whose process has already exited with [code] — what a script-level
+/// refusal looks like to the arm.
+class _ExitedHandle implements CommandStreamHandle {
+  _ExitedHandle(this.code);
+
+  final int code;
+  // BROADCAST, and that matters. `cancel()` closes these before the arm has
+  // subscribed — a refusal is read from `exitCode` and torn down before the
+  // stdout listener is set up — and closing an unsubscribed SINGLE-subscription
+  // controller returns a future that never completes, so `await handle.cancel()`
+  // hangs and the arm never returns. The real handle closes an SSH session and
+  // has no such wait; a double that does is testing its own bug.
+  final _out = StreamController<String>.broadcast();
+  final _err = StreamController<String>.broadcast();
+
+  @override
+  Stream<String> get stdout => _out.stream;
+  @override
+  Stream<String> get stderr => _err.stream;
+  @override
+  Future<int?> get exitCode async => code;
+  @override
+  Future<void> cancel() async {
+    await _out.close();
+    await _err.close();
+  }
+}
+
+/// Arms against a handle that exited immediately with [code].
+class _RefusingExecutor extends SSHCommandExecutor {
+  _RefusingExecutor(this.code) : super(SSHClientManager());
+
+  final int code;
+  final armed = Completer<void>();
+
+  @override
+  Future<SSHCommandResult> execute({
+    required String repoPath,
+    required List<String> gitArgs,
+    Map<String, String>? extraEnv,
+    String? stdin,
+    Duration timeout = SSHCommandExecutor.defaultTimeout,
+    int retries = 0,
+    ExecLane lane = ExecLane.exclusive,
+    bool compress = false,
+    Duration? activityIdle,
+    OperationDescriptor? operation,
+    OperationEventCallback? onOperationEvent,
+    CommandOutputCallback? onOutput,
+  }) async =>
+      const SSHCommandResult(exitCode: 0, stdout: 'inotifywait\n', stderr: '');
+
+  @override
+  Future<SSHStreamHandle> executeStream({
+    required String repoPath,
+    required List<String> gitArgs,
+    Map<String, String>? extraEnv,
+    Duration openTimeout = SSHCommandExecutor.defaultTimeout,
+    OperationDescriptor? operation,
+    OperationEventCallback? onOperationEvent,
+  }) async {
+    if (!armed.isCompleted) armed.complete();
+    return _ExitedHandle(code);
   }
 }
 
@@ -105,6 +173,16 @@ String? _leaseTouched(List<String> commands) {
   return null;
 }
 
+/// Waits past the arm's early-exit read.
+///
+/// Since MADR 0041 phase 3 EVERY arm reads `handle.exitCode` with a 250 ms cap
+/// before it commits, so a script-level refusal (no watchable paths, or another
+/// watcher holding the repository) is seen as a refusal rather than as a
+/// watcher that armed and died. That is a real timer, not a microtask, so
+/// `pumpEventQueue()` alone returns before the arm has decided anything.
+Future<void> pastEarlyExitRead() =>
+    Future<void>.delayed(const Duration(milliseconds: 400));
+
 void main() {
   setUp(RemoteWatchService.resetWatcherCount);
   tearDown(RemoteWatchService.resetWatcherCount);
@@ -115,6 +193,7 @@ void main() {
     final events = <RepoWatchEvent>[];
     final sub = service.watch('/repo').listen(events.add);
     await executor.armed.future;
+    await pastEarlyExitRead();
     await pumpEventQueue();
     await sub.cancel();
     await pumpEventQueue();
@@ -174,6 +253,108 @@ void main() {
       executor.commands.where((c) => c.contains('rm -f')),
       isNotEmpty,
       reason: 'it was attempted — so this test is not vacuously green',
+    );
+  });
+
+  // MADR 0041 phase 3. The host refuses a second watcher by exit STATUS, and
+  // the arm has to read it as a refusal rather than as a watcher that armed and
+  // died — the latter spends three restarts before degrading, which is 0022 M6
+  // in a different costume.
+
+  test(
+    'a locked repository degrades to polling, not to three restarts',
+    () async {
+      watchDiagnostics.clear();
+      final executor = _RefusingExecutor(boundedWatchLockedExit);
+      final service = RemoteWatchService(executor, hostKey: () => 'host');
+      final events = <RepoWatchEvent>[];
+      final sub = service.watch('/repo').listen(events.add);
+      await executor.armed.future;
+      await pumpEventQueue();
+      addTearDown(sub.cancel);
+
+      final records = watchDiagnostics.forRepo('/repo').records;
+      expect(
+        records.where(
+          (r) =>
+              r.kind == WatchTransition.armFailed &&
+              r.cause.contains('held by another'),
+        ),
+        isNotEmpty,
+        reason:
+            'the refusal is named, so "why is this repo polling" is '
+            'answerable while it is polling',
+      );
+      expect(
+        records.where((r) => r.kind == WatchTransition.restartScheduled),
+        isEmpty,
+        reason:
+            'a lock is not a blip: retrying just hits the same wall and spends '
+            'the restart budget doing it',
+      );
+      expect(
+        events.last.mode,
+        WatchMode.polling,
+        reason: 'it degrades immediately, and the recovery timer retries later',
+      );
+      expect(
+        RemoteWatchService.liveWatchersFor('host'),
+        0,
+        reason: 'a refused arm holds no slot',
+      );
+    },
+  );
+
+  test('the bounded no-paths refusal is unchanged by the widened read', () async {
+    // Widening the early-exit read to every arm must not change what it already
+    // did for bounded ones (0022 M6).
+    watchDiagnostics.clear();
+    final executor = _RefusingExecutor(boundedWatchNoPathsExit);
+    final service = RemoteWatchService(executor, hostKey: () => 'host');
+    final sub = service
+        .watch(
+          '/repo',
+          bounded: () async => computeBoundedWatchSpec(
+            gitDir: '/repo/.git',
+            workTree: '/repo',
+            trackedFiles: const [],
+          ),
+        )
+        .listen((_) {});
+    await executor.armed.future;
+    await pastEarlyExitRead();
+    await pumpEventQueue();
+    addTearDown(sub.cancel);
+
+    expect(
+      watchDiagnostics
+          .forRepo('/repo')
+          .records
+          .where((r) => r.cause == 'no watched paths'),
+      isNotEmpty,
+    );
+    expect(RemoteWatchService.liveWatchersFor('host'), 0);
+  });
+
+  test('a recursive arm does not read 97 as a refusal', () async {
+    // 97 means "the bounded spec matched no paths", which a recursive arm
+    // cannot produce — so it must NOT be read as one there. The condition that
+    // keeps them apart is `spec != null`, and this is what fails if it goes.
+    watchDiagnostics.clear();
+    final executor = _RefusingExecutor(boundedWatchNoPathsExit);
+    final service = RemoteWatchService(executor, hostKey: () => 'host');
+    final sub = service.watch('/repo').listen((_) {});
+    await executor.armed.future;
+    await pastEarlyExitRead();
+    await pumpEventQueue();
+    addTearDown(sub.cancel);
+
+    expect(
+      watchDiagnostics
+          .forRepo('/repo')
+          .records
+          .where((r) => r.cause == 'no watched paths'),
+      isEmpty,
     );
   });
 }

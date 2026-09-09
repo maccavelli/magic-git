@@ -27,6 +27,7 @@ List<String> remoteWatcherArgs(
   BoundedWatchSpec? bounded, {
   String? pidFile,
   String? heartbeat,
+  WatchLock? lock,
 }) {
   // Scoped work-tree repo: watch the explicit, non-recursive bounded surface
   // (git-dir points + tracked-file dirs) instead of the whole work tree.
@@ -42,6 +43,7 @@ List<String> remoteWatcherArgs(
             bounded.watchDirs,
             pidFile: pidFile,
             heartbeat: heartbeat,
+            lock: lock,
           ),
         ];
       case RemoteWatcherTool.inotifywait:
@@ -52,6 +54,7 @@ List<String> remoteWatcherArgs(
             bounded.watchDirs,
             pidFile: pidFile,
             heartbeat: heartbeat,
+            lock: lock,
           ),
         ];
       case RemoteWatcherTool.none:
@@ -68,6 +71,7 @@ List<String> remoteWatcherArgs(
         excludes: _inotifyExcludeFlags,
         pidFile: pidFile,
         heartbeat: heartbeat,
+        lock: lock,
       ),
     ];
   }
@@ -434,6 +438,11 @@ class RemoteWatchService {
         try {
           final gitDir = spec?.gitDir ?? '$repoPath/.git';
           final heartbeat = watchHeartbeatFile(gitDir, token);
+          // One watcher per repository, decided on the HOST. The client's slot
+          // counter is correct only while exactly one client exists, and this
+          // app has had up to eight tab containers since `11689cc` — plus any
+          // second copy of the app pointed at the same bastion (MADR 0041 F12).
+          final lock = (gitDir: gitDir, token: token);
           Future<void> beat() async {
             try {
               await _executor.execute(
@@ -496,11 +505,9 @@ class RemoteWatchService {
               gitArgs: remoteWatcherArgs(
                 tool,
                 spec,
-                pidFile: watchPidFile(spec?.gitDir ?? '$repoPath/.git', token),
-                heartbeat: watchHeartbeatFile(
-                  spec?.gitDir ?? '$repoPath/.git',
-                  token,
-                ),
+                pidFile: watchPidFile(gitDir, token),
+                heartbeat: heartbeat,
+                lock: lock,
               ),
             );
           } on SSHStreamBudgetExhausted catch (e) {
@@ -518,19 +525,40 @@ class RemoteWatchService {
             return const WatchAborted();
           }
 
-          if (spec != null) {
-            // The bounded scripts exit immediately with a distinct status when
-            // none of their paths exist yet. Catch that here so it degrades to
-            // polling-with-recovery instead of looking like a watcher that armed
-            // and died — which would spend the restart budget on three doomed
-            // retries first (0022 M6). Bounded arms only, and the wait is capped:
-            // a live watcher never completes exitCode, so this costs one short
-            // timeout on a path that already paid for an SSH round trip.
+          // A script-level refusal arrives as an exit STATUS, not an exception:
+          // the arming scripts exit with a distinct code when none of their
+          // paths exist yet (0022 M6) or when another live watcher already holds
+          // the repository (0041 F12). Catch both here so they degrade to
+          // polling-with-recovery instead of looking like a watcher that armed
+          // and died — which would spend the restart budget on three doomed
+          // retries first.
+          //
+          // EVERY arm now waits, where this used to be bounded-arms-only: the
+          // lock refusal can come from the recursive script too. A live watcher
+          // never completes exitCode, so the cost is one capped 250 ms wait on
+          // a path that already paid for an SSH round trip.
+          {
             final early = await handle.exitCode.timeout(
               const Duration(milliseconds: 250),
               onTimeout: () => null,
             );
-            if (early == boundedWatchNoPathsExit) {
+            if (early == boundedWatchLockedExit) {
+              releaseSlot();
+              await handle.cancel();
+              onDiagnostic?.call(
+                'another live watcher already holds $repoPath — polling here',
+              );
+              _record(
+                repoPath,
+                WatchTransition.armFailed,
+                'held by another watcher',
+                0,
+              );
+              return const WatchUnavailable(
+                WatchUnavailableReason.heldByAnother,
+              );
+            }
+            if (spec != null && early == boundedWatchNoPathsExit) {
               releaseSlot();
               await handle.cancel();
               _record(

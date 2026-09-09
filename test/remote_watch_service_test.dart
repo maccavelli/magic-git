@@ -7,6 +7,7 @@ import 'package:remote_magic_git/core/git/remote_watch_service.dart';
 import 'package:remote_magic_git/core/git/watch_event.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
+import 'helpers/watch_settle.dart';
 
 class _FakeExecutor extends SSHCommandExecutor {
   _FakeExecutor() : super(SSHClientManager());
@@ -414,7 +415,7 @@ void main() {
       final seen = <String>{};
       final sub = service.watch('/repo').listen((e) => seen.addAll(e.paths));
       await executor.armed.future;
-      await Future<void>.delayed(Duration.zero);
+      await settleArm();
 
       // Deliberately awkward: 37 bytes cuts records mid-path constantly.
       for (final c in _chunk('${paths.join('\n')}\n', 37)) {
@@ -445,7 +446,7 @@ void main() {
       final service = RemoteWatchService(executor);
       final sub = service.watch('/repo').listen((_) {});
       await executor.armed.future;
-      await Future<void>.delayed(Duration.zero);
+      await settleArm();
 
       final sw = Stopwatch()..start();
       for (final c in chunks) {
@@ -482,7 +483,7 @@ void main() {
 
       final sub = service.watch('/repo').listen((_) {});
       await executor.armed.future;
-      await Future<void>.delayed(Duration.zero);
+      await settleArm();
 
       // The one message that says WHY the watcher died, and names the knob.
       handle.emitStderr(
@@ -508,7 +509,7 @@ void main() {
 
       final sub = service.watch('/repo').listen((_) {});
       await executor.armed.future;
-      await Future<void>.delayed(Duration.zero);
+      await settleArm();
 
       for (var i = 0; i < 500; i++) {
         handle.emitStderr('Failed to watch /d$i\n');
@@ -607,7 +608,7 @@ void main() {
 
       final sub = service.watch('/repo').listen((_) {});
       await executor.armed.future;
-      await Future<void>.delayed(Duration.zero);
+      await settleArm();
 
       final script = executor.lastStreamArgs.last;
       // Tokenised per watcher instance since 0027 — the invariant is that the

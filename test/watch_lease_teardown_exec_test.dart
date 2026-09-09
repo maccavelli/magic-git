@@ -96,11 +96,12 @@ void main() {
     return f.readAsLinesSync().where((l) => l.isNotEmpty).length;
   }
 
-  String script() => recursiveWatchScript(
+  String script({String token = 't', WatchLock? lock}) => recursiveWatchScript(
     inotify: true,
     excludes: '',
-    pidFile: pidPath(),
-    heartbeat: hbPath(),
+    pidFile: '${dir.path}/.git/mg-watch.$token.pid',
+    heartbeat: '${dir.path}/.git/mg-watch.$token.hb',
+    lock: lock,
     // Short enough that the backstop can be observed inside a test.
     leasePoll: const Duration(seconds: 1),
   );
@@ -108,10 +109,10 @@ void main() {
   /// Starts the real script with a live stdin pipe — which is what an SSH
   /// channel gives it. Dart's default start mode pipes stdin and leaves it
   /// open, which is the condition case (c) depends on.
-  Future<Process> start() async {
+  Future<Process> start({String token = 't', WatchLock? lock}) async {
     final p = await Process.start(
       'sh',
-      ['-c', script()],
+      ['-c', script(token: token, lock: lock)],
       workingDirectory: dir.path,
       environment: {'PATH': '$shimDir:${Platform.environment['PATH']}'},
     );
@@ -275,5 +276,172 @@ void main() {
           'grandchild, `kill "\$w"` signals the wrapper and the watcher '
           'survives — the defect this file exists to prevent',
     );
+  });
+
+  // ---- the host-side claim (MADR 0041 phase 3) --------------------------
+  //
+  // The client's slot counter is correct only while exactly one client exists.
+  // This app has had up to eight tab containers since `11689cc`, two saved
+  // connections can reach one host by different ids, and nothing stops a second
+  // copy of the app entirely. Exclusion that survives all three has to live on
+  // the host, so it is a `mkdir` — atomic on any POSIX filesystem, and present
+  // on the macOS hosts this app also targets, where `flock(1)` is not.
+
+  group('one watcher per repository', () {
+    WatchLock lockFor(String token) =>
+        (gitDir: '${dir.path}/.git', token: token);
+
+    test(
+      'a second arm is refused while the first holds a fresh lease',
+      () async {
+        File('${dir.path}/.git/mg-watch.a.hb').writeAsStringSync('');
+        final first = await start(token: 'a', lock: lockFor('a'));
+        expect(await settles(() async => arms() == 1), isTrue);
+
+        File('${dir.path}/.git/mg-watch.b.hb').writeAsStringSync('');
+        final second = await start(token: 'b', lock: lockFor('b'));
+        final code = await second.exitCode.timeout(const Duration(seconds: 10));
+
+        expect(
+          code,
+          boundedWatchLockedExit,
+          reason:
+              'a distinct status, so the caller can degrade rather than '
+              'spend three restarts on a watcher that will never arm',
+        );
+        expect(arms(), 1, reason: 'and it never armed a second watcher');
+        expect(await liveWatchers(), 1);
+        expect(
+          File('${dir.path}/.git/mg-watch.b.pid').existsSync(),
+          isFalse,
+          reason: 'a refusal claims nothing, so it leaves nothing',
+        );
+        expect(
+          await isAlive(first.pid),
+          isTrue,
+          reason: 'the holder is untouched',
+        );
+      },
+    );
+
+    test('a lock whose holder is gone is stolen, not respected', () async {
+      File('${dir.path}/.git/mg-watch.a.hb').writeAsStringSync('');
+      final first = await start(token: 'a', lock: lockFor('a'));
+      expect(await settles(() async => arms() == 1), isTrue);
+
+      // The holder crashed: its lock is still there, its lease is not fresh.
+      first.kill(ProcessSignal.sigkill);
+      await Process.run('pkill', ['-f', marker]);
+      await Process.run('touch', [
+        '-t',
+        '202001010000',
+        '${dir.path}/.git/mg-watch.a.hb',
+      ]);
+      expect(
+        Directory('${dir.path}/.git/mg-watch.lock').existsSync(),
+        isTrue,
+        reason:
+            'a SIGKILLed holder cannot run its own trap — that is the '
+            'case this steal exists for',
+      );
+
+      File('${dir.path}/.git/mg-watch.b.hb').writeAsStringSync('');
+      await start(token: 'b', lock: lockFor('b'));
+
+      expect(
+        await settles(() async => await liveWatchers() == 1),
+        isTrue,
+        reason: 'refusing forever would let one crash poison the repository',
+      );
+      expect(
+        File('${dir.path}/.git/mg-watch.lock/token').readAsStringSync(),
+        'b',
+        reason: 'and the claim now names the live holder',
+      );
+    });
+
+    test('a clean exit releases the claim', () async {
+      File('${dir.path}/.git/mg-watch.a.hb').writeAsStringSync('');
+      final p = await start(token: 'a', lock: lockFor('a'));
+      expect(await settles(() async => arms() == 1), isTrue);
+      expect(Directory('${dir.path}/.git/mg-watch.lock').existsSync(), isTrue);
+
+      await p.stdin.close();
+
+      expect(
+        await settles(
+          () async => !Directory('${dir.path}/.git/mg-watch.lock').existsSync(),
+        ),
+        isTrue,
+        reason: 'a watcher that goes must not leave a claim behind it',
+      );
+    });
+
+    test(
+      'a watcher whose claim was stolen does not delete the new one',
+      () async {
+        File('${dir.path}/.git/mg-watch.a.hb').writeAsStringSync('');
+        final p = await start(token: 'a', lock: lockFor('a'));
+        expect(await settles(() async => arms() == 1), isTrue);
+
+        // Simulate the steal: the lock now names someone else.
+        File(
+          '${dir.path}/.git/mg-watch.lock/token',
+        ).writeAsStringSync('someone-else');
+
+        await p.stdin.close();
+        expect(await diedWithin(p.pid), isTrue);
+        await Future<void>.delayed(const Duration(milliseconds: 500));
+
+        expect(
+          Directory('${dir.path}/.git/mg-watch.lock').existsSync(),
+          isTrue,
+          reason:
+              'releasing a claim it no longer holds would delete a live '
+              "watcher's exclusion",
+        );
+      },
+    );
+
+    test('the sweep reclaims a stale claim and spares a fresh one', () async {
+      final stale = Directory('${dir.path}/.git/mg-watch.lock')
+        ..createSync(recursive: true);
+      File('${stale.path}/token').writeAsStringSync('ghost');
+      File('${dir.path}/.git/mg-watch.ghost.hb').writeAsStringSync('');
+      await Process.run('touch', [
+        '-t',
+        '202001010000',
+        '${dir.path}/.git/mg-watch.ghost.hb',
+      ]);
+
+      await Process.run('sh', [
+        '-c',
+        watcherSweepScript([
+          '${dir.path}/.git',
+        ], staleAfter: const Duration(minutes: 5)),
+      ]);
+      expect(
+        stale.existsSync(),
+        isFalse,
+        reason: 'a claim whose holder is gone refuses every future watcher',
+      );
+
+      // Now a live one, which the sweep must not touch.
+      stale.createSync(recursive: true);
+      File('${stale.path}/token').writeAsStringSync('live');
+      File('${dir.path}/.git/mg-watch.live.hb').writeAsStringSync('');
+      await Process.run('sh', [
+        '-c',
+        watcherSweepScript([
+          '${dir.path}/.git',
+        ], staleAfter: const Duration(minutes: 5)),
+      ]);
+      expect(
+        stale.existsSync(),
+        isTrue,
+        reason:
+            "a fresh lease means a live watcher, possibly another session's",
+      );
+    });
   });
 }

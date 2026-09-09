@@ -147,6 +147,69 @@ typedef BoundedWatchSpecSource = Future<BoundedWatchSpec> Function();
 /// retrying on the recovery timer (0022 M6).
 const int boundedWatchNoPathsExit = 97;
 
+/// Exit status for "another live watcher already holds this repository".
+///
+/// Distinct from [boundedWatchNoPathsExit] and from 0 for the same reason that
+/// one is distinct: the caller maps it straight to a `WatchUnavailable`, which
+/// degrades to polling immediately and keeps retrying on the recovery timer,
+/// rather than looking like a watcher that armed and died and spending three
+/// doomed restarts first.
+const int boundedWatchLockedExit = 98;
+
+/// One repository's exclusive claim, held by one watcher instance.
+///
+/// [gitDir] is where the claim lives — beside the registry files, so it travels
+/// with the repository — and [token] identifies the holder, so a watcher can
+/// tell its own lock from a successor's and refuse to delete what it no longer
+/// owns.
+typedef WatchLock = ({String gitDir, String token});
+
+/// The lock directory for [gitDir]. `mkdir` is the claim: it is atomic on every
+/// POSIX filesystem, needs no helper binary, and — unlike `flock(1)`, which is
+/// util-linux only — works on the macOS hosts this app also targets.
+String watchLockDir(String gitDir) => '$gitDir/mg-watch.lock';
+
+/// Shell that claims [lock], or exits [boundedWatchLockedExit].
+///
+/// A lock whose holder's lease has gone stale is stolen rather than respected:
+/// the holder is by definition gone, and refusing forever would make one
+/// crashed session poison a repository until the next connect sweep.
+///
+/// The steal has a race — two arms finding the same stale lock can both get
+/// past it. It is bounded (one extra watcher, reclaimed by its own lease) and
+/// strictly better than the status quo, which has no exclusion at all. Making
+/// it airtight needs an atomic compare-and-swap the POSIX shell does not have.
+String _lockPrelude(WatchLock lock, {required Duration staleAfter}) {
+  final dir = ShellEscaper.escape(watchLockDir(lock.gitDir));
+  final tok = ShellEscaper.escape(lock.token);
+  // The incumbent's heartbeat path, built from a quoted prefix and suffix
+  // around the token read out of the lock — `'…/mg-watch.'"$o"'.hb'`.
+  final hbPrefix = ShellEscaper.escape('${lock.gitDir}/mg-watch.');
+  const hbSuffix = "'.hb'";
+  final mins = staleAfter.inMinutes < 1 ? 1 : staleAfter.inMinutes;
+  return 'L=$dir; '
+      'if mkdir "\$L" 2>/dev/null; then printf %s $tok > "\$L/token"; '
+      'else '
+      'o=\$(cat "\$L/token" 2>/dev/null); '
+      'h=$hbPrefix"\$o"$hbSuffix; '
+      'if [ -n "\$o" ] && [ -f "\$h" ] && '
+      '[ -n "\$(find "\$h" -mmin -$mins 2>/dev/null)" ]; '
+      'then exit $boundedWatchLockedExit; fi; '
+      'rm -rf "\$L"; mkdir "\$L" 2>/dev/null || exit $boundedWatchLockedExit; '
+      'printf %s $tok > "\$L/token"; '
+      'fi; ';
+}
+
+/// Shell that releases [lock] — but only while this instance still holds it.
+///
+/// A watcher whose lock was stolen while it was dying must not delete the new
+/// owner's claim.
+String _unlockFragment(WatchLock lock) {
+  final dir = ShellEscaper.escape(watchLockDir(lock.gitDir));
+  final tok = ShellEscaper.escape(lock.token);
+  return '[ "\$(cat $dir/token 2>/dev/null)" = $tok ] && rm -rf $dir; ';
+}
+
 /// Supervises [inner] — a watcher invocation, which must `exec` — so that it
 /// dies when the client that started it does.
 ///
@@ -196,6 +259,7 @@ String _leaseLoop({
   required Duration staleAfter,
   required Duration leasePoll,
   String? pidFile,
+  WatchLock? lock,
 }) {
   final hb = ShellEscaper.escape(heartbeat);
   final mins = staleAfter.inMinutes < 1 ? 1 : staleAfter.inMinutes;
@@ -204,9 +268,12 @@ String _leaseLoop({
   // path removes it again. Without this a lease-absent arm left a pid file only
   // a connect-time sweep could reclaim, and litter of exactly that shape is
   // what made a re-armed repository look like two live watchers (0041 F4).
-  final rmPid = pidFile == null
-      ? ''
-      : 'rm -f ${ShellEscaper.escape(pidFile)}; ';
+  // Everything this instance claimed, given back on every exit path. The lock
+  // half is a no-op when this instance no longer holds it — see
+  // [_unlockFragment].
+  final release =
+      (pidFile == null ? '' : 'rm -f ${ShellEscaper.escape(pidFile)}; ') +
+      (lock == null ? '' : _unlockFragment(lock));
   final leaseAlive =
       '[ -f $hb ] && [ -n "\$(find $hb -mmin -$mins 2>/dev/null)" ]';
   return 'exec 3<&0; '
@@ -215,9 +282,9 @@ String _leaseLoop({
       '[ -n "\$w" ] && kill -TERM "\$w" 2>/dev/null; '
       '[ -n "\$e" ] && kill -TERM "\$e" 2>/dev/null; '
       '[ -n "\$l" ] && kill -TERM "\$l" 2>/dev/null; '
-      '${rmPid}exit 0; }; '
+      '${release}exit 0; }; '
       'trap cleanup TERM INT HUP; '
-      '{ $leaseAlive; } || { ${rmPid}exit 0; }; '
+      '{ $leaseAlive; } || { ${release}exit 0; }; '
       '{ $inner; } & w=\$!; '
       '( cat <&3 >/dev/null 2>&1; kill -TERM "\$\$" 2>/dev/null ) & e=\$!; '
       '( while :; do '
@@ -233,6 +300,7 @@ String boundedInotifyScript(
   List<String> watchDirs, {
   String? pidFile,
   String? heartbeat,
+  WatchLock? lock,
   Duration leasePoll = const Duration(seconds: 60),
   Duration staleAfter = const Duration(minutes: 5),
 }) {
@@ -244,6 +312,10 @@ String boundedInotifyScript(
       'set -- $joined; '
       'for d; do [ -e "\$d" ] && set -- "\$@" "\$d"; shift; done; '
       '[ "\$#" -gt 0 ] || exit $boundedWatchNoPathsExit; '
+      // The claim comes BEFORE the pid file, so a refusal leaves nothing
+      // behind — and AFTER the existence filter, so a repository with no
+      // watchable paths never takes a lock it cannot use.
+      '${lock == null ? '' : _lockPrelude(lock, staleAfter: staleAfter)}'
       '${_recordPid(pidFile)}';
   if (heartbeat == null) {
     // Unchanged legacy form for callers that supply no lease.
@@ -261,7 +333,7 @@ String boundedInotifyScript(
       'exec stdbuf -oL inotifywait $fmt "\$@"; '
       'else exec inotifywait $fmt "\$@"; fi';
   return '$prelude'
-      '${_leaseLoop(inner: inner, heartbeat: heartbeat, staleAfter: staleAfter, leasePoll: leasePoll, pidFile: pidFile)}';
+      '${_leaseLoop(inner: inner, heartbeat: heartbeat, staleAfter: staleAfter, leasePoll: leasePoll, pidFile: pidFile, lock: lock)}';
 }
 
 /// fswatch equivalent of [boundedInotifyScript]: watch exactly [watchDirs],
@@ -282,6 +354,7 @@ String boundedFswatchScript(
   List<String> watchDirs, {
   String? pidFile,
   String? heartbeat,
+  WatchLock? lock,
   Duration leasePoll = const Duration(seconds: 60),
   Duration staleAfter = const Duration(minutes: 5),
 }) {
@@ -290,6 +363,10 @@ String boundedFswatchScript(
       'set -- $joined; '
       'for d; do [ -e "\$d" ] && set -- "\$@" "\$d"; shift; done; '
       '[ "\$#" -gt 0 ] || exit $boundedWatchNoPathsExit; '
+      // The claim comes BEFORE the pid file, so a refusal leaves nothing
+      // behind — and AFTER the existence filter, so a repository with no
+      // watchable paths never takes a lock it cannot use.
+      '${lock == null ? '' : _lockPrelude(lock, staleAfter: staleAfter)}'
       '${_recordPid(pidFile)}';
   if (heartbeat == null) {
     return '${prelude}exec fswatch -0 --latency 0.5 "\$@"';
@@ -300,7 +377,7 @@ String boundedFswatchScript(
   // every host (0041 F11).
   const inner = 'exec fswatch -0 --latency 0.5 "\$@"';
   return '$prelude'
-      '${_leaseLoop(inner: inner, heartbeat: heartbeat, staleAfter: staleAfter, leasePoll: leasePoll, pidFile: pidFile)}';
+      '${_leaseLoop(inner: inner, heartbeat: heartbeat, staleAfter: staleAfter, leasePoll: leasePoll, pidFile: pidFile, lock: lock)}';
 }
 
 /// Records the arming shell's pid so a later sweep can find the watcher.
@@ -366,6 +443,9 @@ String watcherSweepScript(
         ],
       )
       .join(' ');
+  final lockDirs = gitDirs
+      .map((d) => ShellEscaper.escape(watchLockDir(d)))
+      .join(' ');
   final mins = staleAfter.inMinutes < 1 ? 1 : staleAfter.inMinutes;
   // `find -mmin` rather than `stat -c %Y`: the latter is GNU-only and this
   // runs against macOS hosts too. A heartbeat NEWER than the window means the
@@ -402,6 +482,19 @@ String watcherSweepScript(
       '[ -f "\${h%.hb}.pid" ] && continue; '
       '[ -n "\$(find "\$h" -mmin -$mins 2>/dev/null)" ] && continue; '
       'rm -f "\$h"; '
+      'done; '
+      // A lock whose holder's lease has gone stale. The holder is gone, so the
+      // claim is worthless — and left in place it refuses every future watcher
+      // of this repository until someone removes it by hand. A FRESH lease is
+      // left strictly alone: that lock belongs to a live watcher, possibly
+      // another session's, and is none of this sweep's business (0041 F12).
+      'for L in $lockDirs; do '
+      '[ -d "\$L" ] || continue; '
+      'o=\$(cat "\$L/token" 2>/dev/null); '
+      'lh="\${L%/*}/mg-watch.\$o.hb"; '
+      '[ -n "\$o" ] && [ -n "\$(find "\$lh" -mmin -$mins 2>/dev/null)" ] '
+      '&& continue; '
+      'rm -rf "\$L"; '
       'done; true';
 }
 
@@ -417,10 +510,14 @@ String recursiveWatchScript({
   required String excludes,
   String? pidFile,
   String? heartbeat,
+  WatchLock? lock,
   Duration leasePoll = const Duration(seconds: 60),
   Duration staleAfter = const Duration(minutes: 5),
 }) {
-  final prelude = _recordPid(pidFile);
+  // The claim comes BEFORE the pid file, so a refusal leaves nothing behind.
+  final prelude =
+      (lock == null ? '' : _lockPrelude(lock, staleAfter: staleAfter)) +
+      _recordPid(pidFile);
   if (inotify) {
     const fmt = '-m -r -e modify,create,delete,move';
     // `exec`, so the pid the lease loop holds is the watcher's own — see
@@ -431,12 +528,12 @@ String recursiveWatchScript({
         'exec stdbuf -oL inotifywait $fmt $excludes--format %w%f .; '
         'else exec inotifywait $fmt $excludes--format %w%f .; fi';
     return '$prelude'
-        '${_leaseLoop(inner: inner, heartbeat: heartbeat!, staleAfter: staleAfter, leasePoll: leasePoll, pidFile: pidFile)}';
+        '${_leaseLoop(inner: inner, heartbeat: heartbeat!, staleAfter: staleAfter, leasePoll: leasePoll, pidFile: pidFile, lock: lock)}';
   }
   const inner =
       "exec fswatch -0 --latency 0.5 --exclude '\\.git/.*\\.lock\$' "
       r"--exclude '\.git/objects/' --exclude '\.git/logs/' "
       r"--exclude '\.git/fsmonitor--daemon/' .";
   return '$prelude'
-      '${_leaseLoop(inner: inner, heartbeat: heartbeat!, staleAfter: staleAfter, leasePoll: leasePoll, pidFile: pidFile)}';
+      '${_leaseLoop(inner: inner, heartbeat: heartbeat!, staleAfter: staleAfter, leasePoll: leasePoll, pidFile: pidFile, lock: lock)}';
 }

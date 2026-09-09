@@ -13,6 +13,7 @@ import 'package:remote_magic_git/core/git/watch_event.dart';
 import 'package:remote_magic_git/core/git/watch_lifecycle.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
+import 'helpers/watch_settle.dart';
 
 /// A stream handle that never emits and never exits — a watcher that armed and
 /// is simply waiting, which is the healthy steady state.
@@ -79,7 +80,15 @@ void main() {
     watchDiagnostics.clear();
     RemoteWatchService.resetWatcherCount();
   });
-  tearDown(() {
+  // Wait for in-flight arms before resetting the shared counter. Since MADR
+  // 0041 phase 3 an arm takes 250 ms of real time to decide (see [settleArm]),
+  // so a test can end with one still running; that arm then completes into the
+  // NEXT test and releases a slot it reserved under the previous one, leaving
+  // the counter below zero-adjusted. Isolated, every test here passes — it is
+  // only in sequence that the leak shows, which is exactly the kind of failure
+  // that gets rerun rather than read.
+  tearDown(() async {
+    await settleArm();
     watchDiagnostics.clear();
     RemoteWatchService.resetWatcherCount();
   });
@@ -104,7 +113,7 @@ void main() {
       );
 
       subs.add(service.watch('/c').listen((_) {}));
-      await pumpEventQueue();
+      await settleArm();
 
       final refused = watchDiagnostics.forRepo('/c').records;
       expect(
@@ -151,7 +160,7 @@ void main() {
     }
     await pumpEventQueue();
     subs.add(service.watch('/c').listen((_) {}));
-    await pumpEventQueue();
+    await settleArm();
 
     final degraded = watchDiagnostics
         .forRepo('/c')
@@ -173,7 +182,7 @@ void main() {
   test('a healthy arm is recorded as armed, not as a failure', () async {
     final service = RemoteWatchService(_ArmsAlwaysExecutor());
     final sub = service.watch('/ok').listen((_) {});
-    await pumpEventQueue();
+    await settleArm();
 
     final kinds = watchDiagnostics.forRepo('/ok').records.map((r) => r.kind);
     expect(kinds, contains(WatchTransition.armed));
@@ -195,7 +204,7 @@ void main() {
     }
     await pumpEventQueue();
     subs.add(service.watch('/c').listen((_) {}));
-    await pumpEventQueue();
+    await settleArm();
 
     // The maintainer-facing answer to "why is this repo polling", on the
     // channel watcher stderr already uses.
@@ -248,7 +257,7 @@ void main() {
       },
     );
     final sub = stream.listen((_) {});
-    await pumpEventQueue();
+    await settleArm();
     expect(armCalls, 1, reason: 'the first arm is in flight, holding the gate');
 
     // A legitimate re-arm (the watched path set changed) arriving while the
@@ -309,7 +318,7 @@ void main() {
         },
       );
       final sub = stream.listen((_) {});
-      await pumpEventQueue();
+      await settleArm();
       expect(armCalls, 1);
 
       captured!

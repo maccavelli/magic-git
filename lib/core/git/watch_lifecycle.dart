@@ -46,6 +46,16 @@ enum WatchUnavailableReason {
   /// A bounded spec matched no existing paths yet. Transient — resolves as
   /// tracked files appear.
   noWatchedPaths,
+
+  /// Another live watcher already holds this repository on the host — a second
+  /// session, a second tab reaching the same path by a different saved
+  /// connection, or a second copy of the app (MADR 0041 F12).
+  ///
+  /// Deliberately NOT woken by a released watcher slot: a slot freeing up in
+  /// this process says nothing about a lock held in another. This one waits for
+  /// the recovery timer, which is what the lifecycle does with it by default —
+  /// its slot listener fires only for [ceiling].
+  heldByAnother,
 }
 
 /// No watch source is available — degrade to polling, with periodic recovery

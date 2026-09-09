@@ -18,6 +18,7 @@ import 'package:remote_magic_git/core/git/watch_diagnostics.dart';
 import 'package:remote_magic_git/core/git/watch_event.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
+import 'helpers/watch_settle.dart';
 
 class _Handle implements SSHStreamHandle {
   final _out = StreamController<String>.broadcast();
@@ -87,7 +88,17 @@ void main() {
     RemoteWatchService.resetWatcherCount();
     watchDiagnostics.clear();
   });
-  tearDown(RemoteWatchService.resetWatcherCount);
+  // Wait for in-flight arms before resetting the shared counter. Since MADR
+  // 0041 phase 3 an arm takes 250 ms of real time to decide (see [settleArm]),
+  // so a test can end with one still running; that arm then completes into the
+  // NEXT test and releases a slot it reserved under the previous one, leaving
+  // the counter below zero-adjusted. Isolated, every test here passes — it is
+  // only in sequence that the leak shows, which is exactly the kind of failure
+  // that gets rerun rather than read.
+  tearDown(() async {
+    await settleArm();
+    RemoteWatchService.resetWatcherCount();
+  });
 
   test('one host filling its budget does not starve another host', () async {
     final alpha = _serviceOn('alpha');
@@ -96,7 +107,7 @@ void main() {
     // Tab 1 (host alpha) takes both of alpha's slots.
     final a1 = alpha.watch('/one').listen((_) {});
     final a2 = alpha.watch('/two').listen((_) {});
-    await pumpEventQueue();
+    await settleArm();
 
     expect(RemoteWatchService.liveWatchersFor('alpha'), 2);
     expect(RemoteWatchService.liveWatchersFor('beta'), 0);
@@ -105,14 +116,14 @@ void main() {
     // from accumulating processes, and that has not changed.
     final refused = <RepoWatchEvent>[];
     final a3 = alpha.watch('/three').listen(refused.add);
-    await pumpEventQueue();
+    await settleArm();
     expect(refused.last.mode, WatchMode.polling);
 
     // Tab 2 is on a different host and has spent nothing. It must get a live
     // watcher. With a process-global counter it did not — this is F4.
     final onBeta = <RepoWatchEvent>[];
     final b1 = beta.watch('/one').listen(onBeta.add);
-    await pumpEventQueue();
+    await settleArm();
 
     expect(
       onBeta.last.mode,
@@ -136,7 +147,7 @@ void main() {
     final a2 = alpha.watch('/two').listen((_) {});
     final b1 = beta.watch('/one').listen((_) {});
     final b2 = beta.watch('/two').listen((_) {});
-    await pumpEventQueue();
+    await settleArm();
     expect(RemoteWatchService.liveWatchersFor('alpha'), 2);
     expect(RemoteWatchService.liveWatchersFor('beta'), 2);
 
@@ -145,13 +156,13 @@ void main() {
     final betaWaiting = <RepoWatchEvent>[];
     final a3 = alpha.watch('/three').listen(alphaWaiting.add);
     final b3 = beta.watch('/three').listen(betaWaiting.add);
-    await pumpEventQueue();
+    await settleArm();
     expect(alphaWaiting.last.mode, WatchMode.polling);
     expect(betaWaiting.last.mode, WatchMode.polling);
 
     // Free one slot on beta only.
     await b1.cancel();
-    await pumpEventQueue();
+    await settleArm();
 
     expect(
       betaWaiting.last.mode,
@@ -179,11 +190,11 @@ void main() {
       final alpha = _serviceOn('alpha');
 
       final a1 = alpha.watch('/one').listen((_) {});
-      await pumpEventQueue();
+      await settleArm();
       expect(RemoteWatchService.liveWatchersFor('alpha'), 1);
 
       await a1.cancel();
-      await pumpEventQueue();
+      await settleArm();
 
       expect(RemoteWatchService.liveWatchersFor('alpha'), 0);
       expect(
@@ -211,12 +222,12 @@ void main() {
     final a2 = alpha.watch('/two').listen((_) {});
     final b1 = beta.watch('/one').listen((_) {});
     final b2 = beta.watch('/two').listen((_) {});
-    await pumpEventQueue();
+    await settleArm();
 
     final alphaWaiting = <RepoWatchEvent>[];
     final a3 = alpha.watch('/three').listen(alphaWaiting.add);
     final b3 = beta.watch('/three').listen((_) {});
-    await pumpEventQueue();
+    await settleArm();
     expect(alphaWaiting.last.mode, WatchMode.polling);
 
     final refusalsBefore = _ceilingRefusals('/three');
@@ -224,7 +235,7 @@ void main() {
 
     // Free a slot on beta. Alpha is untouched and still full.
     await b1.cancel();
-    await pumpEventQueue();
+    await settleArm();
 
     expect(
       _ceilingRefusals('/three'),
@@ -252,13 +263,13 @@ void main() {
     final service = RemoteWatchService(exec, hostKey: () => host);
 
     final sub = service.watch('/one').listen((_) {});
-    await pumpEventQueue();
+    await settleArm();
     expect(RemoteWatchService.liveWatchersFor('alpha'), 1);
 
     host = 'beta'; // the session moved while the watcher was live
 
     await sub.cancel();
-    await pumpEventQueue();
+    await settleArm();
 
     expect(
       RemoteWatchService.liveWatchersFor('alpha'),
