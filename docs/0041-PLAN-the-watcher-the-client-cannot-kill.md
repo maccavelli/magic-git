@@ -1,5 +1,5 @@
 ---
-status: "proposed"
+status: "complete"
 date: 2026-09-09
 associated-madr: "0041-MADR-the-watcher-the-client-cannot-kill.md"
 ---
@@ -582,12 +582,160 @@ change, and deleting the assertion is a workaround that removes a guard rather
 than moving it. `test/remote_watch_service_test.dart` is added to phase 1's file
 list.
 
+### (b) 2026-09-09, phase 3 — widening the early-exit read costs every arm 250 ms of real time, and eleven tests only pumped microtasks
+
+**Found.** Step 3.4 moves the `handle.exitCode` read out of the `spec != null`
+guard so a recursive arm can see a lock refusal. That read is
+`await handle.exitCode.timeout(const Duration(milliseconds: 250))` — a **real
+timer**, not a microtask — so no arm can report `armed` until 250 ms have
+actually elapsed. Eleven existing tests settle their arms with
+`pumpEventQueue()`, which does not advance real time, and now observe an arm
+that has not finished:
+
+```text
+Expected: contains WatchTransition:<WatchTransition.armed>
+  Actual: MappedListIterable<WatchTransitionRecord, WatchTransition>:[]
+```
+
+Across five files: `watch_transition_wiring_test.dart`,
+`watch_ceiling_per_host_test.dart` (4), `watch_ceiling_recovery_test.dart`,
+`watch_diagnostics_both_backends_test.dart`, and
+`remote_watch_service_test.dart` (4).
+
+**Why it is a deviation.** The plan named phase 3's test scope as
+`watch_lease_teardown_exec_test.dart` and `watcher_sweep_exec_test.dart`. Five
+more files are affected, and the reason is a behaviour change the plan
+described but did not follow through: it accepted the cost ("the cost is one
+capped 250 ms wait on a path that already paid for an SSH round trip") without
+noticing that the delay was previously paid only by bounded arms, which almost
+nothing in the suite exercises.
+
+**Genuinely pre-existing?** No — caused by this step, and confirmed by reading
+the failure against the step's own diff. The same 11 tests passed at the phase 2
+commit.
+
+**Resolution taken.** Make the affected tests wait past the read, through one
+named helper per file rather than a scattered literal, so the reason is
+recorded where the wait is. The production cost is left as the plan accepted
+it: 250 ms once per arm, and concurrent arms on connect overlap, so it is 250 ms
+for a connect rather than 250 ms per repository.
+
+**Rejected:** shortening the timeout (it exists because the exit status needs a
+round trip, so a shorter one would simply miss refusals) and skipping the read
+for recursive arms (which is the capability being added).
+
+**Named as a follow-up, not taken here.** The wait can be removed entirely by
+reading the refusal in the stream's `onDone` handler instead of before the arm
+commits — the refusing script closes stdout immediately, so `onDone` fires at
+once and `handle.exitCode` is already settled by then. That needs a `degrade`
+entry point on `WatchHooks`, which is a change to `watch_lifecycle.dart` beyond
+this plan's scope for it. Worth doing if the 250 ms ever matters.
+
 **Also recorded, not acted on.** `dart format --set-exit-if-changed lib test`
 reports 8 files changed that this work never touched (`undo_scripts_test.dart`
 among them) — pre-existing formatting drift. The pre-commit gate gates staged
 files, and these are not staged. Not this plan's to tidy.
 
+### (c) 2026-09-09, phase 5 — the test that pinned the four dead `--exclude` flags
+
+**Found.** `test/remote_watch_service_test.dart` carries
+`inotifywait argv excludes git objects, logs, locks, and fsmonitor`, which
+asserts all four `--exclude` flags are present — and they were, on both arms of
+the `stdbuf` fork, which is why it passed for as long as it existed. Three of
+them did nothing (0041 F8). It is the record's own point made in a test: a
+`contains` on generated text sees presence, never effect.
+
+**Why it is a deviation.** Phase 5's file list named
+`remote_watch_service.dart`, `bounded_watch.dart` and `bounded_watch_test.dart`.
+This is a fourth file, and 5.3's diagnostic-filter test lands in it too.
+
+**Resolution taken.** Rewrite the assertion for the surface that replaced it —
+one `--exclude` per fork arm, and the three subtrees as `./`-prefixed `@` paths
+after the watch root — and add the 5.3 filter test beside the existing stderr
+tests. `test/remote_watch_service_test.dart` is added to phase 5's file list.
+The old test is not merely updated: its shape is the thing being corrected, so
+the replacement asserts a COUNT of `--exclude` occurrences, which is what would
+have caught the original defect.
+
 ## Execution record
 
-*(Added per phase as it lands: what the phase did, the verification output
-rather than a summary of it, and what was not done and why.)*
+Executed 2026-09-09, five phases, one commit each, in plan order. `master` is
+ahead of `origin/master` and nothing has been pushed.
+
+| Phase | Commit | What landed |
+| --- | --- | --- |
+| 1 | `cb18fc1` | the lease loop replaced: stdin-EOF watchdog on a saved descriptor, a lease poll that does not disturb the watch, `exec` so the supervised pid is the watcher, self-cleaning exit paths |
+| 2 | `6f2550e` | the client removes the lease it stamped, and the stream's end is recorded with a cause |
+| 3 | `96bdab1` | one watcher per repository, enforced by a host-side `mkdir` claim; exit 98 → `heldByAnother`; the sweep reclaims stale claims |
+| 4 | `13e0455` | the ceiling derived from the transport's stream budget, keyed by **host** |
+| 5 | `73f86ce` | one `--exclude` instead of four; three subtrees `@`-excluded from being watched; startup chatter dropped from the diagnostic budget |
+
+### Verification, as run
+
+```text
+flutter analyze                       0 issues
+dart format --set-exit-if-changed     0 changed (files this work touched)
+flutter test                          3926 passed, 3 skipped, 0 failed
+tool/mutate.py 0041-watcher-teardown  27 killed, 0 survived, 0 did not apply
+tool/mutate.py 0040-watcher-ceiling    2 killed, 0 survived, 0 did not apply
+```
+
+Test count 3897 → **3926**. The suite gained the six executing teardown cases,
+five host-claim cases, six client-side refusal and lease-release cases, six
+derived-ceiling cases and six watch-surface cases.
+
+### What the sabotage round actually found
+
+Twenty-seven mutations, and the two that mattered were not the ones that
+confirmed a fix:
+
+* **One survivor**, phase 5: dropping the `@`-paths from the **leased**
+  recursive argv left every assertion green, because the test reached the
+  un-leased legacy branch that no live arm takes. The gap was in the test, not
+  the code — the same shape MADR 0037 and 0038 both recorded. A second test now
+  asserts the leased argv, and the mutation dies.
+* **Two broken anchors**, both at a later phase's boundary and both in phase 1's
+  entries. Phase 3 renamed `rmPid` to `release`; phase 5 appended `$unwatched`
+  to the recursive inner command. Each silently un-armed a phase 1 mutation, and
+  each reported DID-NOT-APPLY rather than passing — which is the whole point of
+  that behaviour (MADR 0039 D9), and the second time in two records that running
+  the *whole* catalogue at every boundary is what caught it. Re-anchored and
+  re-run.
+
+Two more experiments failed before they proved anything, and both are recorded
+in the tests they became:
+
+* the first stdin-EOF probe killed its own watcher instantly, because POSIX
+  hands an asynchronous list `/dev/null` for stdin — the trap the loop is now
+  written around, and the reason case (c) asserts the watcher is *still armed*
+  before case (d) closes stdin;
+* a test double closed an unsubscribed single-subscription controller in
+  `cancel()`, whose future never completes, so `await handle.cancel()` hung and
+  the arm never returned. The double was testing its own bug.
+
+### Checks seen to fail
+
+Every new assertion in this plan has been observed failing, through the
+catalogue, against a scratch `git worktree` — never by dirtying the tree. Two
+were observed failing on the reporting host before any code was written: the
+`/dev/null` stdin rule, and the `./`-prefix requirement for `@` paths (9 watches
+→ 5 with the prefix; 9 → 9 without).
+
+### What was NOT done
+
+* **The host acceptance checks have not been run.** They need a rebuilt `.app`
+  against the reporting host, which is the maintainer's step. Until then the
+  claim "teardown reaches the host" rests on the probes in the MADR and on the
+  executing tests, which run the real generated script against real processes —
+  strong, but not the same as the app doing it.
+* **The 250 ms early-exit read stands.** Deviation (b) names the way to remove
+  it (read the refusal in `onDone`, which needs a `degrade` hook on
+  `WatchHooks`) and why it was left: that is a change to `watch_lifecycle.dart`
+  beyond this plan's scope for it.
+* **Eight files report `dart format` drift that this work never touched**
+  (`undo_scripts_test.dart` among them). Pre-existing, not staged, and not this
+  plan's to tidy.
+* **MADR 0041's open question is unanswered** — what ended the stream for a
+  repository that re-armed 46 s after its last heartbeat. Phase 2 added the
+  record that answers it (`watcher exited` vs `stream error: <type>`); reading
+  it needs a live session.
