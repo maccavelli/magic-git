@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Entitlements for an AD-HOC (unsigned) Release build — `./build_macos.sh
+  --unsigned`, selected via MG_RELEASE_ENTITLEMENTS in Configs/AppInfo.xcconfig.
+
+  This is Release.entitlements minus exactly two keys, and the omissions are the
+  whole content of the file:
+
+    com.apple.security.app-sandbox   removed so $HOME is the real home directory
+                                     and the 0600 credentials fallback lands in
+                                     ~/.config/magic_git/ rather than inside an
+                                     app container.
+    keychain-access-groups           removed because it requires a signing
+                                     certificate, which an ad-hoc build has not
+                                     got.
+
+  Everything else is identical on purpose, and a test enforces that: see
+  test/macos_entitlements_canon_test.dart, which compares this file against
+  Release.entitlements as a set difference so a third entitlement added to one
+  and not the other cannot pass unnoticed.
+
+  This file exists so that what an unsigned build ships is reviewable. It used
+  to be produced by two `PlistBuddy -c Delete` calls against the COMMITTED
+  entitlements while Xcode was signing from them — which shipped stripped three
+  times and broke a build on a second machine (MADR 0042).
+-->
+<plist version="1.0">
+<dict>
+	<key>com.apple.security.network.client</key>
+	<true/>
+	<key>com.apple.security.files.user-selected.read-write</key>
+	<true/>
+	<key>com.apple.security.files.bookmarks.app-scope</key>
+	<true/>
+</dict>
+</plist>

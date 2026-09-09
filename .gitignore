@@ -56,6 +56,11 @@ app.*.map.json
 # it once was, swept up alongside a real change (81aa5cf, repaired since).
 /macos/Runner/Release.entitlements.bak
 
+# Per-machine build selection: build_macos.sh writes this on every run to point
+# MG_RELEASE_ENTITLEMENTS at the signed or the ad-hoc entitlements. It is local
+# build configuration, never shared — see Configs/AppInfo.xcconfig.
+/macos/Runner/Configs/Local.xcconfig
+
 # Android Studio will place build artifacts here
 /android/app/debug
 /android/app/profile

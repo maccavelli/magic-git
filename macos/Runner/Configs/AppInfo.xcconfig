@@ -12,3 +12,17 @@ PRODUCT_BUNDLE_IDENTIFIER = com.example.remoteMagicGit
 
 // The copyright displayed in application information
 PRODUCT_COPYRIGHT = Copyright © 2026 Why Not? All rights reserved.
+
+// Which entitlements the Release configuration signs with.
+//
+// `build_macos.sh` writes Configs/Local.xcconfig (gitignored) on every run to
+// select the signed or the ad-hoc pair. With no such file present this resolves
+// to the committed, sandboxed entitlements, so a plain `flutter build macos` or
+// a build from Xcode.app is unchanged — `#include?` is an OPTIONAL include and
+// is silently skipped when the file is absent.
+//
+// The point of the indirection is that nothing rewrites the entitlements file
+// itself. It used to be stripped in place while Xcode was signing from it
+// (MADR 0042).
+MG_RELEASE_ENTITLEMENTS = Runner/Release.entitlements
+#include? "Local.xcconfig"
