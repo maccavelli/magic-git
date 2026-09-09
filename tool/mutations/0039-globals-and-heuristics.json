@@ -335,5 +335,51 @@
     "tests": [
       "test/branch_review_fast_path_test.dart"
     ]
+  },
+  {
+    "label": "a3: the cost term is dropped, so eviction is size-only",
+    "file": "lib/core/providers/keep_alive_lru.dart",
+    "find": "    _values[entry] = _clock + hits * (cost / (bytes < 1 ? 1 : bytes));",
+    "replace": "    _values[entry] = _clock + hits * (1 / (bytes < 1 ? 1 : bytes));",
+    "tests": [
+      "test/keep_alive_lru_test.dart"
+    ]
+  },
+  {
+    "label": "a3: an in-flight entry becomes evictable",
+    "file": "lib/core/providers/keep_alive_lru.dart",
+    "find": "    final cost = _costs[entry];\n    if (cost == null) return;",
+    "replace": "    final cost = _costs[entry] ?? 0;",
+    "tests": [
+      "test/keep_alive_lru_test.dart"
+    ]
+  },
+  {
+    "label": "a3: the clock never advances, so nothing ages out",
+    "file": "lib/core/providers/keep_alive_lru.dart",
+    "find": "    if (best != null) {\n      _clock = bestValue!;\n      return best;\n    }",
+    "replace": "    if (best != null) {\n      return best;\n    }",
+    "tests": [
+      "test/keep_alive_lru_test.dart"
+    ]
+  },
+  {
+    "label": "a3: the frequency term is ignored",
+    "file": "lib/core/providers/keep_alive_lru.dart",
+    "find": "    // A re-reference re-scores from the current clock \u2014 the frequency term is\n    // only worth anything if a second read actually moves the entry.\n    _rescore(entry);",
+    "replace": "",
+    "tests": [
+      "test/keep_alive_lru_test.dart"
+    ]
+  },
+  {
+    "label": "a3: providers stop measuring what a fetch cost",
+    "file": "lib/core/providers/app_providers.dart",
+    "find": "            _commitDiffLru.reportSize(scope, key, d.length, cost: sw.elapsed),",
+    "replace": "            _commitDiffLru.reportSize(scope, key, d.length),",
+    "tests": [
+      "test/session_cache_isolation_test.dart",
+      "test/keep_alive_lru_test.dart"
+    ]
   }
 ]

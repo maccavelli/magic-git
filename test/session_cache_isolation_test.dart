@@ -9,6 +9,9 @@
 // the same path — two entries for one server, or two hosts that both mount a
 // repo at the same conventional path — are two tabs with identical cache keys.
 
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:remote_magic_git/core/git/git_service.dart';
@@ -178,4 +181,38 @@ void main() {
       expect(gitB.shows, 1);
     },
   );
+
+  test('every cached fetch reports what it cost', () {
+    // MADR 0039 A3. Eviction is cost-aware, and the cost can only come from the
+    // provider that ran the fetch — `reportSize` without one records a known
+    // zero, which ranks that entry for eviction ahead of everything that
+    // measured. A membership scan, like the clear-list guard in
+    // `branch_diff_lru_test`: the invariant is "no call site omits it", which is
+    // a property of the source, and it fails on a twelfth site added later.
+    //
+    // Read as bytes with a lenient decode — this is the file tools treat as
+    // binary (AGENTS.md), where a plain read can come back empty.
+    final source = const Utf8Decoder(
+      allowMalformed: true,
+    ).convert(File('lib/core/providers/app_providers.dart').readAsBytesSync());
+
+    final calls = RegExp(
+      r'Lru\.reportSize\(',
+    ).allMatches(source).map((m) => m.start).toList();
+    expect(calls, hasLength(12), reason: 'sanity: the scan found the sites');
+
+    for (final at in calls) {
+      // The call ends at its own closing paren; a 400-char window is more than
+      // any of them spans, and every one is followed by `cost:` before it.
+      final window = source.substring(at, at + 400);
+      final end = window.indexOf(');');
+      expect(
+        window.substring(0, end == -1 ? window.length : end),
+        contains('cost:'),
+        reason:
+            'a reportSize without a measured cost is scored as free, and '
+            'is evicted before anything that reported one',
+      );
+    }
+  });
 }

@@ -335,4 +335,172 @@ void main() {
       expect(lru.length, 0);
     });
   });
+
+  group('cost-aware eviction', () {
+    // MADR 0039 A3. Both bounds ask about SIZE; neither asked what an entry cost
+    // to obtain, and over SSH those differ by orders of magnitude. Recency alone
+    // will discard the expensive entry to keep a cheap one touched more
+    // recently — the opposite of what a cache on a slow link is for.
+
+    test('cost beats recency when the two disagree', () {
+      // The discriminating arrangement, and the only one that can fail: the
+      // EXPENSIVE entry is the least recently used, so plain LRU — and any
+      // policy that ignores the cost term — takes it first. Equal sizes and
+      // equal hit counts, so the cost is the only thing left to decide.
+      final lru = KeepAliveLru<String>(
+        24,
+        maxTotalBytes: 200,
+        maxEntryBytes: 1000,
+      );
+      final dear = _FakeLink(), cheap = _FakeLink(), fresh = _FakeLink();
+
+      lru.touch(sA, 'dear', dear); // oldest
+      lru.reportSize(sA, 'dear', 100, cost: const Duration(seconds: 9));
+      lru.touch(sA, 'cheap', cheap);
+      lru.reportSize(sA, 'cheap', 100, cost: const Duration(milliseconds: 5));
+
+      // Over budget: something must go.
+      lru.touch(sA, 'fresh', fresh);
+      lru.reportSize(sA, 'fresh', 100, cost: const Duration(milliseconds: 5));
+
+      expect(
+        cheap.closed,
+        isTrue,
+        reason: 'one round trip to fetch again — the right thing to drop',
+      );
+      expect(
+        dear.closed,
+        isFalse,
+        reason:
+            'nine seconds of transfer the user watched, and the LEAST recently '
+            'used — recency alone would have taken it first',
+      );
+      expect(fresh.closed, isFalse);
+    });
+
+    test('with equal costs the policy is plain LRU', () {
+      // The guarantee for a LOCAL repo, where every fetch is cheap: nothing
+      // about its behaviour changes.
+      final lru = KeepAliveLru<String>(
+        24,
+        maxTotalBytes: 200,
+        maxEntryBytes: 1000,
+      );
+      const same = Duration(milliseconds: 7);
+      final a = _FakeLink(), b = _FakeLink(), c = _FakeLink();
+
+      lru.touch(sA, 'a', a);
+      lru.reportSize(sA, 'a', 100, cost: same);
+      lru.touch(sA, 'b', b);
+      lru.reportSize(sA, 'b', 100, cost: same);
+      lru.touch(sA, 'c', c);
+      lru.reportSize(sA, 'c', 100, cost: same);
+
+      expect(a.closed, isTrue, reason: 'least recently used goes first');
+      expect(b.closed, isFalse);
+      expect(c.closed, isFalse);
+    });
+
+    test('an entry still in flight is never evicted', () {
+      // No reported cost means the fetch has not resolved. Evicting it would
+      // close the link of a provider that is about to publish a value.
+      final lru = KeepAliveLru<String>(
+        24,
+        maxTotalBytes: 150,
+        maxEntryBytes: 1000,
+      );
+      final inFlight = _FakeLink(), settled = _FakeLink(), fresh = _FakeLink();
+
+      lru.touch(sA, 'in-flight', inFlight); // touched first, never reports
+      lru.touch(sA, 'settled', settled);
+      lru.reportSize(sA, 'settled', 100, cost: const Duration(milliseconds: 1));
+      lru.touch(sA, 'fresh', fresh);
+      lru.reportSize(sA, 'fresh', 100, cost: const Duration(seconds: 5));
+
+      expect(
+        inFlight.closed,
+        isFalse,
+        reason:
+            'the oldest entry, and the one pure LRU would take — but its '
+            'fetch has not landed yet',
+      );
+      expect(settled.closed, isTrue);
+    });
+
+    test('a cost of zero ranks for eviction; an unknown cost does not', () {
+      // The distinction the in-flight rule rests on: `reportSize` without a
+      // cost records a KNOWN zero, which is a candidate.
+      final lru = KeepAliveLru<String>(
+        24,
+        maxTotalBytes: 150,
+        maxEntryBytes: 1000,
+      );
+      final free = _FakeLink(), unknown = _FakeLink(), fresh = _FakeLink();
+
+      lru.touch(sA, 'unknown', unknown);
+      lru.touch(sA, 'free', free);
+      lru.reportSize(sA, 'free', 100); // no cost argument → known zero
+      lru.touch(sA, 'fresh', fresh);
+      lru.reportSize(sA, 'fresh', 100, cost: const Duration(seconds: 3));
+
+      expect(free.closed, isTrue);
+      expect(unknown.closed, isFalse);
+    });
+
+    test('ageing: an expensive entry does not pin the cache forever', () {
+      // Greedy-Dual's clock term. Without it the first very expensive entry
+      // outranks everything admitted afterwards for the life of the session.
+      final lru = KeepAliveLru<String>(
+        24,
+        maxTotalBytes: 200,
+        maxEntryBytes: 1000,
+      );
+      final ancient = _FakeLink();
+      lru.touch(sA, 'ancient', ancient);
+      lru.reportSize(sA, 'ancient', 100, cost: const Duration(seconds: 30));
+
+      // A long run of ordinary work, each round evicting something and lifting
+      // the clock a little.
+      var evicted = false;
+      for (var i = 0; i < 40; i++) {
+        final link = _FakeLink();
+        lru.touch(sA, 'k$i', link);
+        lru.reportSize(sA, 'k$i', 100, cost: const Duration(seconds: 2));
+        if (ancient.closed) {
+          evicted = true;
+          break;
+        }
+      }
+
+      expect(
+        evicted,
+        isTrue,
+        reason:
+            'the clock must age a once-hot entry out, or one expensive '
+            'fetch pins a slot for the whole session',
+      );
+    });
+
+    test('a re-touched entry is harder to evict than a touched-once one', () {
+      // The frequency term.
+      final lru = KeepAliveLru<String>(
+        24,
+        maxTotalBytes: 200,
+        maxEntryBytes: 1000,
+      );
+      const cost = Duration(milliseconds: 50);
+      final popular = _FakeLink(), once = _FakeLink(), fresh = _FakeLink();
+
+      lru.touch(sA, 'popular', popular);
+      lru.reportSize(sA, 'popular', 100, cost: cost);
+      lru.touch(sA, 'popular', popular); // read again
+      lru.touch(sA, 'once', once);
+      lru.reportSize(sA, 'once', 100, cost: cost);
+      lru.touch(sA, 'fresh', fresh);
+      lru.reportSize(sA, 'fresh', 100, cost: cost);
+
+      expect(once.closed, isTrue);
+      expect(popular.closed, isFalse);
+    });
+  });
 }

@@ -4170,6 +4170,8 @@ final branchDiffProvider = FutureProvider.autoDispose
         key.ignoreWhitespace,
       );
       final scope = ref.read(sessionScopeProvider);
+      // What the fetch cost, for cost-aware eviction (MADR 0039 A3).
+      final sw = Stopwatch()..start();
       _branchDiffLru.touch(scope, lruKey, ref.keepAlive());
       final future = ref
           .watch(gitServiceProvider)
@@ -4180,7 +4182,12 @@ final branchDiffProvider = FutureProvider.autoDispose
             ignoreWhitespace: key.ignoreWhitespace,
           );
       future.then(
-        (d) => _branchDiffLru.reportSize(scope, lruKey, d.length),
+        (d) => _branchDiffLru.reportSize(
+          scope,
+          lruKey,
+          d.length,
+          cost: sw.elapsed,
+        ),
         onError: (_) => _branchDiffLru.evict(scope, lruKey),
       );
       return future;
@@ -4275,6 +4282,8 @@ final branchMergePreviewProvider = FutureProvider.autoDispose
     .family<BranchMergePreview, BranchMergePreviewKey>((ref, key) async {
       final lruKey = (key.repoPath, key.baseOid, key.branchOid);
       final scope = ref.read(sessionScopeProvider);
+      // What the fetch cost, for cost-aware eviction (MADR 0039 A3).
+      final sw = Stopwatch()..start();
       _mergePreviewLru.touch(scope, lruKey, ref.keepAlive());
 
       final epoch = ref.watch(connectionProvider).sessionEpoch;
@@ -4286,7 +4295,7 @@ final branchMergePreviewProvider = FutureProvider.autoDispose
       );
       if (cap == MergePreviewCapability.unsupported) {
         const preview = BranchMergePreview.unsupported;
-        _mergePreviewLru.reportSize(scope, lruKey, 64);
+        _mergePreviewLru.reportSize(scope, lruKey, 64, cost: sw.elapsed);
         return preview;
       }
       if (!isFullGitOid(key.baseOid) || !isFullGitOid(key.branchOid)) {
@@ -4304,6 +4313,7 @@ final branchMergePreviewProvider = FutureProvider.autoDispose
           scope,
           lruKey,
           64 + preview.conflictPaths.fold<int>(0, (n, p) => n + p.length + 8),
+          cost: sw.elapsed,
         );
         return preview;
       } catch (e) {
@@ -5104,6 +5114,8 @@ int _estimateBlameBytes(List<BlameLine> lines) => lines.fold(
 final fileLogProvider = FutureProvider.autoDispose
     .family<List<FileHistoryEntry>, (String, String)>((ref, key) {
       final scope = ref.read(sessionScopeProvider);
+      // What the fetch cost, for cost-aware eviction (MADR 0039 A3).
+      final sw = Stopwatch()..start();
       _fileLogLru.touch(scope, key, ref.keepAlive());
       final (repoPath, path) = key;
       final future = ref.watch(gitServiceProvider).fileHistory(repoPath, path);
@@ -5112,6 +5124,7 @@ final fileLogProvider = FutureProvider.autoDispose
           scope,
           key,
           _estimateCommitListBytes([for (final e in v) e.commit]),
+          cost: sw.elapsed,
         ),
         // Release a failed fetch so a re-watch retries rather than serving the
         // pinned error (see KeepAliveLru.evict).
@@ -5125,6 +5138,8 @@ final fileLogProvider = FutureProvider.autoDispose
 final blameProvider = FutureProvider.autoDispose
     .family<List<BlameLine>, (String, String)>((ref, key) {
       final scope = ref.read(sessionScopeProvider);
+      // What the fetch cost, for cost-aware eviction (MADR 0039 A3).
+      final sw = Stopwatch()..start();
       _blameLru.touch(scope, key, ref.keepAlive());
       final (repoPath, path) = key;
       final future = ref.watch(gitServiceProvider).blame(repoPath, path);
@@ -5132,7 +5147,12 @@ final blameProvider = FutureProvider.autoDispose
       // external edit must invalidate it (see _dependOnWorktreeState).
       _dependOnWorktreeState(ref, repoPath, path: path, content: future);
       future.then(
-        (v) => _blameLru.reportSize(scope, key, _estimateBlameBytes(v)),
+        (v) => _blameLru.reportSize(
+          scope,
+          key,
+          _estimateBlameBytes(v),
+          cost: sw.elapsed,
+        ),
         onError: (_) => _blameLru.evict(scope, key),
       );
       return future;
@@ -5161,6 +5181,8 @@ final stashDiffProvider = FutureProvider.autoDispose
 final fileDiffProvider = FutureProvider.autoDispose
     .family<String, (String, String, bool, bool, int)>((ref, key) {
       final scope = ref.read(sessionScopeProvider);
+      // What the fetch cost, for cost-aware eviction (MADR 0039 A3).
+      final sw = Stopwatch()..start();
       _fileDiffLru.touch(scope, key, ref.keepAlive());
       final (repoPath, path, staged, ignoreWhitespace, context) = key;
       final future = ref
@@ -5176,7 +5198,7 @@ final fileDiffProvider = FutureProvider.autoDispose
       // status refresh invalidates this so a cached diff can't go stale.
       _dependOnWorktreeState(ref, repoPath, path: path, content: future);
       future.then(
-        (d) => _fileDiffLru.reportSize(scope, key, d.length),
+        (d) => _fileDiffLru.reportSize(scope, key, d.length, cost: sw.elapsed),
         onError: (_) => _fileDiffLru.evict(scope, key),
       );
       return future;
@@ -5189,13 +5211,16 @@ final fileDiffProvider = FutureProvider.autoDispose
 final commitDiffProvider = FutureProvider.autoDispose
     .family<String, (String, String, int)>((ref, key) {
       final scope = ref.read(sessionScopeProvider);
+      // What the fetch cost, for cost-aware eviction (MADR 0039 A3).
+      final sw = Stopwatch()..start();
       _commitDiffLru.touch(scope, key, ref.keepAlive());
       final (repoPath, hash, context) = key;
       final future = ref
           .watch(gitServiceProvider)
           .showCommit(repoPath, hash, context: context);
       future.then(
-        (d) => _commitDiffLru.reportSize(scope, key, d.length),
+        (d) =>
+            _commitDiffLru.reportSize(scope, key, d.length, cost: sw.elapsed),
         onError: (_) => _commitDiffLru.evict(scope, key),
       );
       return future;
@@ -5208,13 +5233,20 @@ final commitDiffProvider = FutureProvider.autoDispose
 final commitRangeDiffProvider = FutureProvider.autoDispose
     .family<String, (String, String, String, int)>((ref, key) {
       final scope = ref.read(sessionScopeProvider);
+      // What the fetch cost, for cost-aware eviction (MADR 0039 A3).
+      final sw = Stopwatch()..start();
       _commitRangeDiffLru.touch(scope, key, ref.keepAlive());
       final (repoPath, older, newer, context) = key;
       final future = ref
           .watch(gitServiceProvider)
           .diffRange(repoPath, '$older..$newer', context: context);
       future.then(
-        (d) => _commitRangeDiffLru.reportSize(scope, key, d.length),
+        (d) => _commitRangeDiffLru.reportSize(
+          scope,
+          key,
+          d.length,
+          cost: sw.elapsed,
+        ),
         onError: (_) => _commitRangeDiffLru.evict(scope, key),
       );
       return future;
@@ -5231,13 +5263,15 @@ final commitRangeDiffProvider = FutureProvider.autoDispose
 final blobLinesProvider = FutureProvider.autoDispose
     .family<List<String>, (String, String, String)>((ref, key) async {
       final scope = ref.read(sessionScopeProvider);
+      // What the fetch cost, for cost-aware eviction (MADR 0039 A3).
+      final sw = Stopwatch()..start();
       _blobLru.touch(scope, key, ref.keepAlive());
       final (repoPath, rev, path) = key;
       try {
         final content = await ref
             .watch(gitServiceProvider)
             .showBlob(repoPath, rev, path);
-        _blobLru.reportSize(scope, key, content.length);
+        _blobLru.reportSize(scope, key, content.length, cost: sw.elapsed);
         final lines = const LineSplitter().convert(content);
         return lines;
       } catch (_) {
@@ -5253,13 +5287,20 @@ final blobLinesProvider = FutureProvider.autoDispose
 final commitFileDiffProvider = FutureProvider.autoDispose
     .family<String, (String, String, String)>((ref, key) {
       final scope = ref.read(sessionScopeProvider);
+      // What the fetch cost, for cost-aware eviction (MADR 0039 A3).
+      final sw = Stopwatch()..start();
       _commitFileDiffLru.touch(scope, key, ref.keepAlive());
       final (repoPath, hash, path) = key;
       final future = ref
           .watch(gitServiceProvider)
           .showCommit(repoPath, hash, path: path);
       future.then(
-        (d) => _commitFileDiffLru.reportSize(scope, key, d.length),
+        (d) => _commitFileDiffLru.reportSize(
+          scope,
+          key,
+          d.length,
+          cost: sw.elapsed,
+        ),
         onError: (_) => _commitFileDiffLru.evict(scope, key),
       );
       return future;
@@ -5270,6 +5311,8 @@ final commitFileDiffProvider = FutureProvider.autoDispose
 final conflictFileProvider = FutureProvider.autoDispose
     .family<String, (String, String)>((ref, key) {
       final scope = ref.read(sessionScopeProvider);
+      // What the fetch cost, for cost-aware eviction (MADR 0039 A3).
+      final sw = Stopwatch()..start();
       _conflictFileLru.touch(scope, key, ref.keepAlive());
       final (repoPath, path) = key;
       final future = ref.watch(gitServiceProvider).conflictFile(repoPath, path);
@@ -5277,7 +5320,8 @@ final conflictFileProvider = FutureProvider.autoDispose
       // file — follow the landed status so the pane never shows stale markers.
       _dependOnWorktreeState(ref, repoPath, path: path, content: future);
       future.then(
-        (d) => _conflictFileLru.reportSize(scope, key, d.length),
+        (d) =>
+            _conflictFileLru.reportSize(scope, key, d.length, cost: sw.elapsed),
         onError: (_) => _conflictFileLru.evict(scope, key),
       );
       return future;
@@ -5289,6 +5333,8 @@ final conflictFileProvider = FutureProvider.autoDispose
 final untrackedDiffProvider = FutureProvider.autoDispose
     .family<String, (String, String)>((ref, key) {
       final scope = ref.read(sessionScopeProvider);
+      // What the fetch cost, for cost-aware eviction (MADR 0039 A3).
+      final sw = Stopwatch()..start();
       _untrackedDiffLru.touch(scope, key, ref.keepAlive());
       final (repoPath, path) = key;
       final future = ref
@@ -5298,7 +5344,12 @@ final untrackedDiffProvider = FutureProvider.autoDispose
       // landed status so the rendered "diff" tracks on-disk edits.
       _dependOnWorktreeState(ref, repoPath, path: path, content: future);
       future.then(
-        (d) => _untrackedDiffLru.reportSize(scope, key, d.length),
+        (d) => _untrackedDiffLru.reportSize(
+          scope,
+          key,
+          d.length,
+          cost: sw.elapsed,
+        ),
         onError: (_) => _untrackedDiffLru.evict(scope, key),
       );
       return future;
