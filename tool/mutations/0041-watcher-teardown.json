@@ -52,5 +52,32 @@
     "tests": [
       "test/bounded_watch_test.dart"
     ]
+  },
+  {
+    "label": "p2: teardown does not release the lease",
+    "file": "lib/core/git/remote_watch_service.dart",
+    "find": "            unawaited(releaseLease());",
+    "replace": "",
+    "tests": [
+      "test/watch_lease_release_test.dart"
+    ]
+  },
+  {
+    "label": "p2: a failing lease removal escapes the teardown",
+    "file": "lib/core/git/remote_watch_service.dart",
+    "find": "            } catch (_) {\n              // The common failure is a disconnected executor, which is also\n              // the case where the watcher has already taken stdin EOF and\n              // gone. Nothing to report and nothing to retry.",
+    "replace": "            } on _NeverThrown catch (_) {",
+    "tests": [
+      "test/watch_lease_release_test.dart"
+    ]
+  },
+  {
+    "label": "p2: teardown removes the pid file, which is not the client's",
+    "file": "lib/core/git/remote_watch_service.dart",
+    "find": "                  'rm -f ${ShellEscaper.escape(heartbeat)}',",
+    "replace": "                  'rm -f ${ShellEscaper.escape(watchPidFile(spec?.gitDir ?? '$repoPath/.git', token))}',",
+    "tests": [
+      "test/watch_lease_release_test.dart"
+    ]
   }
 ]

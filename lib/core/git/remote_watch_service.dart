@@ -453,6 +453,27 @@ class RemoteWatchService {
             }
           }
 
+          /// Removes this instance's lease, so the watcher stops seeing a live
+          /// client. Best-effort by construction — see the call site.
+          Future<void> releaseLease() async {
+            try {
+              await _executor.execute(
+                repoPath: repoPath,
+                gitArgs: [
+                  'sh',
+                  '-c',
+                  'rm -f ${ShellEscaper.escape(heartbeat)}',
+                ],
+                lane: ExecLane.isolated,
+                timeout: const Duration(seconds: 15),
+              );
+            } catch (_) {
+              // The common failure is a disconnected executor, which is also
+              // the case where the watcher has already taken stdin EOF and
+              // gone. Nothing to report and nothing to retry.
+            }
+          }
+
           // STAMP THE LEASE BEFORE ARMING, and wait for it.
           //
           // The watcher script's first action is `[ -f <heartbeat> ] || exit 0`.
@@ -577,8 +598,26 @@ class RemoteWatchService {
                 buffer = '';
               }
             },
-            onDone: hooks.scheduleRestart,
-            onError: (Object _) => hooks.scheduleRestart(),
+            // WHY the stream ended, filed before the engine turns it into a
+            // restart. `scheduleRestart` records `restartScheduled` with the
+            // cause 'source died' for both cases, so a watcher that exited on
+            // its own — lease expired, stdin EOF, reclaimed by a sweep — was
+            // indistinguishable from a channel that errored under it. A repo
+            // re-arming 46 s after its last heartbeat therefore left no record
+            // of which had happened, which is MADR 0041's open question.
+            onDone: () {
+              _record(repoPath, WatchTransition.stopped, 'watcher exited', 0);
+              hooks.scheduleRestart();
+            },
+            onError: (Object e) {
+              _record(
+                repoPath,
+                WatchTransition.stopped,
+                'stream error: ${e.runtimeType}',
+                0,
+              );
+              hooks.scheduleRestart();
+            },
           );
 
           // Read stderr even when no one is listening to the diagnostics.
@@ -628,6 +667,25 @@ class RemoteWatchService {
             await sub.cancel();
             await errSub.cancel();
             await handle.cancel();
+            // RELEASE THE LEASE. Closing the channel is the fast path — the
+            // watcher's stdin reaches EOF and its trap runs within a second
+            // (0041 F11) — and this is the backstop's backstop, for the case
+            // where the channel died without the host noticing. Without it the
+            // watcher waits out `leaseStaleAfter`; with it, the next lease poll
+            // ends it.
+            //
+            // Ownership, which is why this removes the heartbeat and not the
+            // pid file: the CLIENT wrote the heartbeat, so the client removes
+            // it; the WATCHER wrote the pid file, so its own cleanup removes
+            // that. Neither touches the other's, so a half-dead pair is still
+            // exactly the shape `watcherSweepScript`'s two loops reclaim.
+            //
+            // After `handle.cancel()`, not before: the channel close is the
+            // sub-second path and must not queue behind a round trip on the
+            // command client. Unawaited and swallowing, because a teardown
+            // during a disconnect has no executor to talk to and must not fail
+            // or stall for it.
+            unawaited(releaseLease());
           });
         } catch (_) {
           // Idempotent (`armCounted`), so this is safe even on the paths that
