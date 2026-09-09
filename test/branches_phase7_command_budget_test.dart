@@ -11,6 +11,7 @@ import 'package:remote_magic_git/core/forge/branch_forge_status.dart';
 import 'package:remote_magic_git/core/git/branch_comparison.dart';
 import 'package:remote_magic_git/core/git/git_service.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
+import 'package:remote_magic_git/core/providers/session_scope.dart';
 import 'package:remote_magic_git/core/ssh/environment_probe.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
@@ -303,7 +304,10 @@ void main() {
 
     test('clearHashKeyedRepoCaches includes branch and merge-preview LRUs', () {
       // Structural membership (same guard as branch_diff_lru_test).
-      expect(() => clearHashKeyedRepoCaches(), returnsNormally);
+      expect(
+        () => clearHashKeyedRepoCaches(const SessionScope(1)),
+        returnsNormally,
+      );
     });
   });
 }

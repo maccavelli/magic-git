@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../storage/repository_ui_identity.dart';
@@ -400,10 +401,26 @@ Set<WorkspaceToolbarSlot> _decodeToolbarSlots(Object? raw) {
   };
 }
 
-final Map<String, RepositoryWorkspacePrefs> _sessionPrefs = {};
-final Map<String, Future<void>> _writeChains = {};
+/// Ad-hoc prefs are in-memory only, and this map is process-global while every
+/// tab is its own session — so entries are keyed by *(session, identity)*, not
+/// identity alone. Without the session, one tab's connect cleared every other
+/// tab's layout, and two tabs' first ad-hoc sessions shared an entry outright
+/// (they are both `adhoc:<backend>:1`). See MADR 0039 F3.
+final Map<(int, String), RepositoryWorkspacePrefs> _sessionPrefs = {};
+final Map<(int, String), Future<void>> _writeChains = {};
 
-void clearSessionRepositoryWorkspacePrefs() => _sessionPrefs.clear();
+(int, String) _sessionKey(RepositoryUiIdentity identity) =>
+    (identity.sessionScopeId, identity.memoryKey);
+
+/// Drops the ad-hoc prefs belonging to ONE session — what a connect, repo
+/// switch or disconnect in a single tab is entitled to discard.
+void clearSessionRepositoryWorkspacePrefsFor(int sessionScopeId) =>
+    _sessionPrefs.removeWhere((key, _) => key.$1 == sessionScopeId);
+
+/// Drops every session's ad-hoc prefs. Test setUp only: production clears one
+/// session at a time, because a global clear here is the F3 defect itself.
+@visibleForTesting
+void clearAllSessionRepositoryWorkspacePrefs() => _sessionPrefs.clear();
 
 RepositoryWorkspacePrefs _seeded(Map<PaneId, double> legacyPaneWidths) {
   final width = legacyWorkspaceWidthSeed(
@@ -421,7 +438,7 @@ Future<RepositoryWorkspacePrefs> loadRepositoryWorkspacePrefs({
 }) async {
   if (!identity.durable) {
     return _sessionPrefs.putIfAbsent(
-      identity.memoryKey,
+      _sessionKey(identity),
       () => _seeded(legacyPaneWidths),
     );
   }
@@ -444,7 +461,7 @@ Future<void> saveRepositoryWorkspacePrefs({
 }) async {
   final normalized = next.normalized;
   if (!identity.durable) {
-    _sessionPrefs[identity.memoryKey] = normalized;
+    _sessionPrefs[_sessionKey(identity)] = normalized;
     return;
   }
   final prefs = await SharedPreferences.getInstance();
@@ -454,10 +471,14 @@ Future<void> saveRepositoryWorkspacePrefs({
   );
 }
 
-String _lockKey(RepositoryUiIdentity identity) =>
-    identity.durable ? identity.preferenceKey : identity.memoryKey;
+/// Durable identities carry session 0 and therefore share one chain across
+/// tabs, which is correct: they contend for the same SharedPreferences key.
+(int, String) _lockKey(RepositoryUiIdentity identity) => (
+  identity.sessionScopeId,
+  identity.durable ? identity.preferenceKey : identity.memoryKey,
+);
 
-Future<T> _serialized<T>(String key, Future<T> Function() body) async {
+Future<T> _serialized<T>((int, String) key, Future<T> Function() body) async {
   final previous = _writeChains[key] ?? Future<void>.value();
   final gate = Completer<void>();
   _writeChains[key] = gate.future;

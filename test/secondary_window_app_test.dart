@@ -215,12 +215,15 @@ void main() {
     WidgetTester tester,
     _FakeExecutor executor, {
     GitService? gitService,
+    OwnMutationTracker? tracker,
   }) async {
     SharedPreferences.setMockInitialValues({});
     await tester.pumpWidget(
       ProviderScope(
         overrides: [
           activeExecutorProvider.overrideWithValue(executor),
+          if (tracker != null)
+            ownMutationTrackerProvider.overrideWithValue(tracker),
           if (gitService != null)
             gitServiceProvider.overrideWithValue(gitService),
           // Empty watch stream — production would start fswatch/inotify and a
@@ -473,6 +476,53 @@ void main() {
     });
     await tester.pumpAndSettle();
     expect(executor.calls.length, greaterThan(before));
+  });
+
+  testWidgets('a suppressed repoTick is deferred, not discarded', (
+    tester,
+  ) async {
+    // MADR 0039 F6. The test above pins that the echo is not acted on
+    // immediately — which was also true when the tick was thrown away. This
+    // pins the other half: it is HELD, and it lands once our own operation
+    // settles. Without it, an external change arriving inside the window (or at
+    // any point during a multi-minute background fetch, where `isRecent` is
+    // true throughout) was lost until the user pressed ⌘R.
+    //
+    // The tracker is pinned to a fixed clock: `tester.pump` fakes Timers but
+    // not `DateTime.now()`, so with the real clock a mark would still read as
+    // recent when the deferred timer fires. Pinned, the in-flight refcount is
+    // what suppresses — the very case a long fetch creates — and `end()` clears
+    // it.
+    final tracker = OwnMutationTracker(
+      now: () => DateTime.fromMillisecondsSinceEpoch(0),
+    );
+    mockChannels(_connected('/srv/repo'));
+    final executor = _FakeExecutor();
+    await pump(tester, executor, tracker: tracker);
+
+    tracker.begin('/srv/repo');
+    final before = executor.calls.length;
+    await pushHubEvent('repoTick', {
+      'repoPath': '/srv/repo',
+      'mode': 'eventDriven',
+      'atMs': DateTime.now().millisecondsSinceEpoch,
+    });
+    await tester.pumpAndSettle();
+    expect(
+      executor.calls.length,
+      before,
+      reason: 'still suppressed while our own operation is in flight',
+    );
+
+    tracker.end('/srv/repo');
+    await tester.pump(const Duration(seconds: 4));
+    await tester.pumpAndSettle();
+
+    expect(
+      executor.calls.length,
+      greaterThan(before),
+      reason: 'the held tick must land once the operation settles',
+    );
   });
 
   testWidgets('polling ticks catch an external HEAD move in a History window', (

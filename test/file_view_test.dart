@@ -247,7 +247,7 @@ void main() {
       'read back, and honoured, but nothing could ever set it', (tester) async {
     SharedPreferences.setMockInitialValues({});
     addTearDown(() => SharedPreferences.setMockInitialValues({}));
-    clearSessionRepositoryWorkspacePrefs();
+    clearAllSessionRepositoryWorkspacePrefs();
 
     final identity = RepositoryUiIdentity.local(
       localRepoId: 'test-repo',

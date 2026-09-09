@@ -15,6 +15,18 @@ import 'package:riverpod/misc.dart' show KeepAliveLink;
 ///   diffs can't pin tens–hundreds of MB just because they're few enough to fit
 ///   the count cap), with a per-entry [maxEntryBytes] above which an entry is not
 ///   worth pinning at all and is released immediately.
+///
+/// **Entries are partitioned by session scope.** Each instance is one
+/// process-global object, but every tab is its own root `ProviderContainer`
+/// with its own `KeepAliveLink`s, so an entry belongs to a container and only
+/// that container may release it. Every operation therefore takes a `scope`
+/// (see `SessionScope`) alongside the key, and [clearScope] releases one
+/// session's entries rather than everyone's (MADR 0039 F1/F2).
+///
+/// The two **bounds stay global and unpartitioned**, deliberately: [capacity]
+/// and [maxTotalBytes] describe one process's memory, and giving each of up to
+/// eight tabs its own budget would multiply the app's resident cache by eight
+/// for no reason. Only the *keys* are scoped.
 class KeepAliveLru<K> {
   KeepAliveLru(
     this.capacity, {
@@ -36,9 +48,12 @@ class KeepAliveLru<K> {
   /// session, so it is released immediately and left to autoDispose.
   final int maxEntryBytes;
 
-  final _order = <K>[]; // least-recently-used first
-  final _links = <K, KeepAliveLink>{};
-  final _sizes = <K, int>{}; // reported payload sizes (code units)
+  /// One entry's identity: the owning session plus the caller's key. A record,
+  /// so structural equality does the work — two containers asking for the same
+  /// repo path and commit hash are two entries, not one.
+  final _order = <(Object, K)>[]; // least-recently-used first
+  final _links = <(Object, K), KeepAliveLink>{};
+  final _sizes = <(Object, K), int>{}; // reported payload sizes (code units)
   int _totalBytes = 0;
 
   /// Records [link] as [key]'s keep-alive, evicting to [capacity].
@@ -64,11 +79,18 @@ class KeepAliveLru<K> {
   ///
   /// [_evict] still closes, and must: there the link is the *current* build's,
   /// and releasing it is the entire point of this class.
-  void touch(K key, KeepAliveLink link) {
-    _links.remove(key);
-    _order.remove(key);
-    _order.add(key);
-    _links[key] = link;
+  ///
+  /// That reasoning holds only **within one container**, which is why entries
+  /// are scoped. Across two containers a repeated key is not a rebuild — it is a
+  /// second, live provider element in a different tab — and dropping its link
+  /// leaked it: pinned forever, invisible to both bounds. Scoping makes the
+  /// precondition true again rather than weakening the rule (MADR 0039 F2).
+  void touch(Object scope, K key, KeepAliveLink link) {
+    final entry = (scope, key);
+    _links.remove(entry);
+    _order.remove(entry);
+    _order.add(entry);
+    _links[entry] = link;
     while (_order.length > capacity) {
       _evict(_order.first);
     }
@@ -80,18 +102,23 @@ class KeepAliveLru<K> {
   /// summed size is back under [maxTotalBytes]. The just-touched [key] is never
   /// the entry evicted here. A [key] already gone (evicted by the count cap
   /// before its fetch resolved) is ignored.
-  void reportSize(K key, int bytes) {
-    if (!_links.containsKey(key)) return;
-    _totalBytes -= _sizes.remove(key) ?? 0;
+  void reportSize(Object scope, K key, int bytes) {
+    final entry = (scope, key);
+    if (!_links.containsKey(entry)) return;
+    _totalBytes -= _sizes.remove(entry) ?? 0;
     if (bytes > maxEntryBytes) {
-      _evict(key);
+      _evict(entry);
       return;
     }
-    _sizes[key] = bytes;
+    _sizes[entry] = bytes;
     _totalBytes += bytes;
+    // The byte budget is global, so this may evict another session's entry —
+    // correct, and the point of keeping one budget for one process. What it may
+    // never do is evict on the strength of a *different* session's report for
+    // the same key, which is what an unscoped map did.
     for (final k in _order.toList()) {
       if (_totalBytes <= maxTotalBytes) break;
-      if (k == key) continue;
+      if (k == entry) continue;
       _evict(k);
     }
   }
@@ -102,18 +129,30 @@ class KeepAliveLru<K> {
   /// file history) never invalidate — so a transient network blip would make
   /// re-selecting that commit return the cached failure forever instead of
   /// retrying. A [key] not present is a no-op.
-  void evict(K key) => _evict(key);
+  void evict(Object scope, K key) => _evict((scope, key));
 
-  void _evict(K key) {
-    _links.remove(key)?.close();
-    _order.remove(key);
-    _totalBytes -= _sizes.remove(key) ?? 0;
+  void _evict((Object, K) entry) {
+    _links.remove(entry)?.close();
+    _order.remove(entry);
+    _totalBytes -= _sizes.remove(entry) ?? 0;
   }
 
-  /// Releases every held link. Called alongside `ref.invalidate` in
-  /// `ConnectionController._invalidateRepoState` so a stale connection's entries
-  /// don't linger in this bookkeeping (harmless — they'd just occupy capacity
-  /// until evicted — but there's no reason to let them).
+  /// Releases the links [scope] holds, and only those. Called alongside
+  /// `ref.invalidate` in `ConnectionController._invalidateRepoState` so a stale
+  /// connection's entries don't linger in this bookkeeping.
+  ///
+  /// Scoped, not global, because `_invalidateRepoState` runs in **one** tab's
+  /// container while this object is shared by all of them: a global clear
+  /// released every other tab's cached patches on any tab's connect — including
+  /// each attempt of an auto-reconnect (MADR 0039 F1).
+  void clearScope(Object scope) {
+    for (final entry in _order.toList()) {
+      if (entry.$1 == scope) _evict(entry);
+    }
+  }
+
+  /// Releases every held link in every scope. Teardown and tests only —
+  /// production clears one session at a time via [clearScope].
   void clear() {
     for (final link in _links.values) {
       link.close();
@@ -124,8 +163,13 @@ class KeepAliveLru<K> {
     _totalBytes = 0;
   }
 
-  /// The number of entries currently retained — for tests/diagnostics.
+  /// The number of entries currently retained across every scope — for
+  /// tests/diagnostics.
   int get length => _order.length;
+
+  /// The number of entries [scope] currently holds — for tests/diagnostics.
+  int lengthFor(Object scope) =>
+      _order.where((entry) => entry.$1 == scope).length;
 
   /// Summed size of the entries whose payload size has been reported — for
   /// tests/diagnostics.

@@ -548,7 +548,7 @@ void main() {
       ) async {
         SharedPreferences.setMockInitialValues({});
         addTearDown(() => SharedPreferences.setMockInitialValues({}));
-        clearSessionRepositoryWorkspacePrefs();
+        clearAllSessionRepositoryWorkspacePrefs();
 
         // The expanded composer needs more height than the 800x600 default.
         tester.view.physicalSize = const Size(1400, 1000);

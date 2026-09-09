@@ -25,7 +25,10 @@ enum RepositoryUiIdentityScope {
 ///
 /// Durable only for [RepositoryUiIdentityScope.ssh] / [.local]. Ad-hoc keys
 /// include [sessionEpoch] so two sequential sessions on the same path never
-/// collide in an in-memory map.
+/// collide in an in-memory map, and [sessionScopeId] so two *concurrent* ones
+/// don't either: the epoch is `ConnectionController._attempt`, a per-controller
+/// counter, and every tab has its own controller — so two tabs' first ad-hoc
+/// connections both call themselves epoch 1 (MADR 0039 F3).
 class RepositoryUiIdentity {
   final RepositoryUiIdentityScope scope;
 
@@ -41,12 +44,22 @@ class RepositoryUiIdentity {
   /// Connection attempt generation for ad-hoc scopes; null for durable scopes.
   final int? sessionEpoch;
 
+  /// Which session container this identity belongs to (`SessionScope.id`).
+  ///
+  /// Ad-hoc prefs live in a process-global map shared by every tab, so it is
+  /// what keeps one tab's in-memory record out of another's. 0 for durable
+  /// identities, which are keyed by a saved id, persist to SharedPreferences,
+  /// and are *meant* to be shared across tabs — which is also why this never
+  /// enters [preferenceKey].
+  final int sessionScopeId;
+
   const RepositoryUiIdentity._({
     required this.scope,
     required this.scopeKey,
     required this.gitCommonDir,
     required this.durable,
     this.sessionEpoch,
+    this.sessionScopeId = 0,
   });
 
   /// Saved SSH connection identity.
@@ -82,6 +95,7 @@ class RepositoryUiIdentity {
     required String backend,
     required int sessionEpoch,
     required String gitCommonDir,
+    int sessionScopeId = 0,
   }) {
     assert(sessionEpoch > 0);
     return RepositoryUiIdentity._(
@@ -90,6 +104,7 @@ class RepositoryUiIdentity {
       gitCommonDir: gitCommonDir,
       durable: false,
       sessionEpoch: sessionEpoch,
+      sessionScopeId: sessionScopeId,
     );
   }
 
@@ -98,6 +113,7 @@ class RepositoryUiIdentity {
     required String backend,
     required int sessionEpoch,
     required String repoPathFallback,
+    int sessionScopeId = 0,
   }) {
     assert(sessionEpoch > 0);
     return RepositoryUiIdentity._(
@@ -106,6 +122,7 @@ class RepositoryUiIdentity {
       gitCommonDir: 'unresolved:$repoPathFallback',
       durable: false,
       sessionEpoch: sessionEpoch,
+      sessionScopeId: sessionScopeId,
     );
   }
 
@@ -113,6 +130,10 @@ class RepositoryUiIdentity {
   String get rawComposite => '$scopeKey\u0000$gitCommonDir';
 
   /// SharedPreferences-safe key. Prefer only when [durable] is true.
+  ///
+  /// Built from [rawComposite] alone, and [sessionScopeId] is deliberately NOT
+  /// in it: the durable key must stay byte-identical across releases, or every
+  /// saved repository's stored layout is orphaned on upgrade.
   String get preferenceKey {
     final bytes = utf8.encode(rawComposite);
     return base64Url.encode(bytes).replaceAll('=', '');
@@ -128,13 +149,21 @@ class RepositoryUiIdentity {
       other.scopeKey == scopeKey &&
       other.gitCommonDir == gitCommonDir &&
       other.durable == durable &&
-      other.sessionEpoch == sessionEpoch;
+      other.sessionEpoch == sessionEpoch &&
+      other.sessionScopeId == sessionScopeId;
 
   @override
-  int get hashCode =>
-      Object.hash(scope, scopeKey, gitCommonDir, durable, sessionEpoch);
+  int get hashCode => Object.hash(
+    scope,
+    scopeKey,
+    gitCommonDir,
+    durable,
+    sessionEpoch,
+    sessionScopeId,
+  );
 
   @override
   String toString() =>
-      'RepositoryUiIdentity($scopeKey, durable=$durable, gitCommonDir=$gitCommonDir)';
+      'RepositoryUiIdentity($scopeKey, durable=$durable, '
+      'sessionScopeId=$sessionScopeId, gitCommonDir=$gitCommonDir)';
 }

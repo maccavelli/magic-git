@@ -10,6 +10,7 @@ import 'package:macos_ui/macos_ui.dart';
 import '../../core/git/commit_graph.dart';
 import '../../core/git/git_service.dart';
 import '../../core/git/log_search.dart';
+import '../../core/git/suppressed_tick.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/settings/app_settings.dart';
 import '../../core/settings/keymap.dart';
@@ -194,8 +195,27 @@ class _HistoryViewState extends ConsumerState<HistoryView>
   /// Branch/tag revision scope from Branches handoff; null = ordinary HEAD/`--all`.
   String? _revisionScope;
 
+  // A tick suppressed as our own echo is DEFERRED, not dropped — see
+  // [SuppressedTick] and MADR 0039 F6. History's stake in this is the sharpest
+  // of the three: an external commit it discards leaves the walk showing a
+  // history that predates it, with the branch chip on the old tip, until ⌘R.
+  late final SuppressedTick _suppressedTick = SuppressedTick(
+    window: _ownMutationSuppressWindow,
+    stillSuppressed: () => ref
+        .read(ownMutationTrackerProvider)
+        .isRecent(widget.repoPath, DateTime.now(), _ownMutationSuppressWindow),
+    onFlush: () {
+      if (!mounted) return;
+      // The deferred tick stands for a burst nobody enumerated, so it is
+      // replayed as a git-state move: that is the conservative answer, and the
+      // only one that can restore a walk an external commit invalidated.
+      refreshAfterMutation(ref, widget.repoPath);
+    },
+  );
+
   @override
   void dispose() {
+    _suppressedTick.cancel();
     HardwareKeyboard.instance.removeHandler(_onHardwareKey);
     WidgetsBinding.instance.removeObserver(this);
     _searchDebounce?.cancel();
@@ -1271,9 +1291,12 @@ class _HistoryViewState extends ConsumerState<HistoryView>
     ref.listen(repoWatchProvider(widget.repoPath), (previous, next) {
       final event = next.value;
       if (event == null) return;
+      // Held, not dropped: `isRecent` cannot tell our echo from someone else's
+      // commit, and it stays true for a whole background fetch (MADR 0039 F6).
       if (ref
           .read(ownMutationTrackerProvider)
           .isRecent(widget.repoPath, event.at, _ownMutationSuppressWindow)) {
+        _suppressedTick.hold();
         return;
       }
       if (event.touchesGitState) {

@@ -127,10 +127,25 @@ List<String> remoteWatcherArgs(
 class RemoteWatchService {
   final CommandExecutor _executor;
 
-  RemoteWatchService(this._executor, {this.onDiagnostic});
+  RemoteWatchService(
+    this._executor, {
+    this.onDiagnostic,
+    String Function()? hostKey,
+  }) : _hostKey = hostKey ?? _noHost;
 
   /// Where a watcher's own stderr goes.
   final void Function(String line)? onDiagnostic;
+
+  /// Which host this service's commands reach — the budget's owner.
+  ///
+  /// A callback, not a value, because the connection can change under a
+  /// long-lived service instance and reading it eagerly would either pin a
+  /// stale host or (if watched) rebuild the service and restart every live
+  /// watcher. Resolved once per arm, and the resolved value is what both
+  /// reserves and releases the slot.
+  final String Function() _hostKey;
+
+  static String _noHost() => '';
 
   /// Diagnostic lines reported per arm.
   static const int maxDiagnosticLines = 20;
@@ -141,13 +156,20 @@ class RemoteWatchService {
   /// rather than accumulating — 19 orphaned `inotifywait` processes, the
   /// oldest 16.9 days, is what "no ceiling at all" produced (0025 C3).
   ///
-  /// This reads as "per connection" too, but only because the app holds **one
-  /// connection at a time** (`connectionProvider` is a plain notifier, not a
-  /// family). The budget belongs to the host, and [_liveWatchers] is counted
-  /// globally to match — see there. If simultaneous connections to different
-  /// hosts ever land, the counter must be keyed by host or one host's watchers
-  /// will starve another's; `watch_ceiling_recovery_test.dart` pins the
-  /// assumption so that change cannot pass unnoticed (0028 amendment 0028.1).
+  /// **Per host**, and that word is load-bearing. This used to read "per
+  /// connection too, because the app holds one connection at a time
+  /// (`connectionProvider` is a plain notifier, not a family)" — which was
+  /// already false when it was written on 2026-09-04: multi-tab landed on
+  /// 2026-07-12 (`11689cc`), and `connectionProvider` is indeed not a family
+  /// but there are up to eight of it, one per tab container, each with its own
+  /// live session. The named guard could not see it either:
+  /// `watch_ceiling_recovery_test.dart` asserts two service *instances* share
+  /// one ceiling, which stays true whatever the counter is keyed by.
+  ///
+  /// Counted globally, the budget a host is owed was spent by whichever tab
+  /// asked first, and a second host could be starved having consumed nothing.
+  /// [_liveByHost] keys it where it belongs (MADR 0039 F4);
+  /// `watch_ceiling_per_host_test.dart` is the check that can fail on it.
   static const int maxConcurrentWatchers = 2;
 
   /// How often the client refreshes a watcher's heartbeat while it is alive.
@@ -213,32 +235,41 @@ class RemoteWatchService {
     }
   }
 
-  /// Live watcher processes this client has armed. Static because the ceiling
-  /// is a property of the *host* budget, not of any one service instance —
-  /// several providers construct their own service against the same host.
-  ///
-  /// Counting this per instance would therefore be a regression, not a fix:
-  /// each service would get its own budget and the ceiling would multiply
-  /// (0028 amendment 0028.1).
-  static int _liveWatchers = 0;
+  /// Live watcher processes per host. Static because the ceiling is a property
+  /// of the *host* budget, not of any one service instance — several providers
+  /// construct their own service against the same host, and counting per
+  /// instance would hand each its own budget and multiply the ceiling (0028
+  /// amendment 0028.1). Keyed by host because the process now holds several
+  /// sessions at once (MADR 0039 F4).
+  static final Map<String, int> _liveByHost = {};
 
-  /// Broadcasts the moment a watcher slot is released, so a repo that was
-  /// refused by the ceiling can take it immediately instead of polling until
-  /// its recovery timer fires (0028 H2). Broadcast and never closed: it is a
-  /// process-wide signal with the same lifetime as the counter it reports on.
-  static final StreamController<void> _slotReleases =
-      StreamController<void>.broadcast();
+  /// Broadcasts the host whose watcher slot was just released, so a repo that
+  /// was refused by the ceiling can take it immediately instead of polling
+  /// until its recovery timer fires (0028 H2). Broadcast and never closed: it
+  /// is a process-wide signal with the same lifetime as the counter it reports
+  /// on. It carries the host so a release on one host does not wake — and
+  /// pointlessly re-arm — a repo waiting on another.
+  static final StreamController<String> _slotReleases =
+      StreamController<String>.broadcast();
 
-  /// Fires once per released watcher slot.
-  static Stream<void> get slotReleases => _slotReleases.stream;
+  /// Fires once per released watcher slot, carrying that slot's host.
+  static Stream<String> get slotReleases => _slotReleases.stream;
 
-  /// Live watcher count — for tests and diagnostics.
-  static int get liveWatchers => _liveWatchers;
+  /// Releases on [host] alone, in the shape `watchLifecycle` takes.
+  static Stream<void> slotReleasesForHost(String host) =>
+      _slotReleases.stream.where((h) => h == host).map((_) {});
+
+  /// Live watcher count across every host — for tests and diagnostics.
+  static int get liveWatchers =>
+      _liveByHost.values.fold(0, (sum, n) => sum + n);
+
+  /// Live watcher count for one host — for tests and diagnostics.
+  static int liveWatchersFor(String host) => _liveByHost[host] ?? 0;
 
   /// Test seam: the counter is process-global, so a test that arms watchers
   /// must be able to start from a known state.
   @visibleForTesting
-  static void resetWatcherCount() => _liveWatchers = 0;
+  static void resetWatcherCount() => _liveByHost.clear();
 
   /// Files one transition against [repoPath], stamping it with the live watcher
   /// count — the field that separates a leaked **slot** (H1: refusals persist
@@ -256,7 +287,7 @@ class RemoteWatchService {
           kind: kind,
           repoPath: repoPath,
           cause: cause,
-          liveWatchers: _liveWatchers,
+          liveWatchers: liveWatchers,
           restarts: restarts,
         ),
       );
@@ -310,7 +341,7 @@ class RemoteWatchService {
       pollInterval: pollInterval,
       recoveryInterval: recoveryInterval,
       onPollingRecoveryAttempt: () => cachedTool = null,
-      slotReleased: slotReleases,
+      slotReleased: slotReleasesForHost(_hostKey()),
       onTransition: (kind, cause, restarts) {
         _record(repoPath, kind, cause, restarts);
         // Degradation is the expensive state and the one a maintainer needs
@@ -348,15 +379,20 @@ class RemoteWatchService {
         // (0025 C3). Degrading to polling is a worse experience for this repo
         // and a far better one than a host slowly filling with processes
         // nobody is reading.
-        if (_liveWatchers >= maxConcurrentWatchers) {
+        // Resolved ONCE per arm and reused for the release below: a
+        // connection that changes host mid-arm must not credit the slot back
+        // to a host that never paid for it.
+        final host = _hostKey();
+        final liveHere = _liveByHost[host] ?? 0;
+        if (liveHere >= maxConcurrentWatchers) {
           onDiagnostic?.call(
-            'watcher ceiling reached ($_liveWatchers/$maxConcurrentWatchers) — '
-            'polling $repoPath instead',
+            'watcher ceiling reached for $host '
+            '($liveHere/$maxConcurrentWatchers) — polling $repoPath instead',
           );
           _record(
             repoPath,
             WatchTransition.armFailed,
-            'ceiling $_liveWatchers/$maxConcurrentWatchers',
+            'ceiling $liveHere/$maxConcurrentWatchers',
             0,
           );
           return const WatchUnavailable(WatchUnavailableReason.ceiling);
@@ -366,16 +402,21 @@ class RemoteWatchService {
         // connect — and every one of them awaits the tool probe before this
         // point, so a check that did not reserve let all of them pass the
         // ceiling together. Released on every path that does not end armed.
-        _liveWatchers++;
+        _liveByHost[host] = liveHere + 1;
         var armCounted = true;
         void releaseSlot() {
           if (!armCounted) return;
           armCounted = false;
-          if (_liveWatchers > 0) _liveWatchers--;
-          // Announce room. Several waiting repos may wake together; the
-          // reserve-then-arm ceiling settles who gets it, and the losers are
-          // refused exactly as they were before.
-          if (!_slotReleases.isClosed) _slotReleases.add(null);
+          final n = _liveByHost[host] ?? 0;
+          if (n > 1) {
+            _liveByHost[host] = n - 1;
+          } else {
+            _liveByHost.remove(host);
+          }
+          // Announce room on THIS host. Several waiting repos may wake
+          // together; the reserve-then-arm ceiling settles who gets it, and the
+          // losers are refused exactly as they were before.
+          if (!_slotReleases.isClosed) _slotReleases.add(host);
         }
 
         final gitDir = spec?.gitDir ?? '$repoPath/.git';

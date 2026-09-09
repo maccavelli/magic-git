@@ -9,6 +9,13 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:remote_magic_git/core/providers/keep_alive_lru.dart';
 import 'package:riverpod/misc.dart' show KeepAliveLink;
 
+/// Two session scopes. `KeepAliveLru` types them as `Object` on purpose — it
+/// knows nothing about Riverpod containers, only that entries belonging to
+/// different sessions must not touch each other — so plain sentinels are the
+/// honest stand-in for the real `SessionScope`.
+const sA = 'session-a';
+const sB = 'session-b';
+
 class _FakeLink implements KeepAliveLink {
   bool closed = false;
   @override
@@ -21,9 +28,9 @@ void main() {
     () {
       final lru = KeepAliveLru<String>(2);
       final a = _FakeLink(), b = _FakeLink(), c = _FakeLink();
-      lru.touch('a', a);
-      lru.touch('b', b);
-      lru.touch('c', c); // 'a' is now LRU and over capacity 2
+      lru.touch(sA, 'a', a);
+      lru.touch(sA, 'b', b);
+      lru.touch(sA, 'c', c); // 'a' is now LRU and over capacity 2
 
       expect(a.closed, isTrue);
       expect(b.closed, isFalse);
@@ -38,10 +45,14 @@ void main() {
     // that with a2. The link it supersedes (a1) is DROPPED, never closed; the
     // next test is about why that distinction is the whole ballgame.
     final a1 = _FakeLink(), a2 = _FakeLink(), b = _FakeLink(), c = _FakeLink();
-    lru.touch('a', a1);
-    lru.touch('b', b);
-    lru.touch('a', a2); // 'a' becomes most-recent (a1 superseded); 'b' now LRU
-    lru.touch('c', c); // over capacity → evict 'b'
+    lru.touch(sA, 'a', a1);
+    lru.touch(sA, 'b', b);
+    lru.touch(
+      sA,
+      'a',
+      a2,
+    ); // 'a' becomes most-recent (a1 superseded); 'b' now LRU
+    lru.touch(sA, 'c', c); // over capacity → evict 'b'
 
     expect(a1.closed, isFalse); // superseded, not closed
     expect(b.closed, isTrue); // evicted as LRU
@@ -69,7 +80,7 @@ void main() {
     var builds = 0;
     final provider = Provider.autoDispose<int>((ref) {
       builds++;
-      lru.touch('k', ref.keepAlive());
+      lru.touch(sA, 'k', ref.keepAlive());
       return builds;
     });
 
@@ -107,8 +118,8 @@ void main() {
       maxTotalBytes: 100000,
     );
     final big = _FakeLink();
-    lru.touch('big', big);
-    lru.reportSize('big', 5000); // over the per-entry cap
+    lru.touch(sA, 'big', big);
+    lru.reportSize(sA, 'big', 5000); // over the per-entry cap
 
     expect(big.closed, isTrue);
     expect(lru.length, 0);
@@ -126,15 +137,15 @@ void main() {
       maxEntryBytes: 100,
     );
     final a = _FakeLink(), b = _FakeLink(), c = _FakeLink();
-    lru.touch('a', a);
-    lru.reportSize('a', 60);
-    lru.touch('b', b);
-    lru.reportSize('b', 60); // total 120 > 100 → evict 'a'
+    lru.touch(sA, 'a', a);
+    lru.reportSize(sA, 'a', 60);
+    lru.touch(sA, 'b', b);
+    lru.reportSize(sA, 'b', 60); // total 120 > 100 → evict 'a'
     expect(a.closed, isTrue);
     expect(lru.totalBytes, 60);
 
-    lru.touch('c', c);
-    lru.reportSize('c', 60); // total 120 > 100 → evict 'b', keep 'c'
+    lru.touch(sA, 'c', c);
+    lru.reportSize(sA, 'c', 60); // total 120 > 100 → evict 'b', keep 'c'
     expect(b.closed, isTrue);
     expect(c.closed, isFalse);
     expect(lru.totalBytes, 60);
@@ -149,8 +160,8 @@ void main() {
     );
     final links = [for (var i = 0; i < 10; i++) _FakeLink()];
     for (var i = 0; i < 10; i++) {
-      lru.touch('k$i', links[i]);
-      lru.reportSize('k$i', 100);
+      lru.touch(sA, 'k$i', links[i]);
+      lru.reportSize(sA, 'k$i', 100);
     }
     expect(links.every((l) => !l.closed), isTrue);
     expect(lru.length, 10);
@@ -160,10 +171,10 @@ void main() {
   test('reportSize for a key already evicted by the count cap is a no-op', () {
     final lru = KeepAliveLru<String>(1);
     final a = _FakeLink(), b = _FakeLink();
-    lru.touch('a', a);
-    lru.touch('b', b); // evicts 'a'
+    lru.touch(sA, 'a', a);
+    lru.touch(sA, 'b', b); // evicts 'a'
     // 'a's fetch resolves late — must not resurrect it or corrupt bookkeeping.
-    lru.reportSize('a', 50);
+    lru.reportSize(sA, 'a', 50);
     expect(lru.length, 1);
     expect(lru.totalBytes, 0);
   });
@@ -176,21 +187,21 @@ void main() {
       maxEntryBytes: 100000,
     );
     final a = _FakeLink(), b = _FakeLink();
-    lru.touch('a', a);
-    lru.reportSize('a', 100);
-    lru.touch('b', b);
-    lru.reportSize('b', 40);
+    lru.touch(sA, 'a', a);
+    lru.reportSize(sA, 'a', 100);
+    lru.touch(sA, 'b', b);
+    lru.reportSize(sA, 'b', 40);
 
     // Releasing a failed fetch: evicting 'a' closes its link so the errored
     // provider can autoDispose (so a re-watch retries) and reclaims its bytes.
-    lru.evict('a');
+    lru.evict(sA, 'a');
     expect(a.closed, isTrue);
     expect(b.closed, isFalse);
     expect(lru.length, 1);
     expect(lru.totalBytes, 40, reason: "'a's 100 bytes were reclaimed");
 
     // Evicting a key that isn't present must not corrupt accounting.
-    lru.evict('missing');
+    lru.evict(sA, 'missing');
     expect(lru.length, 1);
     expect(lru.totalBytes, 40);
   });
@@ -198,14 +209,130 @@ void main() {
   test('clear closes every retained link and resets byte accounting', () {
     final lru = KeepAliveLru<String>(24);
     final a = _FakeLink(), b = _FakeLink();
-    lru.touch('a', a);
-    lru.reportSize('a', 100);
-    lru.touch('b', b);
+    lru.touch(sA, 'a', a);
+    lru.reportSize(sA, 'a', 100);
+    lru.touch(sA, 'b', b);
     lru.clear();
 
     expect(a.closed, isTrue);
     expect(b.closed, isTrue);
     expect(lru.length, 0);
     expect(lru.totalBytes, 0);
+  });
+
+  group('session partition', () {
+    // MADR 0039 F1/F2. One instance, several tab containers: an entry belongs to
+    // the session that created it, because only that container's KeepAliveLink
+    // can release its element.
+
+    test('the same key in two scopes is two entries', () {
+      final lru = KeepAliveLru<String>(24);
+      final a = _FakeLink(), b = _FakeLink();
+
+      lru.touch(sA, 'k', a);
+      lru.touch(sB, 'k', b);
+
+      expect(
+        a.closed,
+        isFalse,
+        reason:
+            "scope B's touch must not drop scope A's live link — dropping "
+            'it leaked a pinned element invisible to both bounds',
+      );
+      expect(b.closed, isFalse);
+      expect(lru.length, 2);
+      expect(lru.lengthFor(sA), 1);
+      expect(lru.lengthFor(sB), 1);
+    });
+
+    test('clearScope releases one session and leaves the other pinned', () {
+      final lru = KeepAliveLru<String>(24);
+      final a = _FakeLink(), b = _FakeLink();
+      lru.touch(sA, 'k', a);
+      lru.touch(sB, 'k', b);
+
+      lru.clearScope(sA);
+
+      expect(a.closed, isTrue);
+      expect(
+        b.closed,
+        isFalse,
+        reason:
+            'a connect in one tab used to release every other tab\'s '
+            'cached patches — including on each auto-reconnect attempt',
+      );
+      expect(lru.lengthFor(sA), 0);
+      expect(lru.lengthFor(sB), 1);
+    });
+
+    test('evict releases only the named scope\'s entry', () {
+      final lru = KeepAliveLru<String>(24);
+      final a = _FakeLink(), b = _FakeLink();
+      lru.touch(sA, 'k', a);
+      lru.touch(sB, 'k', b);
+
+      // A failed fetch in session A releases A's pinned error, not B's result.
+      lru.evict(sA, 'k');
+
+      expect(a.closed, isTrue);
+      expect(b.closed, isFalse);
+      expect(lru.lengthFor(sB), 1);
+    });
+
+    test('an oversized payload in one scope does not evict the other', () {
+      final lru = KeepAliveLru<String>(
+        24,
+        maxEntryBytes: 1000,
+        maxTotalBytes: 100000,
+      );
+      final a = _FakeLink(), b = _FakeLink();
+      lru.touch(sA, 'k', a);
+      lru.touch(sB, 'k', b);
+
+      lru.reportSize(sA, 'k', 5000); // over the per-entry cap
+
+      expect(a.closed, isTrue);
+      expect(
+        b.closed,
+        isFalse,
+        reason:
+            'the size reported for one session\'s fetch was charged to '
+            'whichever session happened to hold the unscoped key',
+      );
+      expect(lru.totalBytes, 0);
+      expect(lru.lengthFor(sB), 1);
+    });
+
+    test('the byte budget stays global across scopes', () {
+      // Deliberate: one process, one memory budget. Scoping the KEYS must not
+      // hand each of eight tabs its own 256 MiB.
+      final lru = KeepAliveLru<String>(
+        24,
+        maxTotalBytes: 100,
+        maxEntryBytes: 100,
+      );
+      final a = _FakeLink(), b = _FakeLink();
+      lru.touch(sA, 'k', a);
+      lru.reportSize(sA, 'k', 60);
+      lru.touch(sB, 'k', b);
+      lru.reportSize(sB, 'k', 60); // 120 > 100 → the older entry goes
+
+      expect(a.closed, isTrue);
+      expect(b.closed, isFalse);
+      expect(lru.totalBytes, 60);
+    });
+
+    test('clear still releases every scope', () {
+      final lru = KeepAliveLru<String>(24);
+      final a = _FakeLink(), b = _FakeLink();
+      lru.touch(sA, 'k', a);
+      lru.touch(sB, 'k', b);
+
+      lru.clear();
+
+      expect(a.closed, isTrue);
+      expect(b.closed, isTrue);
+      expect(lru.length, 0);
+    });
   });
 }

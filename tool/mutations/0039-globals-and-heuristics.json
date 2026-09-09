@@ -1,0 +1,192 @@
+[
+  {
+    "label": "f1: clearScope ignores the scope and clears every session",
+    "file": "lib/core/providers/keep_alive_lru.dart",
+    "find": "      if (entry.$1 == scope) _evict(entry);",
+    "replace": "      _evict(entry);",
+    "tests": [
+      "test/session_cache_isolation_test.dart",
+      "test/keep_alive_lru_test.dart"
+    ]
+  },
+  {
+    "label": "f2: evict matches on the key alone, ignoring the scope",
+    "file": "lib/core/providers/keep_alive_lru.dart",
+    "find": "  void evict(Object scope, K key) => _evict((scope, key));",
+    "replace": "  void evict(Object scope, K key) {\n    for (final entry in _order.toList()) {\n      if (entry.$2 == key) _evict(entry);\n    }\n  }",
+    "tests": [
+      "test/session_cache_isolation_test.dart",
+      "test/keep_alive_lru_test.dart"
+    ]
+  },
+  {
+    "label": "f2: reportSize charges the size against any session holding the key",
+    "file": "lib/core/providers/keep_alive_lru.dart",
+    "find": "    final entry = (scope, key);\n    if (!_links.containsKey(entry)) return;",
+    "replace": "    final entry = _order.firstWhere(\n      (e) => e.$2 == key,\n      orElse: () => (scope, key),\n    );\n    if (!_links.containsKey(entry)) return;",
+    "tests": [
+      "test/session_cache_isolation_test.dart",
+      "test/keep_alive_lru_test.dart"
+    ]
+  },
+  {
+    "label": "f2: touch closes the link it replaces (the permanent-spinner bug)",
+    "file": "lib/core/providers/keep_alive_lru.dart",
+    "find": "    final entry = (scope, key);\n    _links.remove(entry);",
+    "replace": "    final entry = (scope, key);\n    _links.remove(entry)?.close();",
+    "tests": [
+      "test/keep_alive_lru_test.dart"
+    ]
+  },
+  {
+    "label": "f1: the production clear reverts to clearing all sessions",
+    "file": "lib/core/providers/app_providers.dart",
+    "find": "  _commitDiffLru.clearScope(scope);",
+    "replace": "  _commitDiffLru.clear();",
+    "tests": [
+      "test/session_cache_isolation_test.dart",
+      "test/branch_diff_lru_test.dart"
+    ]
+  },
+  {
+    "label": "f1: commitDiffProvider files its entry under a fixed scope",
+    "file": "lib/core/providers/app_providers.dart",
+    "find": "      _commitDiffLru.touch(scope, key, ref.keepAlive());",
+    "replace": "      _commitDiffLru.touch('shared', key, ref.keepAlive());",
+    "tests": [
+      "test/session_cache_isolation_test.dart"
+    ]
+  },
+  {
+    "label": "f3: the repository-prefs clear ignores the session and wipes all tabs",
+    "file": "lib/core/settings/repository_workspace_prefs.dart",
+    "find": "    _sessionPrefs.removeWhere((key, _) => key.$1 == sessionScopeId);",
+    "replace": "    _sessionPrefs.clear();",
+    "tests": [
+      "test/session_prefs_isolation_test.dart"
+    ]
+  },
+  {
+    "label": "f3: the branch-prefs clear ignores the session and wipes all tabs",
+    "file": "lib/features/branches/branch_workspace_prefs.dart",
+    "find": "  _sessionWorkspacePrefs.removeWhere((key, _) => key.$1 == sessionScopeId);",
+    "replace": "  _sessionWorkspacePrefs.clear();",
+    "tests": [
+      "test/session_prefs_isolation_test.dart"
+    ]
+  },
+  {
+    "label": "f3: identity equality ignores the session scope",
+    "file": "lib/core/storage/repository_ui_identity.dart",
+    "find": "      other.sessionEpoch == sessionEpoch &&\n      other.sessionScopeId == sessionScopeId;",
+    "replace": "      other.sessionEpoch == sessionEpoch;",
+    "tests": [
+      "test/session_prefs_isolation_test.dart",
+      "test/repository_ui_identity_test.dart"
+    ]
+  },
+  {
+    "label": "f3: the session key ignores the scope, so two tabs share a record",
+    "file": "lib/core/settings/repository_workspace_prefs.dart",
+    "find": "(int, String) _sessionKey(RepositoryUiIdentity identity) =>\n    (identity.sessionScopeId, identity.memoryKey);",
+    "replace": "(int, String) _sessionKey(RepositoryUiIdentity identity) =>\n    (0, identity.memoryKey);",
+    "tests": [
+      "test/session_prefs_isolation_test.dart"
+    ]
+  },
+  {
+    "label": "f3: the session scope leaks into the durable SharedPreferences key",
+    "file": "lib/core/storage/repository_ui_identity.dart",
+    "find": "    final bytes = utf8.encode(rawComposite);",
+    "replace": "    final bytes = utf8.encode('$sessionScopeId\\u0000$rawComposite');",
+    "tests": [
+      "test/session_prefs_isolation_test.dart",
+      "test/repository_ui_identity_test.dart"
+    ]
+  },
+  {
+    "label": "f4: the ceiling counts every host together again",
+    "file": "lib/core/git/remote_watch_service.dart",
+    "find": "        final liveHere = _liveByHost[host] ?? 0;",
+    "replace": "        final liveHere = liveWatchers;",
+    "tests": [
+      "test/watch_ceiling_per_host_test.dart",
+      "test/watch_ceiling_recovery_test.dart"
+    ]
+  },
+  {
+    "label": "f4: a released slot is announced to every host",
+    "file": "lib/core/git/remote_watch_service.dart",
+    "find": "  static Stream<void> slotReleasesForHost(String host) =>\n      _slotReleases.stream.where((h) => h == host).map((_) {});",
+    "replace": "  static Stream<void> slotReleasesForHost(String host) =>\n      _slotReleases.stream.map((_) {});",
+    "tests": [
+      "test/watch_ceiling_per_host_test.dart"
+    ]
+  },
+  {
+    "label": "f4: the release credits the current host, not the reserving one",
+    "file": "lib/core/git/remote_watch_service.dart",
+    "find": "          final n = _liveByHost[host] ?? 0;\n          if (n > 1) {\n            _liveByHost[host] = n - 1;\n          } else {\n            _liveByHost.remove(host);\n          }",
+    "replace": "          final now = _hostKey();\n          final n = _liveByHost[now] ?? 0;\n          if (n > 1) {\n            _liveByHost[now] = n - 1;\n          } else {\n            _liveByHost.remove(now);\n          }",
+    "tests": [
+      "test/watch_ceiling_per_host_test.dart",
+      "test/watch_ceiling_recovery_test.dart"
+    ]
+  },
+  {
+    "label": "h2: a suppressed tick is dropped again instead of held",
+    "file": "lib/features/repository/repo_status_view.dart",
+    "find": "        _suppressedMode = event.mode;\n        _suppressedTick.hold();\n        return;",
+    "replace": "        _suppressedMode = event.mode;\n        return;",
+    "tests": [
+      "test/deferred_external_change_test.dart"
+    ]
+  },
+  {
+    "label": "h2: the flush never runs",
+    "file": "lib/core/git/suppressed_tick.dart",
+    "find": "    _heldSince = null;\n    onFlush();",
+    "replace": "    _heldSince = null;",
+    "tests": [
+      "test/suppressed_tick_test.dart",
+      "test/deferred_external_change_test.dart"
+    ]
+  },
+  {
+    "label": "h2: maxDeferral never bites, so a long fetch defers forever",
+    "file": "lib/core/git/suppressed_tick.dart",
+    "find": "    if (stillSuppressed() && _now().difference(since) < maxDeferral) {",
+    "replace": "    if (stillSuppressed()) {",
+    "tests": [
+      "test/suppressed_tick_test.dart"
+    ]
+  },
+  {
+    "label": "h2: hold re-arms on every tick, so a steady stream defers forever",
+    "file": "lib/core/git/suppressed_tick.dart",
+    "find": "    _heldSince ??= _now();\n    _timer ??= Timer(window, _fire);",
+    "replace": "    _heldSince ??= _now();\n    _timer?.cancel();\n    _timer = Timer(window, _fire);",
+    "tests": [
+      "test/suppressed_tick_test.dart"
+    ]
+  },
+  {
+    "label": "h2: the history pop-out drops its suppressed tick",
+    "file": "lib/features/history/history_view.dart",
+    "find": "        _suppressedTick.hold();\n        return;",
+    "replace": "        return;",
+    "tests": [
+      "test/suppressed_tick_test.dart",
+      "test/deferred_external_change_test.dart"
+    ]
+  },
+  {
+    "label": "h2: the detached window drops its suppressed tick",
+    "file": "lib/features/window/secondary_window_main.dart",
+    "find": "      _suppressedMode = mode;\n      _suppressedTick.hold();\n      return;",
+    "replace": "      _suppressedMode = mode;\n      return;",
+    "tests": [
+      "test/secondary_window_app_test.dart"
+    ]
+  }
+]

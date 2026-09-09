@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../core/storage/repository_ui_identity.dart';
@@ -144,11 +145,24 @@ class BranchWorkspacePrefs {
   }
 }
 
-/// In-memory store for ad-hoc (non-durable) workspace prefs.
-final Map<String, BranchWorkspacePrefs> _sessionWorkspacePrefs = {};
+/// In-memory store for ad-hoc (non-durable) workspace prefs, keyed by
+/// *(session, identity)*. The map is process-global and every tab is its own
+/// session, so the session half is what stops one tab's connect discarding
+/// another tab's pins and collapse state (MADR 0039 F3).
+final Map<(int, String), BranchWorkspacePrefs> _sessionWorkspacePrefs = {};
 
-/// Clears ad-hoc prefs (call from connection invalidate / disconnect).
-void clearSessionBranchWorkspacePrefs() {
+(int, String) _sessionKey(RepositoryUiIdentity identity) =>
+    (identity.sessionScopeId, identity.memoryKey);
+
+/// Clears ONE session's ad-hoc prefs (call from connection invalidate /
+/// disconnect, which runs in a single tab's container).
+void clearSessionBranchWorkspacePrefsFor(int sessionScopeId) {
+  _sessionWorkspacePrefs.removeWhere((key, _) => key.$1 == sessionScopeId);
+}
+
+/// Clears every session's. Test setUp only — see the repository-prefs twin.
+@visibleForTesting
+void clearAllSessionBranchWorkspacePrefs() {
   _sessionWorkspacePrefs.clear();
 }
 
@@ -172,7 +186,7 @@ Future<BranchWorkspacePrefs> loadBranchWorkspacePrefs({
   Set<String> globalCollapsed = const {},
 }) async {
   if (!identity.durable) {
-    return _sessionWorkspacePrefs[identity.memoryKey] ??
+    return _sessionWorkspacePrefs[_sessionKey(identity)] ??
         const BranchWorkspacePrefs();
   }
 
@@ -204,7 +218,7 @@ Future<void> saveBranchWorkspacePrefs({
   required BranchWorkspacePrefs next,
 }) async {
   if (!identity.durable) {
-    _sessionWorkspacePrefs[identity.memoryKey] = next;
+    _sessionWorkspacePrefs[_sessionKey(identity)] = next;
     return;
   }
   final prefs = await SharedPreferences.getInstance();
@@ -216,10 +230,10 @@ Future<void> saveBranchWorkspacePrefs({
 
 /// Per-identity write chain so concurrent pin / mode / base / collapse updates
 /// cannot last-write-wins clobber each other (Phase 0 single-writer rule).
-final Map<String, Future<void>> _prefsWriteChains = {};
+final Map<(int, String), Future<void>> _prefsWriteChains = {};
 
 Future<T> _serializedPrefsWrite<T>(
-  String lockKey,
+  (int, String) lockKey,
   Future<T> Function() body,
 ) async {
   final previous = _prefsWriteChains[lockKey] ?? Future<void>.value();
@@ -237,8 +251,12 @@ Future<T> _serializedPrefsWrite<T>(
   }
 }
 
-String _prefsLockKey(RepositoryUiIdentity identity) =>
-    identity.durable ? identity.preferenceKey : identity.memoryKey;
+/// Durable identities carry session 0, so they share one chain across tabs —
+/// correct, since they contend for the same SharedPreferences key.
+(int, String) _prefsLockKey(RepositoryUiIdentity identity) => (
+  identity.sessionScopeId,
+  identity.durable ? identity.preferenceKey : identity.memoryKey,
+);
 
 /// Load → [update] → save under a per-identity mutex. Call sites that mutate
 /// workspace prefs (pins, mode, base, collapse, grouping) must use this so

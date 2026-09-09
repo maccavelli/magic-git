@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:remote_magic_git/core/git/git_service.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
+import 'package:remote_magic_git/core/providers/session_scope.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 
@@ -89,7 +90,10 @@ void main() {
     );
     addTearDown(sub.close);
 
-    expect(() => clearHashKeyedRepoCaches(), returnsNormally);
+    expect(
+      () => clearHashKeyedRepoCaches(const SessionScope(1)),
+      returnsNormally,
+    );
   });
 
   test('every KeepAliveLru field is cleared by clearHashKeyedRepoCaches', () {
@@ -104,19 +108,30 @@ void main() {
     ).allMatches(providers).map((m) => m.group(1)!).toList();
     expect(lruDecls, isNotEmpty);
 
-    final clearStart = providers.indexOf('void clearHashKeyedRepoCaches()');
+    final clearStart = providers.indexOf(
+      'void clearHashKeyedRepoCaches(SessionScope scope)',
+    );
     expect(clearStart, greaterThanOrEqualTo(0));
     final clearEnd = providers.indexOf('\n}', clearStart);
     final clearBody = providers.substring(clearStart, clearEnd);
 
     for (final name in lruDecls) {
+      // The EXACT call, not a substring both spellings satisfy: `.clear()` is
+      // still a real method (teardown/tests) and clears every session, so a
+      // guard matching it would pass on the very regression it exists to catch
+      // — one tab's connect releasing every other tab's entries (0039 F1).
       expect(
         clearBody,
-        contains('$name.clear()'),
+        contains('$name.clearScope(scope)'),
         reason: '$name must be cleared in clearHashKeyedRepoCaches',
       );
+      expect(
+        clearBody,
+        isNot(contains('$name.clear();')),
+        reason: '$name must clear ONE session, not all of them',
+      );
     }
-    expect(clearBody, contains('_branchDiffLru.clear()'));
+    expect(clearBody, contains('_branchDiffLru.clearScope(scope)'));
   });
 
   test('phase-2 comparison families are in repoScopedFetchFamilies', () {

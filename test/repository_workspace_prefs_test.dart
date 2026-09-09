@@ -11,7 +11,7 @@ void main() {
 
   setUp(() {
     SharedPreferences.setMockInitialValues({});
-    clearSessionRepositoryWorkspacePrefs();
+    clearAllSessionRepositoryWorkspacePrefs();
   });
 
   // Named for what it does, not for a schema version — real v1 payloads are
@@ -262,7 +262,7 @@ void main() {
       );
       expect((await SharedPreferences.getInstance()).getKeys(), isEmpty);
 
-      clearSessionRepositoryWorkspacePrefs();
+      clearAllSessionRepositoryWorkspacePrefs();
       expect(
         (await loadRepositoryWorkspacePrefs(
           identity: identity,

@@ -64,6 +64,7 @@ import '../utils/display_error.dart';
 import '../utils/git_porcelain_parser.dart';
 import 'keep_alive_lru.dart';
 import 'provider_retry_policy.dart';
+import 'session_scope.dart';
 
 /// Persists the main window's last position/size across launches, using the
 /// same `SharedPreferences` key-naming/read-write convention as
@@ -362,6 +363,11 @@ final installServiceProvider = Provider<InstallService>((ref) {
 final remoteWatchServiceProvider = Provider<RemoteWatchService>((ref) {
   return RemoteWatchService(
     ref.watch(executorProvider),
+    // The watcher budget belongs to the HOST, and this process holds one
+    // session per tab (MADR 0039 F4). A callback, deliberately: `ref.watch`ing
+    // the connection here would rebuild this service on every connection-state
+    // change and restart every live watcher with it.
+    hostKey: () => ref.read(connectionProvider).host ?? '',
     // The watcher's own stderr. `inotifywait` reports its per-directory
     // failures here — "upper limit on inotify watches reached" above all —
     // and dropping them left a silent polling fallback with nothing to chase
@@ -1087,9 +1093,10 @@ class ConnectionController extends Notifier<ConnectionState> {
     // _KeepAliveLru) rather than plain autoDispose — release every held link
     // alongside the invalidations above so a stale connection's entries don't
     // linger in the LRUs' own bookkeeping.
-    clearHashKeyedRepoCaches();
-    clearSessionBranchWorkspacePrefs();
-    clearSessionRepositoryWorkspacePrefs();
+    clearHashKeyedRepoCaches(ref.read(sessionScopeProvider));
+    final sessionScopeId = ref.read(sessionScopeProvider).id;
+    clearSessionBranchWorkspacePrefsFor(sessionScopeId);
+    clearSessionRepositoryWorkspacePrefsFor(sessionScopeId);
     // Keyed purely by repoPath with no connection identity — without this, a
     // mutation marked just before disconnecting could suppress a genuinely
     // external change reported by a *different* connection that happens to
@@ -3128,18 +3135,18 @@ final List<ProviderOrFamily> repoScopedFetchFamilies = [
 /// stuck-loading bug for its pane on a repo switch (the commit-range compare pane
 /// was such an omission — its LRU is in the immutable tier alongside the commit
 /// and commit-file diffs, all three of which must be cleared together).
-void clearHashKeyedRepoCaches() {
-  _fileLogLru.clear();
-  _blameLru.clear();
-  _fileDiffLru.clear();
-  _commitDiffLru.clear();
-  _commitFileDiffLru.clear();
-  _commitRangeDiffLru.clear();
-  _branchDiffLru.clear();
-  _mergePreviewLru.clear();
-  _blobLru.clear();
-  _conflictFileLru.clear();
-  _untrackedDiffLru.clear();
+void clearHashKeyedRepoCaches(SessionScope scope) {
+  _fileLogLru.clearScope(scope);
+  _blameLru.clearScope(scope);
+  _fileDiffLru.clearScope(scope);
+  _commitDiffLru.clearScope(scope);
+  _commitFileDiffLru.clearScope(scope);
+  _commitRangeDiffLru.clearScope(scope);
+  _branchDiffLru.clearScope(scope);
+  _mergePreviewLru.clearScope(scope);
+  _blobLru.clearScope(scope);
+  _conflictFileLru.clearScope(scope);
+  _untrackedDiffLru.clearScope(scope);
 }
 
 /// The repo-scoped fetch providers a single commit-mutating operation (commit,
@@ -4133,7 +4140,8 @@ final branchDiffProvider = FutureProvider.autoDispose
         key.context,
         key.ignoreWhitespace,
       );
-      _branchDiffLru.touch(lruKey, ref.keepAlive());
+      final scope = ref.read(sessionScopeProvider);
+      _branchDiffLru.touch(scope, lruKey, ref.keepAlive());
       final future = ref
           .watch(gitServiceProvider)
           .diffRange(
@@ -4143,8 +4151,8 @@ final branchDiffProvider = FutureProvider.autoDispose
             ignoreWhitespace: key.ignoreWhitespace,
           );
       future.then(
-        (d) => _branchDiffLru.reportSize(lruKey, d.length),
-        onError: (_) => _branchDiffLru.evict(lruKey),
+        (d) => _branchDiffLru.reportSize(scope, lruKey, d.length),
+        onError: (_) => _branchDiffLru.evict(scope, lruKey),
       );
       return future;
     }, retry: noProviderRetry);
@@ -4218,7 +4226,8 @@ typedef BranchMergePreviewKey = ({
 final branchMergePreviewProvider = FutureProvider.autoDispose
     .family<BranchMergePreview, BranchMergePreviewKey>((ref, key) async {
       final lruKey = (key.repoPath, key.baseOid, key.branchOid);
-      _mergePreviewLru.touch(lruKey, ref.keepAlive());
+      final scope = ref.read(sessionScopeProvider);
+      _mergePreviewLru.touch(scope, lruKey, ref.keepAlive());
 
       final epoch = ref.watch(connectionProvider).sessionEpoch;
       final cap = await ref.watch(
@@ -4229,7 +4238,7 @@ final branchMergePreviewProvider = FutureProvider.autoDispose
       );
       if (cap == MergePreviewCapability.unsupported) {
         const preview = BranchMergePreview.unsupported;
-        _mergePreviewLru.reportSize(lruKey, 64);
+        _mergePreviewLru.reportSize(scope, lruKey, 64);
         return preview;
       }
       if (!isFullGitOid(key.baseOid) || !isFullGitOid(key.branchOid)) {
@@ -4244,12 +4253,13 @@ final branchMergePreviewProvider = FutureProvider.autoDispose
               branchOid: key.branchOid,
             );
         _mergePreviewLru.reportSize(
+          scope,
           lruKey,
           64 + preview.conflictPaths.fold<int>(0, (n, p) => n + p.length + 8),
         );
         return preview;
       } catch (e) {
-        _mergePreviewLru.evict(lruKey);
+        _mergePreviewLru.evict(scope, lruKey);
         rethrow;
       }
     }, retry: noProviderRetry);
@@ -4409,6 +4419,7 @@ final repositoryUiIdentityProvider = FutureProvider.autoDispose
           backend: backend,
           sessionEpoch: conn.sessionEpoch,
           repoPathFallback: repoPath,
+          sessionScopeId: ref.read(sessionScopeProvider).id,
         );
       }
 
@@ -4426,6 +4437,7 @@ final repositoryUiIdentityProvider = FutureProvider.autoDispose
         backend: backend,
         sessionEpoch: conn.sessionEpoch,
         gitCommonDir: common,
+        sessionScopeId: ref.read(sessionScopeProvider).id,
       );
     }, retry: noProviderRetry);
 
@@ -5043,17 +5055,19 @@ int _estimateBlameBytes(List<BlameLine> lines) => lines.fold(
 /// a file's history doesn't re-fetch over SSH — see [KeepAliveLru].
 final fileLogProvider = FutureProvider.autoDispose
     .family<List<FileHistoryEntry>, (String, String)>((ref, key) {
-      _fileLogLru.touch(key, ref.keepAlive());
+      final scope = ref.read(sessionScopeProvider);
+      _fileLogLru.touch(scope, key, ref.keepAlive());
       final (repoPath, path) = key;
       final future = ref.watch(gitServiceProvider).fileHistory(repoPath, path);
       future.then(
         (v) => _fileLogLru.reportSize(
+          scope,
           key,
           _estimateCommitListBytes([for (final e in v) e.commit]),
         ),
         // Release a failed fetch so a re-watch retries rather than serving the
         // pinned error (see KeepAliveLru.evict).
-        onError: (_) => _fileLogLru.evict(key),
+        onError: (_) => _fileLogLru.evict(scope, key),
       );
       return future;
     }, retry: noProviderRetry);
@@ -5062,15 +5076,16 @@ final fileLogProvider = FutureProvider.autoDispose
 /// (bounded LRU) — see [KeepAliveLru].
 final blameProvider = FutureProvider.autoDispose
     .family<List<BlameLine>, (String, String)>((ref, key) {
-      _blameLru.touch(key, ref.keepAlive());
+      final scope = ref.read(sessionScopeProvider);
+      _blameLru.touch(scope, key, ref.keepAlive());
       final (repoPath, path) = key;
       final future = ref.watch(gitServiceProvider).blame(repoPath, path);
       // Working-copy blame reads the file as it is on disk right now — an
       // external edit must invalidate it (see _dependOnWorktreeState).
       _dependOnWorktreeState(ref, repoPath, path: path, content: future);
       future.then(
-        (v) => _blameLru.reportSize(key, _estimateBlameBytes(v)),
-        onError: (_) => _blameLru.evict(key),
+        (v) => _blameLru.reportSize(scope, key, _estimateBlameBytes(v)),
+        onError: (_) => _blameLru.evict(scope, key),
       );
       return future;
     }, retry: noProviderRetry);
@@ -5097,7 +5112,8 @@ final stashDiffProvider = FutureProvider.autoDispose
 /// expand-context toggles re-fetch just by changing the key.
 final fileDiffProvider = FutureProvider.autoDispose
     .family<String, (String, String, bool, bool, int)>((ref, key) {
-      _fileDiffLru.touch(key, ref.keepAlive());
+      final scope = ref.read(sessionScopeProvider);
+      _fileDiffLru.touch(scope, key, ref.keepAlive());
       final (repoPath, path, staged, ignoreWhitespace, context) = key;
       final future = ref
           .watch(gitServiceProvider)
@@ -5112,8 +5128,8 @@ final fileDiffProvider = FutureProvider.autoDispose
       // status refresh invalidates this so a cached diff can't go stale.
       _dependOnWorktreeState(ref, repoPath, path: path, content: future);
       future.then(
-        (d) => _fileDiffLru.reportSize(key, d.length),
-        onError: (_) => _fileDiffLru.evict(key),
+        (d) => _fileDiffLru.reportSize(scope, key, d.length),
+        onError: (_) => _fileDiffLru.evict(scope, key),
       );
       return future;
     }, retry: noProviderRetry);
@@ -5124,14 +5140,15 @@ final fileDiffProvider = FutureProvider.autoDispose
 /// first. Kept alive (bounded LRU) — see [KeepAliveLru].
 final commitDiffProvider = FutureProvider.autoDispose
     .family<String, (String, String, int)>((ref, key) {
-      _commitDiffLru.touch(key, ref.keepAlive());
+      final scope = ref.read(sessionScopeProvider);
+      _commitDiffLru.touch(scope, key, ref.keepAlive());
       final (repoPath, hash, context) = key;
       final future = ref
           .watch(gitServiceProvider)
           .showCommit(repoPath, hash, context: context);
       future.then(
-        (d) => _commitDiffLru.reportSize(key, d.length),
-        onError: (_) => _commitDiffLru.evict(key),
+        (d) => _commitDiffLru.reportSize(scope, key, d.length),
+        onError: (_) => _commitDiffLru.evict(scope, key),
       );
       return future;
     }, retry: noProviderRetry);
@@ -5142,14 +5159,15 @@ final commitDiffProvider = FutureProvider.autoDispose
 /// LRU treatment.
 final commitRangeDiffProvider = FutureProvider.autoDispose
     .family<String, (String, String, String, int)>((ref, key) {
-      _commitRangeDiffLru.touch(key, ref.keepAlive());
+      final scope = ref.read(sessionScopeProvider);
+      _commitRangeDiffLru.touch(scope, key, ref.keepAlive());
       final (repoPath, older, newer, context) = key;
       final future = ref
           .watch(gitServiceProvider)
           .diffRange(repoPath, '$older..$newer', context: context);
       future.then(
-        (d) => _commitRangeDiffLru.reportSize(key, d.length),
-        onError: (_) => _commitRangeDiffLru.evict(key),
+        (d) => _commitRangeDiffLru.reportSize(scope, key, d.length),
+        onError: (_) => _commitRangeDiffLru.evict(scope, key),
       );
       return future;
     }, retry: noProviderRetry);
@@ -5164,17 +5182,18 @@ final commitRangeDiffProvider = FutureProvider.autoDispose
 /// expansion engine can index it directly.
 final blobLinesProvider = FutureProvider.autoDispose
     .family<List<String>, (String, String, String)>((ref, key) async {
-      _blobLru.touch(key, ref.keepAlive());
+      final scope = ref.read(sessionScopeProvider);
+      _blobLru.touch(scope, key, ref.keepAlive());
       final (repoPath, rev, path) = key;
       try {
         final content = await ref
             .watch(gitServiceProvider)
             .showBlob(repoPath, rev, path);
-        _blobLru.reportSize(key, content.length);
+        _blobLru.reportSize(scope, key, content.length);
         final lines = const LineSplitter().convert(content);
         return lines;
       } catch (_) {
-        _blobLru.evict(key);
+        _blobLru.evict(scope, key);
         rethrow;
       }
     }, retry: noProviderRetry);
@@ -5185,14 +5204,15 @@ final blobLinesProvider = FutureProvider.autoDispose
 /// (bounded LRU) — see [KeepAliveLru].
 final commitFileDiffProvider = FutureProvider.autoDispose
     .family<String, (String, String, String)>((ref, key) {
-      _commitFileDiffLru.touch(key, ref.keepAlive());
+      final scope = ref.read(sessionScopeProvider);
+      _commitFileDiffLru.touch(scope, key, ref.keepAlive());
       final (repoPath, hash, path) = key;
       final future = ref
           .watch(gitServiceProvider)
           .showCommit(repoPath, hash, path: path);
       future.then(
-        (d) => _commitFileDiffLru.reportSize(key, d.length),
-        onError: (_) => _commitFileDiffLru.evict(key),
+        (d) => _commitFileDiffLru.reportSize(scope, key, d.length),
+        onError: (_) => _commitFileDiffLru.evict(scope, key),
       );
       return future;
     }, retry: noProviderRetry);
@@ -5201,15 +5221,16 @@ final commitFileDiffProvider = FutureProvider.autoDispose
 /// (repoPath, path). Kept alive (bounded LRU) — see [KeepAliveLru].
 final conflictFileProvider = FutureProvider.autoDispose
     .family<String, (String, String)>((ref, key) {
-      _conflictFileLru.touch(key, ref.keepAlive());
+      final scope = ref.read(sessionScopeProvider);
+      _conflictFileLru.touch(scope, key, ref.keepAlive());
       final (repoPath, path) = key;
       final future = ref.watch(gitServiceProvider).conflictFile(repoPath, path);
       // Conflict markers change as the user (or another session) edits the
       // file — follow the landed status so the pane never shows stale markers.
       _dependOnWorktreeState(ref, repoPath, path: path, content: future);
       future.then(
-        (d) => _conflictFileLru.reportSize(key, d.length),
-        onError: (_) => _conflictFileLru.evict(key),
+        (d) => _conflictFileLru.reportSize(scope, key, d.length),
+        onError: (_) => _conflictFileLru.evict(scope, key),
       );
       return future;
     }, retry: noProviderRetry);
@@ -5219,7 +5240,8 @@ final conflictFileProvider = FutureProvider.autoDispose
 /// (repoPath, path). Kept alive (bounded LRU) — see [KeepAliveLru].
 final untrackedDiffProvider = FutureProvider.autoDispose
     .family<String, (String, String)>((ref, key) {
-      _untrackedDiffLru.touch(key, ref.keepAlive());
+      final scope = ref.read(sessionScopeProvider);
+      _untrackedDiffLru.touch(scope, key, ref.keepAlive());
       final (repoPath, path) = key;
       final future = ref
           .watch(gitServiceProvider)
@@ -5228,8 +5250,8 @@ final untrackedDiffProvider = FutureProvider.autoDispose
       // landed status so the rendered "diff" tracks on-disk edits.
       _dependOnWorktreeState(ref, repoPath, path: path, content: future);
       future.then(
-        (d) => _untrackedDiffLru.reportSize(key, d.length),
-        onError: (_) => _untrackedDiffLru.evict(key),
+        (d) => _untrackedDiffLru.reportSize(scope, key, d.length),
+        onError: (_) => _untrackedDiffLru.evict(scope, key),
       );
       return future;
     }, retry: noProviderRetry);

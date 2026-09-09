@@ -6,6 +6,7 @@ import 'package:macos_ui/macos_ui.dart';
 
 import '../../core/exec/operation_activity.dart';
 import '../../core/git/git_service.dart';
+import '../../core/git/suppressed_tick.dart';
 import '../../core/git/unified_diff.dart';
 import '../../core/git/watch_event.dart';
 import '../../core/output/output_log.dart';
@@ -343,6 +344,31 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
   // previous one, leaving it invisible until some unrelated refresh.
   bool _familiesRefetchPending = false;
 
+  // A watch tick suppressed as our own echo is DEFERRED here, not dropped: an
+  // external change landing inside the window — or during a background fetch,
+  // where `isRecent` is true for the operation's whole duration — would
+  // otherwise be lost until the user pressed ⌘R (MADR 0039 F6).
+  late final SuppressedTick _suppressedTick = SuppressedTick(
+    window: _ownMutationSuppressWindow,
+    stillSuppressed: () => ref
+        .read(ownMutationTrackerProvider)
+        .isRecent(repoPath, DateTime.now(), _ownMutationSuppressWindow),
+    onFlush: () {
+      if (!mounted) return;
+      // A synthetic UNSCOPED tick. The deferred flush stands for a burst nobody
+      // enumerated, and "unscoped" is the conservative reading
+      // `RepoWatchEvent.paths` already documents ("empty means unknown, not
+      // nothing") — it costs a repo-wide refresh in the rare case where a real
+      // external change coincided with our own operation, and never serves
+      // stale content.
+      _onWatchTick(RepoWatchEvent(at: DateTime.now(), mode: _suppressedMode));
+    },
+  );
+
+  // The mode of the most recently suppressed tick, carried onto that synthetic
+  // event so a deferred POLLING tick is not replayed as an event-driven one.
+  WatchMode _suppressedMode = WatchMode.eventDriven;
+
   /// The one way this panel invalidates the shared post-mutation provider set
   /// — flags the refetch it causes so the head-move detector stands down for
   /// exactly that landing.
@@ -385,12 +411,90 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
 
   @override
   void dispose() {
+    _suppressedTick.cancel();
     _contextMenu.dispose();
     _listFocus.dispose();
     _listScroll.dispose();
     _changeFilterController.dispose();
     _reviewController.dispose();
     super.dispose();
+  }
+
+  /// Acts on one watch tick — the whole of what the watcher listener used to
+  /// do inline. Extracted so a tick deferred by [_suppressedTick] can be
+  /// replayed through exactly the same path rather than a second copy of it.
+  void _onWatchTick(RepoWatchEvent event) {
+    // An event-driven tick is a real filesystem change. Record it against the
+    // paths that actually moved: porcelain status can't see a content-only
+    // edit to an already-modified file (identical records, different bytes),
+    // so without this signal the diff/blame/conflict caches would go on
+    // serving pre-edit content — and with it recorded repo-wide, as it once
+    // was, every one of them for every file would be thrown away on any event
+    // at all. The tick has already been filtered of paths git ignores (see
+    // repoWatchProvider), so what arrives here is only ever real.
+    //
+    // Recorded even while the page is hidden (it's a local counter, no round
+    // trip) so the didUpdateWidget re-sync on return sees it.
+    if (event.mode == WatchMode.eventDriven) {
+      final edits = ref.read(worktreeEditsProvider.notifier);
+      // Unscoped (a poll, a watcher restart, a burst too large to enumerate)
+      // means "anything may have changed" — not "nothing did". So does a move
+      // in git's own state, which belongs to no single file (see
+      // [RepoWatchEvent.touchesGitState]).
+      if (event.isScoped && !event.touchesGitState) {
+        edits.noteFiles(repoPath, event.paths);
+      } else {
+        edits.noteRepo(repoPath);
+      }
+    }
+    // A tick that moved git's own state — a commit, checkout, branch, rebase
+    // or fetch run in a terminal or another tool — moved more than the file
+    // list: HEAD, the refs, the stashes and the reflog can all be somewhere
+    // else now. Refreshing status alone left History showing a walk that
+    // predates the commit you just made outside the app, with the branch chip
+    // still on the old tip, until you hit ⌘R. It is the same question a
+    // mutation of our own asks, so it gets the same answer.
+    //
+    // Deliberately NOT behind the visibility gate below: the providers this
+    // refreshes are shared across panels, and the other panels stay mounted
+    // (IndexedStack) and watching them while this page is hidden — a commit
+    // made in a terminal while the user sits on History must appear in
+    // History now, not after they detour through the Repository tab. Cheap
+    // by nature: it takes a real git operation, not a build, to trip this.
+    //
+    // Deliberately gated on [RepoWatchEvent.touchesGitState] (an event-driven
+    // tick naming a path under `.git`), not on every tick: a polling tick is a
+    // blind heartbeat that fires every few seconds whether or not anything
+    // happened, and re-walking the whole log on each of those would be a
+    // round trip per poll for nothing. (Polling-mode external commits are
+    // still caught — by [_detectExternalHeadMove], off the status refetch.)
+    if (event.mode == WatchMode.eventDriven && event.touchesGitState) {
+      _invalidateMutationFamilies(event.touchedAreas);
+      return;
+    }
+    // While this page is hidden (another tab is up) don't fire a `git status`
+    // round-trip on every tick — in polling mode that's a fetch every few
+    // seconds against a repo the user isn't looking at. Keep the subscription
+    // (so the watcher stays alive) but skip the refetch; didUpdateWidget
+    // re-syncs once when the page becomes visible again. An unscoped
+    // event-driven tick (watcher restart, overflowing burst) is remembered so
+    // that re-sync covers the git state it may have hidden.
+    if (!widget.isActive) {
+      if (event.mode == WatchMode.eventDriven && !event.isScoped) {
+        _missedUnscopedTick = true;
+      }
+      return;
+    }
+    // An unscoped event-driven tick can't say what moved — git state
+    // included — so it gets the full-refresh answer too.
+    if (event.mode == WatchMode.eventDriven && !event.isScoped) {
+      _invalidateMutationFamilies();
+      return;
+    }
+    // Otherwise only the working tree moved. Refresh status; the structure
+    // tree, status overlay, and sequencer state all follow from it (the tree
+    // only re-fetches when its shape changes — see repoStructureProvider).
+    ref.invalidate(repoSnapshotProvider(repoPath));
   }
 
   GlobalKey _rowKeyFor(String path, _SectionKind kind) =>
@@ -1479,85 +1583,22 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
       if (event == null) return;
       // Nearly every mutating action touches `.git/index`/HEAD/refs, so the
       // watcher fires shortly after this app's own explicit, immediate
-      // _refresh() already invalidated status for the same change — skip
-      // that redundant second fetch. A genuinely external change either
-      // lands outside this window or is caught by the very next real tick.
+      // _refresh() already invalidated status for the same change — skip that
+      // redundant second fetch.
+      //
+      // HELD, not dropped. `isRecent` answers "did we mutate this repo
+      // recently", not "is this event ours", and it stays true for the WHOLE of
+      // an in-flight background fetch — so dropping here lost a teammate's push
+      // or a terminal commit that happened to land in the window, with nothing
+      // to surface it but ⌘R (MADR 0039 F6).
       if (ref
           .read(ownMutationTrackerProvider)
           .isRecent(repoPath, event.at, _ownMutationSuppressWindow)) {
+        _suppressedMode = event.mode;
+        _suppressedTick.hold();
         return;
       }
-      // An event-driven tick is a real filesystem change. Record it against the
-      // paths that actually moved: porcelain status can't see a content-only
-      // edit to an already-modified file (identical records, different bytes),
-      // so without this signal the diff/blame/conflict caches would go on
-      // serving pre-edit content — and with it recorded repo-wide, as it once
-      // was, every one of them for every file would be thrown away on any event
-      // at all. The tick has already been filtered of paths git ignores (see
-      // repoWatchProvider), so what arrives here is only ever real.
-      //
-      // Recorded even while the page is hidden (it's a local counter, no round
-      // trip) so the didUpdateWidget re-sync on return sees it.
-      if (event.mode == WatchMode.eventDriven) {
-        final edits = ref.read(worktreeEditsProvider.notifier);
-        // Unscoped (a poll, a watcher restart, a burst too large to enumerate)
-        // means "anything may have changed" — not "nothing did". So does a move
-        // in git's own state, which belongs to no single file (see
-        // [RepoWatchEvent.touchesGitState]).
-        if (event.isScoped && !event.touchesGitState) {
-          edits.noteFiles(repoPath, event.paths);
-        } else {
-          edits.noteRepo(repoPath);
-        }
-      }
-      // A tick that moved git's own state — a commit, checkout, branch, rebase
-      // or fetch run in a terminal or another tool — moved more than the file
-      // list: HEAD, the refs, the stashes and the reflog can all be somewhere
-      // else now. Refreshing status alone left History showing a walk that
-      // predates the commit you just made outside the app, with the branch chip
-      // still on the old tip, until you hit ⌘R. It is the same question a
-      // mutation of our own asks, so it gets the same answer.
-      //
-      // Deliberately NOT behind the visibility gate below: the providers this
-      // refreshes are shared across panels, and the other panels stay mounted
-      // (IndexedStack) and watching them while this page is hidden — a commit
-      // made in a terminal while the user sits on History must appear in
-      // History now, not after they detour through the Repository tab. Cheap
-      // by nature: it takes a real git operation, not a build, to trip this.
-      //
-      // Deliberately gated on [RepoWatchEvent.touchesGitState] (an event-driven
-      // tick naming a path under `.git`), not on every tick: a polling tick is a
-      // blind heartbeat that fires every few seconds whether or not anything
-      // happened, and re-walking the whole log on each of those would be a
-      // round trip per poll for nothing. (Polling-mode external commits are
-      // still caught — by [_detectExternalHeadMove], off the status refetch.)
-      if (event.mode == WatchMode.eventDriven && event.touchesGitState) {
-        _invalidateMutationFamilies(event.touchedAreas);
-        return;
-      }
-      // While this page is hidden (another tab is up) don't fire a `git status`
-      // round-trip on every tick — in polling mode that's a fetch every few
-      // seconds against a repo the user isn't looking at. Keep the subscription
-      // (so the watcher stays alive) but skip the refetch; didUpdateWidget
-      // re-syncs once when the page becomes visible again. An unscoped
-      // event-driven tick (watcher restart, overflowing burst) is remembered so
-      // that re-sync covers the git state it may have hidden.
-      if (!widget.isActive) {
-        if (event.mode == WatchMode.eventDriven && !event.isScoped) {
-          _missedUnscopedTick = true;
-        }
-        return;
-      }
-      // An unscoped event-driven tick can't say what moved — git state
-      // included — so it gets the full-refresh answer too.
-      if (event.mode == WatchMode.eventDriven && !event.isScoped) {
-        _invalidateMutationFamilies();
-        return;
-      }
-      // Otherwise only the working tree moved. Refresh status; the structure
-      // tree, status overlay, and sequencer state all follow from it (the tree
-      // only re-fetches when its shape changes — see repoStructureProvider).
-      ref.invalidate(repoSnapshotProvider(repoPath));
+      _onWatchTick(event);
     });
     // If the selected conflict was resolved outside this session (another
     // terminal, a `git rebase --continue` run elsewhere) the file list

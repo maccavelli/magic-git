@@ -6,7 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 void main() {
   setUp(() async {
     SharedPreferences.setMockInitialValues({});
-    clearSessionBranchWorkspacePrefs();
+    clearAllSessionBranchWorkspacePrefs();
   });
 
   group('BranchWorkspacePrefs JSON', () {
@@ -128,7 +128,7 @@ void main() {
       );
       expect(loaded.lastMode, 'review');
 
-      clearSessionBranchWorkspacePrefs();
+      clearAllSessionBranchWorkspacePrefs();
       final after = await loadBranchWorkspacePrefs(
         identity: identity,
         legacyRepoPath: null,
@@ -198,7 +198,8 @@ void main() {
   });
 
   group('session wipe', () {
-    test('clearSessionBranchWorkspacePrefs drops all ad-hoc records', () async {
+    test('clearAllSessionBranchWorkspacePrefs drops every session\'s '
+        'ad-hoc records', () async {
       final a = RepositoryUiIdentity.adhoc(
         backend: 'ssh',
         sessionEpoch: 1,
@@ -217,7 +218,7 @@ void main() {
         identity: b,
         next: const BranchWorkspacePrefs(grouped: true),
       );
-      clearSessionBranchWorkspacePrefs();
+      clearAllSessionBranchWorkspacePrefs();
       expect(
         (await loadBranchWorkspacePrefs(
           identity: a,

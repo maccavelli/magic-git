@@ -32,9 +32,11 @@ import '../../core/exec/exec_proxy_codec.dart';
 import '../../core/exec/operation_activity.dart';
 import '../../core/exec/proxy_command_executor.dart';
 import '../../core/git/git_service.dart';
+import '../../core/git/suppressed_tick.dart';
 import '../../core/git/watch_event.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/providers/provider_retry_policy.dart';
+import '../../core/providers/session_scope.dart';
 import '../../core/settings/app_settings.dart';
 import '../../core/settings/keymap.dart';
 import '../../core/settings/pane_layout.dart';
@@ -428,6 +430,36 @@ class _SecondaryWindowShellState extends ConsumerState<SecondaryWindowShell>
   /// arriving within this of our own mutation is that mutation's echo.
   static const _ownMutationSuppressWindow = Duration(seconds: 3);
 
+  // A relayed tick suppressed as our own echo is DEFERRED, not dropped. The
+  // main window's own listener defers independently; this one has to as well,
+  // because the pop-out's tracker is marked by ITS proxied mutations (see
+  // `ProxyCommandExecutor.onMutationCompleted`). MADR 0039 F6.
+  late final SuppressedTick _suppressedTick = SuppressedTick(
+    window: _ownMutationSuppressWindow,
+    stillSuppressed: () {
+      final repoPath = ref.read(windowSessionProvider).repoPath;
+      if (repoPath == null) return false;
+      return ref
+          .read(ownMutationTrackerProvider)
+          .isRecent(repoPath, DateTime.now(), _ownMutationSuppressWindow);
+    },
+    onFlush: () {
+      if (!mounted) return;
+      final repoPath = ref.read(windowSessionProvider).repoPath;
+      if (repoPath == null) return;
+      // Unscoped by construction — the deferred tick stands for a burst nobody
+      // enumerated — so it takes the full-refresh branch of the policy below.
+      _applyRepoTick(
+        repoPath,
+        RepoWatchEvent(at: DateTime.now(), mode: _suppressedMode),
+      );
+    },
+  );
+
+  /// Mode of the most recently suppressed tick, so a deferred POLLING tick is
+  /// not replayed as an event-driven one.
+  WatchMode _suppressedMode = WatchMode.eventDriven;
+
   MethodChannel get _hub => widget.hub;
   WindowKind get _kind => WindowKind.fromName(widget.descriptor.kind);
 
@@ -557,6 +589,7 @@ class _SecondaryWindowShellState extends ConsumerState<SecondaryWindowShell>
 
   @override
   void dispose() {
+    _suppressedTick.cancel();
     _dropPollHeadProbe();
     _settingsSyncDebounce?.cancel();
     _vsyncProbeTimer?.cancel();
@@ -631,7 +664,7 @@ class _SecondaryWindowShellState extends ConsumerState<SecondaryWindowShell>
       // KeepAliveLink bookkeeping from pinning links to the just-disposed
       // providers — a stale link there breaks delivery of a later fresh fetch to
       // the diff pane (the pop-out "diff doesn't load after switching" bug).
-      clearHashKeyedRepoCaches();
+      clearHashKeyedRepoCaches(ref.read(sessionScopeProvider));
       ref.read(worktreeEditsProvider.notifier).noteRepo(session.repoPath!);
       // Fresh repo, fresh suppression state — mirrors ConnectionController.
       ref.read(ownMutationTrackerProvider).clear();
@@ -803,18 +836,31 @@ class _SecondaryWindowShellState extends ConsumerState<SecondaryWindowShell>
     final at = DateTime.fromMillisecondsSinceEpoch(
       args['atMs'] as int? ?? DateTime.now().millisecondsSinceEpoch,
     );
+    final modeName = args['mode'] as String? ?? '';
+    final mode = WatchMode.values.asNameMap()[modeName] ?? WatchMode.stopped;
     // Our own proxied mutation already refreshed both windows — skip its echo.
+    // HELD, not dropped: `isRecent` cannot tell our echo from an external
+    // change landing in the same window (MADR 0039 F6).
     if (ref
         .read(ownMutationTrackerProvider)
         .isRecent(repoPath, at, _ownMutationSuppressWindow)) {
+      _suppressedMode = mode;
+      _suppressedTick.hold();
       return;
     }
-    final modeName = args['mode'] as String? ?? '';
-    final mode = WatchMode.values.asNameMap()[modeName] ?? WatchMode.stopped;
     // The main window forwards which paths moved; an empty list means it
     // couldn't say, and every path must be assumed edited.
     final paths = (args['paths'] as List?)?.cast<String>() ?? const <String>[];
-    final tick = RepoWatchEvent(at: at, mode: mode, paths: paths.toSet());
+    _applyRepoTick(
+      repoPath,
+      RepoWatchEvent(at: at, mode: mode, paths: paths.toSet()),
+    );
+  }
+
+  /// Acts on one relayed tick. Extracted so a tick deferred by
+  /// [_suppressedTick] replays through the same path rather than a copy of it.
+  void _applyRepoTick(String repoPath, RepoWatchEvent tick) {
+    final mode = tick.mode;
     if (mode == WatchMode.eventDriven) {
       final edits = ref.read(worktreeEditsProvider.notifier);
       if (tick.isScoped && !tick.touchesGitState) {
