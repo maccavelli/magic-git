@@ -253,6 +253,61 @@ Selecting the watch *surface* by measured disproportion rather than by a flag is
 a real improvement and a real change of shape; it is deliberately **not** part of
 this decision, and belongs in its own record if a working set ever needs it.
 
+#### Amendment 0040.2 — 2026-09-09: raising the cap unmasked a watcher-multiplication defect, and phases 2 and 3 are reverted
+
+Recorded within the hour, from the maintainer's first rebuilt session.
+
+With the derived cap live (6 per session, per host), four repositories were
+opened and the host began **accumulating watchers per repository**, measured over
+40 seconds:
+
+```text
+12:46:21  watchers=7   registry files=22
+12:46:42  watchers=7   files=22
+12:47:03  watchers=8   files=24
+
+per repo:  systems-workspace 4 · percona-postgres 3 · lkq-apache-spark 2
+           eck-logstash-prod 2 · eck-logstash-non-prod 2
+```
+
+Every duplicate came from the **same** sshd session, so this is not two tabs
+legitimately watching one repository, and **every one had a fresh heartbeat** —
+the app was actively refreshing all of them. It genuinely held several armed
+watchers per repository. That is the MADR 0025 C3 shape, growing.
+
+**Ruled out by reading:** overlapping `start()` calls inside one engine.
+`watch_lifecycle.dart` serialises `start()` through `startChain` with
+`queued >= 1` coalescing — MADR 0026 H1's fix — and it is intact. The
+slot-release listener is guarded on `mode == polling && degradedReason ==
+ceiling`. The remaining candidate, unproven, is more than one *engine* per
+repository in one container: a provider element rebuilt while the previous
+engine's `stop()` teardown was still in flight.
+
+**On causation, plainly.** The multiplication mechanism lives in
+`watch_lifecycle.dart`, which neither this record nor MADR 0039 touched. What
+raising the cap did was remove what had been hiding it: at a cap of 2, a
+repository that armed twice consumed the whole budget and every other repository
+was refused — **which is exactly the symptom originally reported**. F1 of this
+record established that both held slots were backed by live watchers and stopped
+there. It never asked why one session needed two for two repositories, and that
+was the thread to pull.
+
+F1 is not wrong as written. It is incomplete, and the incompleteness pointed the
+whole investigation away from the actual defect.
+
+**Action taken.** Phases 2 and 3 reverted (`370b2b8`, `22270f4`); phase 1 — the
+structural slot release — kept, since it is independent and its regression test
+still passes. The cap is back to the constant 2 with host-only keying, which
+bounds the accumulation to two processes per host while the mechanism is found.
+
+**What this record's decision now rests on.** The reasoning in F2, F3, F5 and F6
+is unaffected — the cap really is four times tighter than the budget it stands in
+front of, the lease really has taken over the orphan problem, and polling really
+does cost ~48 git processes per minute per repository. The cap is still the wrong
+limit. But it cannot be raised until the multiplication defect is understood,
+because the cap is currently the only thing bounding it. That is a new decision
+needing its own record and its own evidence, not a resumption of this one.
+
 ## Considered Options
 
 * **Fix the leak only** (the original Option 1). Release the slot on every arm

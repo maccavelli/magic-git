@@ -1,5 +1,5 @@
 ---
-status: "executed"
+status: "partial"
 date: 2026-09-09
 associated-madr: "0040-MADR-the-watcher-ceiling-is-the-wrong-limit.md"
 ---
@@ -466,6 +466,24 @@ behaviour is asserted and why.
 Worth recording that the first attempt at this deviation **removed** the text
 assertions before adding the executing one, leaving the reporting briefly
 untested; the gap was caught by re-reading the diff rather than by a check.
+
+### Reverted 2026-09-09 — phases 2 and 3
+
+See MADR amendment 0040.2. The first rebuilt session accumulated watchers per
+repository (7 → 8 in 40 seconds, up to 4 on one repo), all from one sshd session
+and all being heartbeated. Phases 2 and 3 were reverted the same hour
+(`370b2b8`, `22270f4`); **phase 1 is kept** — it is independent, its regression
+test still passes, and it is the one part of this plan whose evidence was a test
+that failed before it existed.
+
+The defect is in the engine, not in these phases: raising the cap removed what
+was masking it. The plan's own "Bad, because raising the ceiling…" consequence
+anticipated a *resource* risk from the outlier repository and named the wrong
+one; the real risk was that the cap was load-bearing for a bug nobody had found.
+
+Verified after the revert: `flutter analyze` clean, `flutter test` 3897 passed /
+3 skipped, `tool/mutate.py` 2 killed 0 survived (the two phase-1 entries; the
+phase-2 and phase-3 entries reverted with their code).
 
 ### Not done
 
