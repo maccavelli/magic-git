@@ -1,5 +1,5 @@
 ---
-status: "proposed"
+status: "complete"
 date: 2026-09-09
 associated-madr: "0042-MADR-the-macos-build-mutates-its-own-inputs.md"
 ---
@@ -423,5 +423,130 @@ deviation is prompted on and recorded before it is executed.)*
 
 ## Execution record
 
-*(Added per phase as it lands: what the phase did, the verification output
-rather than a summary of it, and what was not done and why.)*
+Executed 2026-09-09, four phases, one commit each, in plan order. `master` is
+ahead of `origin/master` and nothing has been pushed.
+
+| Phase | Commit | What landed |
+| --- | --- | --- |
+| 1 | `19f7f91` | `Release-unsigned.entitlements` added (tracked, documented); `MG_RELEASE_ENTITLEMENTS` + optional `#include?` in `AppInfo.xcconfig`; `CODE_SIGN_ENTITLEMENTS` on the Runner Release config made a variable reference |
+| 2 | `0d04dbc` | the strip/`cp`/trap deleted; `build_macos.sh` writes `Configs/Local.xcconfig` on **every** run, both modes |
+| 3 | `32c1fd2` | the guard extended to a set-difference invariant between the two files; the `.bak` test and its ambiguity deleted; `.gitignore` and `AGENTS.md` updated |
+| 4 | `fa1b36a` | the stamp phase declares `inputPaths`; the script fails legibly on a missing plist |
+
+### Verification, as run
+
+```text
+flutter analyze                       0 issues (every phase boundary)
+flutter test                          3926 passed, 3 skipped, 0 failed (every phase boundary)
+xcodebuild -showBuildSettings         CODE_SIGN_ENTITLEMENTS resolves both ways (phase 1)
+```
+
+**Two full, real `--unsigned` builds ran during execution** — not simulated,
+not `-showBuildSettings` only:
+
+* one against a worktree pinned to the pre-phase-2 commit (`19f7f91`), to
+  produce the negative control;
+* one against the live, phase-2-complete tree, immediately after, from the
+  same machine, same Xcode, same Flutter (3.47.2, already on `PATH` — no SDK
+  vendoring needed).
+
+Both succeeded as builds. What differs is what they did to the repository.
+
+### The negative control, and its mirror
+
+The MADR's central claim — that the existing guard fails during a legitimate
+unsigned build, and only because the build mutates a tracked file — was
+reproduced exactly, on the pre-fix tree, in an isolated `git worktree` so the
+real working tree was never touched:
+
+```text
+mid-build, old script (19f7f91), git worktree:
+  macos/Runner/Release.entitlements   grep-count of the two keys = 0
+  flutter test macos_entitlements_canon_test.dart:
+    Release.entitlements keeps the sandbox and keychain keys   [E]  FAILED
+    no leftover entitlements backup                             [E]  FAILED
+```
+
+The mirror, against the fixed tree, mid the SAME real build:
+
+```text
+mid-build, new script, live tree:
+  macos/Runner/Configs/Local.xcconfig  MG_RELEASE_ENTITLEMENTS = Runner/Release-unsigned.entitlements
+  git status --short macos/            (empty)
+  flutter test macos_entitlements_canon_test.dart:  All tests passed
+```
+
+`git status --short macos/` stayed empty for the full duration of the second
+build — pub get, `flutter build macos --release`, codesign, packaging.
+
+### The built app's actual entitlements, measured
+
+```sh
+$ codesign -d --entitlements :- "Magic Git.app" | plutil -convert xml1 -o - -
+  com.apple.security.files.bookmarks.app-scope    true
+  com.apple.security.files.user-selected.read-write  true
+  com.apple.security.get-task-allow               true   # Xcode adds this for ad-hoc signing
+  com.apple.security.network.client                true
+```
+
+No `app-sandbox`, no `keychain-access-groups` — exactly
+`Release-unsigned.entitlements`, plus the one grant Xcode itself adds for
+ad-hoc/debuggable signing. `Release.entitlements` was never opened for
+writing at any point in either build.
+
+### Phase 3's sabotage round (seen to fail, against scratch copies only)
+
+Four deliberate drifts, run against `macos/Runner/Release-unsigned.entitlements`
+with the original saved and restored after each, never the tracked history:
+
+| Case | What was done | Result |
+| --- | --- | --- |
+| 1 | added `com.apple.security.cs.allow-jit` to the unsigned file only | **FAILED** — `Expected: empty, Actual: {cs.allow-jit}` |
+| 2 | removed `network.client` from the unsigned file | **FAILED** — the required-difference set no longer matched |
+| 3 | added `app-sandbox` back into the unsigned file | **FAILED** — the required-difference set shrank by one |
+| 4 | flipped `network.client` from `<true/>` to `<false/>` | **FAILED** — the value-equality loop caught it |
+
+All four restored; `git status --short macos/` empty afterward.
+
+### Phase 4's negative control
+
+```sh
+$ TARGET_BUILD_DIR=/nonexistent-target INFOPLIST_PATH=x/Info.plist SRCROOT=$PWD/macos     sh macos/scripts/stamp_version.sh
+error: x/Info.plist is not in the product bundle yet — the app was
+not assembled before this phase ran. Clean build/macos and rebuild; if
+it recurs, this phase is running before Info.plist processing (MADR 0042 F6).
+exit=1
+```
+
+The identical input against the pre-fix logic (bare `PlistBuddy -c Set`)
+reproduces the original report's exact text —
+`Set: Entry, ":CFBundleShortVersionString", Does Not Exist` /
+`File Doesn't Exist, Will Create: …` — confirming the new script's guard fires
+on precisely the condition that was reported.
+
+The other half of phase 4, a real build's stamped version, was confirmed
+independently of any log message: `CFBundleShortVersionString` and
+`CFBundleVersion` in the built bundle both read `1.6.2.31`, computed
+separately as `git describe` (`v1.6.2`) + `git rev-list --count v1.6.2..HEAD`
+(`31`) — an exact match. The source `macos/Runner/Info.plist` stayed at its
+`0.0.0` placeholder throughout, as designed.
+
+### What was NOT done, and why
+
+* **4.1's ordering fix was not confirmed to fix anything.** It could not be —
+  the failure it addresses never reproduced on this machine (MADR F5/F6), and
+  this session has no access to the machine that reported it. What is
+  confirmed: the phase still runs, still stamps correctly, and the input
+  declaration does not create a build-order regression. Whether it was the
+  actual mechanism on the other machine is unknown and stated as such.
+* **`Local.xcconfig` was left in place after both builds**, per the recorded
+  decision. It currently reads `Release-unsigned.entitlements` on this
+  machine as a result — the next signed build here will need `--unsigned`'s
+  absence to reset it, or a signed `build_macos.sh` run, which now writes it
+  unconditionally on every invocation (phase 2.2) and so self-corrects on the
+  next run regardless.
+* **Nothing was pushed.** `master` is 4 commits ahead of `origin/master`.
+* **The `.app` built during verification was not installed** — no
+  `--install` flag was used, since the point was the entitlements/tree-state
+  check, not producing a distributable. `~/Applications/Magic Git.app` (if
+  present) is whatever it was before this session.
