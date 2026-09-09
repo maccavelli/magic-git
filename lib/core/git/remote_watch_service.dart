@@ -255,9 +255,12 @@ class RemoteWatchService {
   /// Best-effort: a failure here must never affect the connect.
   Future<void> sweepStaleWatchers(Map<String, String> repoToGitDir) async {
     if (repoToGitDir.isEmpty) return;
+    // Tokens the host says are still leased, across every repo this connection
+    // knows about. `null` until a sweep actually succeeds — see the guard below.
+    Set<String>? reported;
     for (final entry in repoToGitDir.entries) {
       try {
-        await _executor.execute(
+        final result = await _executor.execute(
           repoPath: entry.key,
           gitArgs: [
             'sh',
@@ -267,8 +270,51 @@ class RemoteWatchService {
           lane: ExecLane.isolated,
           timeout: const Duration(seconds: 20),
         );
+        (reported ??= <String>{}).addAll(parseSweptLiveTokens(result.stdout));
       } catch (e) {
         onDiagnostic?.call('watcher sweep failed for ${entry.key}: $e');
+      }
+    }
+    if (reported != null) _reconcileSlots(reported);
+  }
+
+  /// The `LIVE <token>` lines a sweep reports.
+  @visibleForTesting
+  static Set<String> parseSweptLiveTokens(String stdout) => {
+    for (final line in stdout.split('\n'))
+      if (line.startsWith('LIVE ')) line.substring(5).trim(),
+  }..removeWhere((t) => t.isEmpty);
+
+  /// Drops the slots this session believes it holds but the host cannot see.
+  ///
+  /// A slot is reserved before the watcher exists and released on every exit
+  /// that does not end armed; phase 1 of MADR 0040 made that structural. This is
+  /// the belt to that braces: bookkeeping wrong for a reason nobody has thought
+  /// of heals at the next connect instead of costing the session a slot until it
+  /// is restarted.
+  ///
+  /// Scoped to **this session's** tokens, which is all a session can honestly
+  /// claim — another tab's watchers are live and none of this one's business.
+  /// A token whose arm is still in flight has a heartbeat the client stamped and
+  /// is not refreshing yet, so it can read as unreported for up to
+  /// [leaseStaleAfter]; that is why this runs at connect, when this session's
+  /// own arms have just been torn down, rather than on a timer.
+  void _reconcileSlots(Set<String> reportedLive) {
+    for (final key in _liveByHost.keys.toList()) {
+      if (key.$1 != _scope) continue;
+      final held = _liveByHost[key];
+      if (held == null) continue;
+      final orphaned = held.difference(reportedLive);
+      if (orphaned.isEmpty) continue;
+      held.removeAll(orphaned);
+      if (held.isEmpty) _liveByHost.remove(key);
+      onDiagnostic?.call(
+        'reclaimed ${orphaned.length} watcher slot(s) the host no longer holds',
+      );
+      for (var i = 0; i < orphaned.length; i++) {
+        if (!_slotReleases.isClosed) {
+          _slotReleases.add(_releaseKey(key.$1, key.$2));
+        }
       }
     }
   }
@@ -279,7 +325,11 @@ class RemoteWatchService {
   /// instance would hand each its own budget and multiply the ceiling (0028
   /// amendment 0028.1). Keyed by host because the process now holds several
   /// sessions at once (MADR 0039 F4).
-  static final Map<(Object, String), int> _liveByHost = {};
+  /// The watcher **tokens** each (session, host) currently holds, not a bare
+  /// count. The count is `.length`, so it cannot drift from the identity of
+  /// what is held — and reconciliation against the host has something to
+  /// match against (MADR 0040, phase 3).
+  static final Map<(Object, String), Set<String>> _liveByHost = {};
 
   /// Broadcasts the host whose watcher slot was just released, so a repo that
   /// was refused by the ceiling can take it immediately instead of polling
@@ -303,17 +353,22 @@ class RemoteWatchService {
 
   /// Live watcher count across every host — for tests and diagnostics.
   static int get liveWatchers =>
-      _liveByHost.values.fold(0, (sum, n) => sum + n);
+      _liveByHost.values.fold(0, (sum, tokens) => sum + tokens.length);
 
   /// Live watcher count for one host — for tests and diagnostics.
   static int liveWatchersFor(String host) => _liveByHost.entries
       .where((e) => e.key.$2 == host)
-      .fold(0, (sum, e) => sum + e.value);
+      .fold(0, (sum, e) => sum + e.value.length);
 
   /// Live watcher count for one session on one host — the number the ceiling
   /// actually compares against.
   static int liveWatchersIn(Object scope, String host) =>
-      _liveByHost[(scope, host)] ?? 0;
+      _liveByHost[(scope, host)]?.length ?? 0;
+
+  /// The tokens one session holds on one host — for tests and diagnostics.
+  @visibleForTesting
+  static Set<String> heldTokens(Object scope, String host) =>
+      Set.unmodifiable(_liveByHost[(scope, host)] ?? const <String>{});
 
   /// Test seam: the counter is process-global, so a test that arms watchers
   /// must be able to start from a known state.
@@ -433,7 +488,7 @@ class RemoteWatchService {
         // to a host that never paid for it.
         final host = _hostKey();
         final key = (_scope, host);
-        final liveHere = _liveByHost[key] ?? 0;
+        final liveHere = _liveByHost[key]?.length ?? 0;
         if (liveHere >= maxConcurrentWatchers) {
           onDiagnostic?.call(
             'watcher ceiling reached for $host '
@@ -452,17 +507,14 @@ class RemoteWatchService {
         // connect — and every one of them awaits the tool probe before this
         // point, so a check that did not reserve let all of them pass the
         // ceiling together. Released on every path that does not end armed.
-        _liveByHost[key] = liveHere + 1;
+        (_liveByHost[key] ??= <String>{}).add(token);
         var armCounted = true;
         void releaseSlot() {
           if (!armCounted) return;
           armCounted = false;
-          final n = _liveByHost[key] ?? 0;
-          if (n > 1) {
-            _liveByHost[key] = n - 1;
-          } else {
-            _liveByHost.remove(key);
-          }
+          final held = _liveByHost[key];
+          held?.remove(token);
+          if (held != null && held.isEmpty) _liveByHost.remove(key);
           // Announce room on THIS host. Several waiting repos may wake
           // together; the reserve-then-arm ceiling settles who gets it, and the
           // losers are refused exactly as they were before.

@@ -353,6 +353,20 @@ String watcherSweepScript(
       '[ -f "\${h%.hb}.pid" ] && continue; '
       '[ -n "\$(find "\$h" -mmin -$mins 2>/dev/null)" ] && continue; '
       'rm -f "\$h"; '
+      'done; '
+      // Report the tokens still leased, so the client can reconcile its own
+      // slot bookkeeping against the host (MADR 0040, phase 3). Everything the
+      // loops above reclaimed is already gone, so a heartbeat that survives to
+      // here and is FRESH is a watcher a live client is still refreshing.
+      //
+      // Read-only, and last: the sweep's job is reclamation and this must not
+      // be able to change what it reclaims.
+      'for h in $hbGlobs; do '
+      '[ -f "\$h" ] || continue; '
+      '[ -n "\$(find "\$h" -mmin -$mins 2>/dev/null)" ] || continue; '
+      'b=\${h##*/}; b=\${b#mg-watch.}; b=\${b%.hb}; '
+      // The legacy pre-0027 `mg-watch.hb` has no token and strips to empty.
+      '[ -n "\$b" ] && printf \'LIVE %s\\n\' "\$b"; '
       'done; true';
 }
 

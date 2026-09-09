@@ -10,6 +10,7 @@
 // So: no `contains(...)` assertions about script text in this file. Spawn a
 // process, run the script, look at whether the process is still there.
 
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -201,6 +202,51 @@ void main() {
       );
     },
   );
+
+  test('the sweep REPORTS the tokens still leased, and only those', () async {
+    // MADR 0040 phase 3. The client reconciles its slot bookkeeping against this
+    // output, so what the script actually prints is the contract — asserted by
+    // running it, not by reading it (MADR 0029).
+    final livePid = '${tmp.path}/mg-watch.alive.pid';
+    await spawnWatcher(livePid);
+    // A fresh heartbeat: some client is still refreshing this one.
+    File('${tmp.path}/mg-watch.alive.hb').writeAsStringSync('');
+
+    // A stale heartbeat with no pid beside it — what an arm that failed after
+    // stamping its lease leaves behind. Litter, not a live watcher.
+    final stale = File('${tmp.path}/mg-watch.stranded.hb')
+      ..writeAsStringSync('');
+    await Process.run('touch', ['-t', '202601010000', stale.path]);
+
+    final out = await runScript(
+      watcherSweepScript([tmp.path], staleAfter: const Duration(minutes: 5)),
+    );
+
+    expect(out.exitCode, 0, reason: 'reporting must not fail the reclamation');
+    final reported = const LineSplitter()
+        .convert(out.stdout as String)
+        .where((l) => l.startsWith('LIVE '))
+        .map((l) => l.substring(5).trim())
+        .toList();
+
+    expect(
+      reported,
+      contains('alive'),
+      reason: 'a fresh lease is a watcher some client is still refreshing',
+    );
+    expect(
+      reported,
+      isNot(contains('stranded')),
+      reason:
+          'a stale lease is exactly the slot the client must reclaim — '
+          'reporting it would defeat the reconciliation',
+    );
+    expect(
+      stale.existsSync(),
+      isFalse,
+      reason: 'and the sweep still reclaims it, as it did before',
+    );
+  });
 }
 
 String _esc(String s) => "'${s.replaceAll("'", r"'\''")}'";
