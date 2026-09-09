@@ -419,194 +419,226 @@ class RemoteWatchService {
           if (!_slotReleases.isClosed) _slotReleases.add(host);
         }
 
-        final gitDir = spec?.gitDir ?? '$repoPath/.git';
-        final heartbeat = watchHeartbeatFile(gitDir, token);
-        Future<void> beat() async {
-          try {
-            await _executor.execute(
-              repoPath: repoPath,
-              gitArgs: ['sh', '-c', 'touch ${ShellEscaper.escape(heartbeat)}'],
-              lane: ExecLane.isolated,
-              timeout: const Duration(seconds: 15),
-            );
-          } catch (_) {
-            // Best-effort once the watcher is up. A missed beat costs nothing
-            // until leaseStaleAfter — but see the AWAITED first beat below,
-            // which is not optional.
-          }
-        }
-
-        // STAMP THE LEASE BEFORE ARMING, and wait for it.
+        // EVERY exit from here releases the slot. The four explicit releases
+        // below stay — each pairs its release with a distinct `_record` cause
+        // and `WatchUnavailable` reason, which is what makes
+        // `degradationSummary` legible — but they are not the guarantee.
         //
-        // The watcher script's first action is `[ -f <heartbeat> ] || exit 0`.
-        // This used to be fired with `unawaited(beat())` *after* the stream was
-        // launched, so the script checked for a file the client had not created
-        // yet and exited in ~5 ms — every arm, because the heartbeat filename
-        // is tokenised per instance and can never pre-exist. Three arms died in
-        // seconds, the restart budget emptied, and the repo polled forever at
-        // 48 host processes a minute (0027 deviation (b)).
-        //
-        // It is also what a lease *means*: a live client owns this watcher, so
-        // the client's mark must precede the watcher. One round trip, on a path
-        // that already pays one.
-        await beat();
-
-        final CommandStreamHandle handle;
+        // `executeStream` can fail five ways and only one was caught (0024
+        // M2's `SSHStreamBudgetExhausted`); the other four propagated out of
+        // `arm` with the slot still reserved, and nothing ever gave it back.
+        // Two of those on one host and every repository on it is refused for
+        // the rest of the session, with no watcher process alive to justify it
+        // — MADR 0026's H1 exactly. Structural, so that a sixth failure type
+        // added later cannot reintroduce it (MADR 0040 F8).
         try {
-          handle = await _executor.executeStream(
-            repoPath: repoPath,
-            gitArgs: remoteWatcherArgs(
-              tool,
-              spec,
-              pidFile: watchPidFile(spec?.gitDir ?? '$repoPath/.git', token),
-              heartbeat: watchHeartbeatFile(
-                spec?.gitDir ?? '$repoPath/.git',
-                token,
-              ),
-            ),
-          );
-        } on SSHStreamBudgetExhausted catch (e) {
-          releaseSlot();
-          // Deterministic, not a blip: retrying just hits the same wall and
-          // spends the restart budget doing it. Poll this repo instead, and
-          // say why (0024 M2).
-          onDiagnostic?.call('$e — falling back to polling for this repo');
-          _record(repoPath, WatchTransition.armFailed, 'stream budget', 0);
-          return const WatchUnavailable(WatchUnavailableReason.streamBudget);
-        }
-        if (hooks.isCancelled()) {
-          releaseSlot();
-          await handle.cancel();
-          return const WatchAborted();
-        }
+          final gitDir = spec?.gitDir ?? '$repoPath/.git';
+          final heartbeat = watchHeartbeatFile(gitDir, token);
+          Future<void> beat() async {
+            try {
+              await _executor.execute(
+                repoPath: repoPath,
+                gitArgs: [
+                  'sh',
+                  '-c',
+                  'touch ${ShellEscaper.escape(heartbeat)}',
+                ],
+                lane: ExecLane.isolated,
+                timeout: const Duration(seconds: 15),
+              );
+            } catch (_) {
+              // Best-effort once the watcher is up. A missed beat costs nothing
+              // until leaseStaleAfter — but see the AWAITED first beat below,
+              // which is not optional.
+            }
+          }
 
-        if (spec != null) {
-          // The bounded scripts exit immediately with a distinct status when
-          // none of their paths exist yet. Catch that here so it degrades to
-          // polling-with-recovery instead of looking like a watcher that armed
-          // and died — which would spend the restart budget on three doomed
-          // retries first (0022 M6). Bounded arms only, and the wait is capped:
-          // a live watcher never completes exitCode, so this costs one short
-          // timeout on a path that already paid for an SSH round trip.
-          final early = await handle.exitCode.timeout(
-            const Duration(milliseconds: 250),
-            onTimeout: () => null,
-          );
-          if (early == boundedWatchNoPathsExit) {
+          // STAMP THE LEASE BEFORE ARMING, and wait for it.
+          //
+          // The watcher script's first action is `[ -f <heartbeat> ] || exit 0`.
+          // This used to be fired with `unawaited(beat())` *after* the stream was
+          // launched, so the script checked for a file the client had not created
+          // yet and exited in ~5 ms — every arm, because the heartbeat filename
+          // is tokenised per instance and can never pre-exist. Three arms died in
+          // seconds, the restart budget emptied, and the repo polled forever at
+          // 48 host processes a minute (0027 deviation (b)).
+          //
+          // It is also what a lease *means*: a live client owns this watcher, so
+          // the client's mark must precede the watcher. One round trip, on a path
+          // that already pays one.
+          await beat();
+
+          final CommandStreamHandle handle;
+          try {
+            handle = await _executor.executeStream(
+              repoPath: repoPath,
+              gitArgs: remoteWatcherArgs(
+                tool,
+                spec,
+                pidFile: watchPidFile(spec?.gitDir ?? '$repoPath/.git', token),
+                heartbeat: watchHeartbeatFile(
+                  spec?.gitDir ?? '$repoPath/.git',
+                  token,
+                ),
+              ),
+            );
+          } on SSHStreamBudgetExhausted catch (e) {
+            releaseSlot();
+            // Deterministic, not a blip: retrying just hits the same wall and
+            // spends the restart budget doing it. Poll this repo instead, and
+            // say why (0024 M2).
+            onDiagnostic?.call('$e — falling back to polling for this repo');
+            _record(repoPath, WatchTransition.armFailed, 'stream budget', 0);
+            return const WatchUnavailable(WatchUnavailableReason.streamBudget);
+          }
+          if (hooks.isCancelled()) {
             releaseSlot();
             await handle.cancel();
-            _record(repoPath, WatchTransition.armFailed, 'no watched paths', 0);
-            return const WatchUnavailable(
-              WatchUnavailableReason.noWatchedPaths,
+            return const WatchAborted();
+          }
+
+          if (spec != null) {
+            // The bounded scripts exit immediately with a distinct status when
+            // none of their paths exist yet. Catch that here so it degrades to
+            // polling-with-recovery instead of looking like a watcher that armed
+            // and died — which would spend the restart budget on three doomed
+            // retries first (0022 M6). Bounded arms only, and the wait is capped:
+            // a live watcher never completes exitCode, so this costs one short
+            // timeout on a path that already paid for an SSH round trip.
+            final early = await handle.exitCode.timeout(
+              const Duration(milliseconds: 250),
+              onTimeout: () => null,
             );
-          }
-        }
-
-        var buffer = '';
-        final delimiter = tool == RemoteWatcherTool.fswatch ? '\u0000' : '\n';
-        final sub = handle.stdout.listen(
-          (chunk) {
-            hooks.noteActivity();
-            buffer += chunk;
-            // Cursor, not repeated re-slicing. `buffer = buffer.substring(...)`
-            // per record copies the whole remainder AND restarts the scan at 0,
-            // which is quadratic in the arriving chunk — measured at 522 ms of
-            // UI-isolate time for a 20k-event `git checkout` burst at
-            // dartssh2's 32 KiB packet size, against ~1 ms here (0024 A1).
-            // One remainder copy per chunk instead of one per record.
-            var start = 0;
-            var idx = buffer.indexOf(delimiter, start);
-            while (idx >= 0) {
-              final event = buffer.substring(start, idx);
-              start = idx + 1;
-              // Bounded mode watches absolute paths; remap them to the
-              // repo-relative (`.git/…` for git-dir) shape the filter expects.
-              // Recursive mode already emits repo-relative paths (cwd = repo).
-              final path = spec == null
-                  ? event
-                  : relativizeBoundedEvent(event, spec);
-              if (path != null && shouldTriggerWatch(path)) {
-                hooks.signalPath(path);
-                // A bounded surface is derived from the index, so a git-state
-                // change can mean "there are now tracked files in directories
-                // this arming does not cover". Recompute and re-arm, debounced
-                // — one `git add` writes the index several times (0022 H5).
-                if (spec != null && path.startsWith('.git/')) {
-                  rearmTimer?.cancel();
-                  rearmTimer = Timer(_rearmDebounce, () {
-                    if (hooks.isCancelled()) return;
-                    hooks.rearm();
-                  });
-                }
-              }
-              idx = buffer.indexOf(delimiter, start);
-            }
-            if (start > 0) buffer = buffer.substring(start);
-            // Whatever remains is an unterminated partial record. If it has
-            // grown past a sane bound, the watcher is emitting output that
-            // never completes a record — drop it and resync on the next
-            // delimiter rather than buffering unbounded.
-            if (buffer.length > _maxBufferChars) {
-              developer.log(
-                'watcher output exceeded $_maxBufferChars chars with no '
-                'delimiter; dropping buffered partial',
-                name: 'RemoteWatchService',
+            if (early == boundedWatchNoPathsExit) {
+              releaseSlot();
+              await handle.cancel();
+              _record(
+                repoPath,
+                WatchTransition.armFailed,
+                'no watched paths',
+                0,
               );
-              buffer = '';
+              return const WatchUnavailable(
+                WatchUnavailableReason.noWatchedPaths,
+              );
             }
-          },
-          onDone: hooks.scheduleRestart,
-          onError: (Object _) => hooks.scheduleRestart(),
-        );
-
-        // Read stderr even when no one is listening to the diagnostics.
-        //
-        // Two reasons, and both bite. `inotifywait` reports per-directory
-        // failures here — canonically "upper limit on inotify watches reached"
-        // — which is the one message that says WHY a watcher died and names
-        // the sysctl to raise; it used to be dropped, leaving a silent polling
-        // fallback. And dartssh2's `SSHSession._stderrController` is a
-        // single-subscription controller with no listener
-        // (ssh_session.dart:74), so unread stderr is queued in the Dart heap
-        // for the life of the channel — and the watcher's channel is the
-        // longest-lived one in the app (0024 H3).
-        // The lease was stamped and awaited before the arm; from here it only
-        // needs refreshing.
-        heartbeatTimer?.cancel();
-        heartbeatTimer = Timer.periodic(heartbeatInterval, (_) => beat());
-
-        var diagnosticsSeen = 0;
-        var errBuffer = '';
-        final errSub = handle.stderr.listen((chunk) {
-          errBuffer += chunk;
-          var start = 0;
-          var i = errBuffer.indexOf('\n', start);
-          while (i >= 0) {
-            final line = errBuffer.substring(start, i).trim();
-            start = i + 1;
-            if (line.isNotEmpty && diagnosticsSeen < maxDiagnosticLines) {
-              diagnosticsSeen++;
-              developer.log(line, name: 'RemoteWatchService');
-              onDiagnostic?.call(line);
-            }
-            i = errBuffer.indexOf('\n', start);
           }
-          if (start > 0) errBuffer = errBuffer.substring(start);
-          if (errBuffer.length > _maxBufferChars) errBuffer = '';
-        }, onError: (Object _) {});
 
-        return WatchArmed(() async {
-          releaseSlot();
+          var buffer = '';
+          final delimiter = tool == RemoteWatcherTool.fswatch ? '\u0000' : '\n';
+          final sub = handle.stdout.listen(
+            (chunk) {
+              hooks.noteActivity();
+              buffer += chunk;
+              // Cursor, not repeated re-slicing. `buffer = buffer.substring(...)`
+              // per record copies the whole remainder AND restarts the scan at 0,
+              // which is quadratic in the arriving chunk — measured at 522 ms of
+              // UI-isolate time for a 20k-event `git checkout` burst at
+              // dartssh2's 32 KiB packet size, against ~1 ms here (0024 A1).
+              // One remainder copy per chunk instead of one per record.
+              var start = 0;
+              var idx = buffer.indexOf(delimiter, start);
+              while (idx >= 0) {
+                final event = buffer.substring(start, idx);
+                start = idx + 1;
+                // Bounded mode watches absolute paths; remap them to the
+                // repo-relative (`.git/…` for git-dir) shape the filter expects.
+                // Recursive mode already emits repo-relative paths (cwd = repo).
+                final path = spec == null
+                    ? event
+                    : relativizeBoundedEvent(event, spec);
+                if (path != null && shouldTriggerWatch(path)) {
+                  hooks.signalPath(path);
+                  // A bounded surface is derived from the index, so a git-state
+                  // change can mean "there are now tracked files in directories
+                  // this arming does not cover". Recompute and re-arm, debounced
+                  // — one `git add` writes the index several times (0022 H5).
+                  if (spec != null && path.startsWith('.git/')) {
+                    rearmTimer?.cancel();
+                    rearmTimer = Timer(_rearmDebounce, () {
+                      if (hooks.isCancelled()) return;
+                      hooks.rearm();
+                    });
+                  }
+                }
+                idx = buffer.indexOf(delimiter, start);
+              }
+              if (start > 0) buffer = buffer.substring(start);
+              // Whatever remains is an unterminated partial record. If it has
+              // grown past a sane bound, the watcher is emitting output that
+              // never completes a record — drop it and resync on the next
+              // delimiter rather than buffering unbounded.
+              if (buffer.length > _maxBufferChars) {
+                developer.log(
+                  'watcher output exceeded $_maxBufferChars chars with no '
+                  'delimiter; dropping buffered partial',
+                  name: 'RemoteWatchService',
+                );
+                buffer = '';
+              }
+            },
+            onDone: hooks.scheduleRestart,
+            onError: (Object _) => hooks.scheduleRestart(),
+          );
+
+          // Read stderr even when no one is listening to the diagnostics.
+          //
+          // Two reasons, and both bite. `inotifywait` reports per-directory
+          // failures here — canonically "upper limit on inotify watches reached"
+          // — which is the one message that says WHY a watcher died and names
+          // the sysctl to raise; it used to be dropped, leaving a silent polling
+          // fallback. And dartssh2's `SSHSession._stderrController` is a
+          // single-subscription controller with no listener
+          // (ssh_session.dart:74), so unread stderr is queued in the Dart heap
+          // for the life of the channel — and the watcher's channel is the
+          // longest-lived one in the app (0024 H3).
+          // The lease was stamped and awaited before the arm; from here it only
+          // needs refreshing.
           heartbeatTimer?.cancel();
-          heartbeatTimer = null;
-          rearmTimer?.cancel();
-          rearmTimer = null;
-          // Cancel the stdout subscription *before* the handle, mirroring the
-          // engine's source-before-coalescer ordering.
-          await sub.cancel();
-          await errSub.cancel();
-          await handle.cancel();
-        });
+          heartbeatTimer = Timer.periodic(heartbeatInterval, (_) => beat());
+
+          var diagnosticsSeen = 0;
+          var errBuffer = '';
+          final errSub = handle.stderr.listen((chunk) {
+            errBuffer += chunk;
+            var start = 0;
+            var i = errBuffer.indexOf('\n', start);
+            while (i >= 0) {
+              final line = errBuffer.substring(start, i).trim();
+              start = i + 1;
+              if (line.isNotEmpty && diagnosticsSeen < maxDiagnosticLines) {
+                diagnosticsSeen++;
+                developer.log(line, name: 'RemoteWatchService');
+                onDiagnostic?.call(line);
+              }
+              i = errBuffer.indexOf('\n', start);
+            }
+            if (start > 0) errBuffer = errBuffer.substring(start);
+            if (errBuffer.length > _maxBufferChars) errBuffer = '';
+          }, onError: (Object _) {});
+
+          return WatchArmed(() async {
+            releaseSlot();
+            heartbeatTimer?.cancel();
+            heartbeatTimer = null;
+            rearmTimer?.cancel();
+            rearmTimer = null;
+            // Cancel the stdout subscription *before* the handle, mirroring the
+            // engine's source-before-coalescer ordering.
+            await sub.cancel();
+            await errSub.cancel();
+            await handle.cancel();
+          });
+        } catch (_) {
+          // Idempotent (`armCounted`), so this is safe even on the paths that
+          // already released explicitly.
+          releaseSlot();
+          // Rethrow rather than degrade: the lifecycle engine turns a throw
+          // into a scheduled restart, which is the right answer to a transport
+          // blip. Converting it to `WatchUnavailable` here would spend the
+          // restart budget differently — a behaviour change this does not want.
+          rethrow;
+        }
       },
     );
   }

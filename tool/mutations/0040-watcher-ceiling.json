@@ -1,0 +1,21 @@
+[
+  {
+    "label": "p1: the catch-all is removed, so four of five failures strand the slot",
+    "file": "lib/core/git/remote_watch_service.dart",
+    "find": "        } catch (_) {\n          // Idempotent (`armCounted`), so this is safe even on the paths that\n          // already released explicitly.\n          releaseSlot();",
+    "replace": "        } catch (_) {",
+    "tests": [
+      "test/watch_slot_leak_test.dart"
+    ]
+  },
+  {
+    "label": "p1: the catch swallows, so a blip looks like a successful arm",
+    "file": "lib/core/git/remote_watch_service.dart",
+    "find": "          rethrow;\n        }",
+    "replace": "          return const WatchUnavailable(WatchUnavailableReason.noTool);\n        }",
+    "tests": [
+      "test/watch_slot_leak_test.dart",
+      "test/remote_watch_service_test.dart"
+    ]
+  }
+]
