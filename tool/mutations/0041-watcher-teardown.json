@@ -142,5 +142,50 @@
     "tests": [
       "test/watch_lease_release_test.dart"
     ]
+  },
+  {
+    "label": "p4: each service instance gets its own budget (per-session keying)",
+    "file": "lib/core/git/remote_watch_service.dart",
+    "find": "        final host = _hostKey();",
+    "replace": "        final host = '${_hostKey()}#${identityHashCode(this)}';",
+    "tests": [
+      "test/watch_ceiling_derived_test.dart"
+    ]
+  },
+  {
+    "label": "p4: the floor is arithmetic, not a floor",
+    "file": "lib/core/git/remote_watch_service.dart",
+    "find": "    return derived < 1 ? 1 : derived;",
+    "replace": "    return derived;",
+    "tests": [
+      "test/watch_ceiling_derived_test.dart"
+    ]
+  },
+  {
+    "label": "p4: the cap ignores the reserved channels",
+    "file": "lib/core/git/remote_watch_service.dart",
+    "find": "    final derived = _streamBudget() - reservedStreams;",
+    "replace": "    final derived = _streamBudget();",
+    "tests": [
+      "test/watch_ceiling_derived_test.dart"
+    ]
+  },
+  {
+    "label": "p4: an unwired service assumes a healthy budget",
+    "file": "lib/core/git/remote_watch_service.dart",
+    "find": "  static int _defaultStreamBudget() => 2;",
+    "replace": "  static int _defaultStreamBudget() => 8;",
+    "tests": [
+      "test/watch_ceiling_derived_test.dart"
+    ]
+  },
+  {
+    "label": "p4: the budget is read once at construction, not per arm",
+    "file": "lib/core/git/remote_watch_service.dart",
+    "find": "  int get maxConcurrentWatchers {\n    final derived = _streamBudget() - reservedStreams;",
+    "replace": "  late final int _pinned = _streamBudget();\n  int get maxConcurrentWatchers {\n    final derived = _pinned - reservedStreams;",
+    "tests": [
+      "test/watch_ceiling_derived_test.dart"
+    ]
   }
 ]

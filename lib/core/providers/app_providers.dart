@@ -385,6 +385,10 @@ final remoteWatchServiceProvider = Provider<RemoteWatchService>((ref) {
     // the connection here would rebuild this service on every connection-state
     // change and restart every live watcher with it.
     hostKey: () => ref.read(connectionProvider).host ?? '',
+    // The cap is derived from the transport's own stream ceiling, which changes
+    // when the dedicated stream client degrades or is re-dialled — so a
+    // callback, read at arm time, never a watched value (MADR 0041 F7).
+    streamBudget: () => ref.read(executorProvider).maxConcurrentStreams,
     // The watcher's own stderr. `inotifywait` reports its per-directory
     // failures here — "upper limit on inotify watches reached" above all —
     // and dropping them left a silent polling fallback with nothing to chase

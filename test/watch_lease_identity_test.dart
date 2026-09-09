@@ -8,6 +8,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:remote_magic_git/core/git/remote_watch_service.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
+import 'helpers/watch_settle.dart';
 
 class _Handle implements SSHStreamHandle {
   final _out = StreamController<String>.broadcast();
@@ -84,7 +85,13 @@ Set<String> leasePaths(List<String> scripts) {
 
 void main() {
   setUp(RemoteWatchService.resetWatcherCount);
-  tearDown(RemoteWatchService.resetWatcherCount);
+  tearDown(() async {
+    // In-flight arms take 250 ms of real time to decide (see [settleArm]); let
+    // them finish and release before the shared counter is reset, or the next
+    // test starts with a slot that a previous test's arm is about to give back.
+    await settleArm();
+    RemoteWatchService.resetWatcherCount();
+  });
 
   test('two watcher instances own distinct lease files', () async {
     final exec = _Recording();
@@ -93,12 +100,12 @@ void main() {
     // Two instances for the SAME repo — the production case, where one is a
     // re-arm of the other and the older may outlive it as an orphan.
     final a = service.watch('/repo').listen((_) {});
-    await pumpEventQueue();
+    await settleArm();
     final afterFirst = leasePaths(exec.scripts);
     await a.cancel();
 
     final b = service.watch('/repo').listen((_) {});
-    await pumpEventQueue();
+    await settleArm();
     final all = leasePaths(exec.scripts);
     await b.cancel();
 
@@ -144,7 +151,7 @@ void main() {
     final exec = _Recording();
     final service = RemoteWatchService(exec);
     final sub = service.watch('/repo').listen((_) {});
-    await pumpEventQueue();
+    await settleArm();
     await sub.cancel();
 
     final beat = exec.events.indexWhere((e) => e.startsWith('beat:'));

@@ -79,7 +79,10 @@ void main() {
   });
 
   test('a repo refused by the ceiling arms as soon as a slot frees', () async {
-    final service = RemoteWatchService(_ArmsAlways());
+    // The cap is derived from the transport's stream budget since MADR 0041
+    // phase 4, so a test that wants a ceiling of two says which budget produces
+    // it rather than relying on a constant.
+    final service = RemoteWatchService(_ArmsAlways(), streamBudget: () => 4);
     final events = <RepoWatchEvent>[];
 
     final a = service.watch('/a').listen((_) {});
@@ -87,7 +90,7 @@ void main() {
     await settleArm();
     expect(
       RemoteWatchService.liveWatchers,
-      RemoteWatchService.maxConcurrentWatchers,
+      service.maxConcurrentWatchers,
       reason: 'the ceiling is full',
     );
 
@@ -128,8 +131,11 @@ void main() {
       // per-connection are the same set. If simultaneous connections to
       // different hosts ever land, this test is where that stops being true and
       // the counter needs keying by host.
-      final first = RemoteWatchService(_ArmsAlways());
-      final second = RemoteWatchService(_ArmsAlways());
+      // Both on a budget yielding a ceiling of two, which is what makes
+      // "one budget across both services" a statement about the counter
+      // rather than about the default.
+      final first = RemoteWatchService(_ArmsAlways(), streamBudget: () => 4);
+      final second = RemoteWatchService(_ArmsAlways(), streamBudget: () => 4);
 
       final a = first.watch('/a').listen((_) {});
       final b = second.watch('/b').listen((_) {});
@@ -161,9 +167,12 @@ void main() {
       // `noTool` means the host has no inotifywait/fswatch. A freed watcher slot
       // changes nothing about that, and re-probing on every release would spend
       // round trips discovering the same answer.
-      final service = RemoteWatchService(_ArmsAlways(tool: ''));
+      final service = RemoteWatchService(
+        _ArmsAlways(tool: ''),
+        streamBudget: () => 4,
+      );
       final events = <RepoWatchEvent>[];
-      final held = RemoteWatchService(_ArmsAlways());
+      final held = RemoteWatchService(_ArmsAlways(), streamBudget: () => 4);
 
       final x = held.watch('/x').listen((_) {});
       await settleArm();

@@ -99,18 +99,17 @@ void main() {
     'a ceiling refusal is recorded as armFailed with its cause and count',
     () async {
       final executor = _ArmsAlwaysExecutor();
-      final service = RemoteWatchService(executor);
+      // A budget of 4 leaves a ceiling of 2 once the CI trace and clone
+      // progress channels are reserved — the two this test fills below.
+      final service = RemoteWatchService(executor, streamBudget: () => 4);
       final subs = <StreamSubscription<RepoWatchEvent>>[];
 
       // Fill the ceiling, then ask for one more.
       for (final repo in ['/a', '/b']) {
         subs.add(service.watch(repo).listen((_) {}));
       }
-      await pumpEventQueue();
-      expect(
-        RemoteWatchService.liveWatchers,
-        RemoteWatchService.maxConcurrentWatchers,
-      );
+      await settleArm();
+      expect(RemoteWatchService.liveWatchers, service.maxConcurrentWatchers);
 
       subs.add(service.watch('/c').listen((_) {}));
       await settleArm();
@@ -127,10 +126,7 @@ void main() {
           .toList();
       expect(armFailed, hasLength(1));
       expect(armFailed.single.cause, contains('ceiling'));
-      expect(
-        armFailed.single.liveWatchers,
-        RemoteWatchService.maxConcurrentWatchers,
-      );
+      expect(armFailed.single.liveWatchers, service.maxConcurrentWatchers);
 
       // And the engine's own consequence of that refusal.
       expect(
@@ -197,6 +193,9 @@ void main() {
     final service = RemoteWatchService(
       _ArmsAlwaysExecutor(),
       onDiagnostic: lines.add,
+      // Budget 4 less the 2 reserved channels: a ceiling of two, which is what
+      // the "watchers held 2" line below is about.
+      streamBudget: () => 4,
     );
     final subs = <StreamSubscription<RepoWatchEvent>>[];
     for (final repo in ['/a', '/b']) {

@@ -135,7 +135,9 @@ class RemoteWatchService {
     this._executor, {
     this.onDiagnostic,
     String Function()? hostKey,
-  }) : _hostKey = hostKey ?? _noHost;
+    int Function()? streamBudget,
+  }) : _hostKey = hostKey ?? _noHost,
+       _streamBudget = streamBudget ?? _defaultStreamBudget;
 
   /// Where a watcher's own stderr goes.
   final void Function(String line)? onDiagnostic;
@@ -151,30 +153,60 @@ class RemoteWatchService {
 
   static String _noHost() => '';
 
+  /// The transport's live ceiling on concurrent long-lived stream channels —
+  /// `SSHCommandExecutor.maxConcurrentStreams`.
+  ///
+  /// A callback for the same reason [_hostKey] is one: the answer changes when
+  /// the dedicated stream client degrades onto the command client or is
+  /// re-dialled, and reading it eagerly would either pin a stale number or, if
+  /// watched, rebuild the service and restart every live watcher.
+  final int Function() _streamBudget;
+
+  /// Assumed budget when none is supplied — the degraded single-client figure,
+  /// so a caller that forgets to wire it is conservative rather than optimistic.
+  static int _defaultStreamBudget() => 2;
+
   /// Diagnostic lines reported per arm.
   static const int maxDiagnosticLines = 20;
 
-  /// Live watcher processes one **host** may hold at once.
+  /// Channels reserved for the other two long-lived stream consumers: the CI
+  /// job trace (`glab_service.dart`) and clone progress (`clone_controller`).
+  /// Watchers must not be able to starve either.
+  static const int reservedStreams = 2;
+
+  /// Live watchers one **host** may hold at once.
   ///
-  /// One active repo plus one background. Past this the app polls and says so,
-  /// rather than accumulating — 19 orphaned `inotifywait` processes, the
-  /// oldest 16.9 days, is what "no ceiling at all" produced (0025 C3).
+  /// **Derived, not chosen.** A watcher holds exactly one long-lived SSH
+  /// channel, and the executor already caps those at
+  /// `SSHCommandExecutor.maxConcurrentStreams` — 8 with a dedicated stream
+  /// client, 2 degraded — refusing past it with `SSHStreamBudgetExhausted`,
+  /// which the arm below already handles. This is that budget minus
+  /// [reservedStreams], floored at 1 so a degraded single-client session still
+  /// watches the repository the user is looking at.
   ///
-  /// **Per host**, and that word is load-bearing. This used to read "per
-  /// connection too, because the app holds one connection at a time
-  /// (`connectionProvider` is a plain notifier, not a family)" — which was
-  /// already false when it was written on 2026-09-04: multi-tab landed on
-  /// 2026-07-12 (`11689cc`), and `connectionProvider` is indeed not a family
-  /// but there are up to eight of it, one per tab container, each with its own
-  /// live session. The named guard could not see it either:
-  /// `watch_ceiling_recovery_test.dart` asserts two service *instances* share
-  /// one ceiling, which stays true whatever the counter is keyed by.
+  /// It used to be the constant 2, and nothing connected it to the 8 it stood
+  /// in front of. On a fifteen-repository host that cap forced thirteen
+  /// repositories onto a poll measured at ~48 git processes per minute each,
+  /// while the host used 0.17 % of its inotify watch budget (MADR 0040 F3, F5,
+  /// F6; MADR 0041 F7).
   ///
-  /// Counted globally, the budget a host is owed was spent by whichever tab
-  /// asked first, and a second host could be starved having consumed nothing.
-  /// [_liveByHost] keys it where it belongs (MADR 0039 F4);
-  /// `watch_ceiling_per_host_test.dart` is the check that can fail on it.
-  static const int maxConcurrentWatchers = 2;
+  /// **Keyed by HOST, and that word is load-bearing.** MADR 0040's phase 2
+  /// keyed it per (session, host) — right for the resource it derives from,
+  /// since channels belong to a connection, and wrong for the resource watchers
+  /// also consume. With up to eight tab containers that took the host-wide
+  /// bound from 2 to as much as 48 and left nothing bounding the host at all,
+  /// handing that job to a lease whose reclaim latency was six minutes. It was
+  /// reverted for exactly that (MADR 0041 F5). The lease now reclaims in under
+  /// a second (F11) and the host enforces one watcher per repository (F12), but
+  /// the host-wide key stays: being conservative here costs a repository a
+  /// watcher, and being wrong the other way costs the host.
+  ///
+  /// `watch_ceiling_per_host_test.dart` and `watch_ceiling_derived_test.dart`
+  /// are the checks that can fail on it.
+  int get maxConcurrentWatchers {
+    final derived = _streamBudget() - reservedStreams;
+    return derived < 1 ? 1 : derived;
+  }
 
   /// How often the client refreshes a watcher's heartbeat while it is alive.
   static const Duration heartbeatInterval = Duration(seconds: 60);

@@ -112,7 +112,13 @@ void main() {
   test('repeated stream-open failures do not exhaust the host budget', () async {
     // The reported shape: every repo on the bastion polling, "watchers held 2",
     // with no watcher process alive to hold them.
-    for (var i = 0; i < RemoteWatchService.maxConcurrentWatchers; i++) {
+    // The cap is derived per service since MADR 0041 phase 4; ask a service
+    // built the same way this test builds them.
+    final cap = RemoteWatchService(
+      _StreamFails(const SSHCommandSuperseded('watch')),
+      hostKey: () => 'bastion',
+    ).maxConcurrentWatchers;
+    for (var i = 0; i < cap; i++) {
       await _armAndFail(const SSHCommandSuperseded('watch'));
     }
 
@@ -144,7 +150,7 @@ void main() {
     );
     expect(
       RemoteWatchService.liveWatchersFor('bastion'),
-      lessThan(RemoteWatchService.maxConcurrentWatchers),
+      lessThan(cap),
       reason: 'the budget must not be spent by arms that never armed',
     );
   });

@@ -68,8 +68,18 @@ class _ArmsAlways extends SSHCommandExecutor {
   }) async => _Handle();
 }
 
-RemoteWatchService _serviceOn(String host) =>
-    RemoteWatchService(_ArmsAlways(), hostKey: () => host);
+/// A service on [host] whose ceiling is two.
+///
+/// The cap is derived from the transport's stream budget since MADR 0041 phase
+/// 4, so the budget is stated here rather than inherited from a constant: 4
+/// channels less the 2 reserved for the CI trace and clone progress. Every test
+/// in this file is about how a budget of two is shared BETWEEN hosts, so the
+/// number itself has to be deliberate.
+RemoteWatchService _serviceOn(String host) => RemoteWatchService(
+  _ArmsAlways(),
+  hostKey: () => host,
+  streamBudget: () => 4,
+);
 
 /// Refused arms this repo has recorded. Every ceiling refusal files an
 /// `armFailed` transition, so this counts attempts that could only lose —
@@ -260,7 +270,11 @@ void main() {
     // host's budget permanently short by one.
     var host = 'alpha';
     final exec = _ArmsAlways();
-    final service = RemoteWatchService(exec, hostKey: () => host);
+    final service = RemoteWatchService(
+      exec,
+      hostKey: () => host,
+      streamBudget: () => 4,
+    );
 
     final sub = service.watch('/one').listen((_) {});
     await settleArm();
