@@ -25,12 +25,16 @@
 #   library validation requires matching Team IDs, and an ad-hoc signature
 #   has none, so dyld refuses to load the embedded FlutterMacOS.framework
 #   ("different Team IDs") and the app dies at launch.
-#   ./build_macos.sh --unsigned   no Apple ID needed: temporarily removes the
-#                                 keychain-access-groups entitlement and builds
-#                                 ad-hoc. "Save connection" still persists — the
+#   ./build_macos.sh --unsigned   no Apple ID needed: builds ad-hoc, signed from
+#                                 the tracked Release-unsigned.entitlements (no
+#                                 keychain-access-groups — needs a cert; no app
+#                                 sandbox) instead of Release.entitlements.
+#                                 Nothing is modified in place — see the
+#                                 MG_RELEASE_ENTITLEMENTS selection below.
+#                                 "Save connection" still persists — the
 #                                 Keychain is unreachable unsigned, so secrets
 #                                 fall back to ~/.config/magic_git/credentials.json
-#                                 (0600). The entitlement file is restored after.
+#                                 (0600).
 #   ./build_macos.sh --install    build, then replace any prior install in
 #                                 ~/Applications (removes legacy bundle names too)
 #
@@ -190,20 +194,28 @@ flutter --version
 # --- Build ------------------------------------------------------------------
 cd "$SCRIPT_DIR"
 
+# Select which entitlements the Release configuration signs with, by writing
+# the xcconfig override Configs/AppInfo.xcconfig optionally includes
+# (MG_RELEASE_ENTITLEMENTS). Written on EVERY run, in BOTH modes — not only for
+# --unsigned — so a signed build after an unsigned one can never inherit a
+# stale selection and get ad-hoc-signed with sandbox/keychain entitlements
+# missing. There is deliberately no cleanup step: nothing here can fail to
+# restore, because nothing is restored. (MADR 0042 — this used to strip the
+# COMMITTED entitlements in place while Xcode was signing from them, which
+# shipped stripped to git three times and, separately, broke a build on
+# another machine with "Entitlements file … was modified during the build".)
+LOCAL_XCCONFIG="$SCRIPT_DIR/macos/Runner/Configs/Local.xcconfig"
 if [[ "$UNSIGNED" == "1" ]]; then
-  ENT="$SCRIPT_DIR/macos/Runner/Release.entitlements"
-  log "Unsigned build: removing keychain-access-groups (needs a cert) and the"
-  log "app sandbox (so \$HOME is your real home for the 0600 credentials file)"
-  cp "$ENT" "$ENT.bak"
-  # Restore the committed entitlements no matter how the script exits.
-  trap 'mv -f "$ENT.bak" "$ENT" 2>/dev/null || true' EXIT
-  /usr/libexec/PlistBuddy -c "Delete :keychain-access-groups" "$ENT" >/dev/null 2>&1 || true
-  # Without the sandbox, HOME points at the real home dir (not the app
-  # container), so the Keychain-fallback credentials file lands where you expect
-  # (~/.config/magic_git/). Secure storage still can't reach the Keychain
-  # unsigned, so it uses that 0600 file — "Save connection" persists either way.
-  /usr/libexec/PlistBuddy -c "Delete :com.apple.security.app-sandbox" "$ENT" >/dev/null 2>&1 || true
+  ENT_REL="Runner/Release-unsigned.entitlements"
+  log "Unsigned build: signing with $ENT_REL (no keychain-access-groups — needs a"
+  log "cert; no app sandbox — so \$HOME is your real home for the 0600 credentials"
+  log "file. Secure storage still can't reach the Keychain unsigned, so \"Save"
+  log "connection\" falls back to ~/.config/magic_git/, sandboxed or not.)"
+else
+  ENT_REL="Runner/Release.entitlements"
 fi
+printf 'MG_RELEASE_ENTITLEMENTS = %s\n' "$ENT_REL" > "$LOCAL_XCCONFIG"
+log "Signing entitlements: $ENT_REL"
 
 log "Resolving dependencies ..."
 flutter pub get
