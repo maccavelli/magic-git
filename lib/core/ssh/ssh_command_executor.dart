@@ -160,6 +160,7 @@ class _SshSessionStreamHandle implements CommandStreamHandle {
   final SSHSession _session;
   final void Function() onByte;
   final void Function() onClosed;
+  final CommandTelemetry _telemetry;
   late final int _telemetryEpoch;
   bool _closed = false;
 
@@ -167,8 +168,9 @@ class _SshSessionStreamHandle implements CommandStreamHandle {
     this._session, {
     required this.onByte,
     required this.onClosed,
+    required this._telemetry,
   }) {
-    _telemetryEpoch = CommandTelemetry.instance.streamOpened();
+    _telemetryEpoch = _telemetry.streamOpened();
     // Count natural channel death the same as cancel (watcher restart path).
     unawaited(
       _session.done.then((_) {}, onError: (_) {}).whenComplete(_noteClosed),
@@ -178,7 +180,7 @@ class _SshSessionStreamHandle implements CommandStreamHandle {
   void _noteClosed() {
     if (_closed) return;
     _closed = true;
-    CommandTelemetry.instance.streamClosed(_telemetryEpoch);
+    _telemetry.streamClosed(_telemetryEpoch);
     onClosed();
   }
 
@@ -305,6 +307,11 @@ abstract class CommandExecutor {
 class SSHCommandExecutor implements CommandExecutor {
   final SSHClientManager _clientManager;
 
+  /// This session's measurement sink. Handed in rather than reached for: the
+  /// executor is a plain class with no Riverpod access, and every tab has its
+  /// own session to describe (MADR 0039 F5).
+  final CommandTelemetry _telemetry;
+
   /// How long a command may wait for a handshake that is already in flight
   /// before giving up and reporting [SSHTransportNotReady].
   ///
@@ -379,7 +386,8 @@ class SSHCommandExecutor implements CommandExecutor {
       _lastStreamByteAt != null &&
       DateTime.now().difference(_lastStreamByteAt!) < streamBusyWindow;
 
-  SSHCommandExecutor(this._clientManager) {
+  SSHCommandExecutor(this._clientManager, {CommandTelemetry? telemetry})
+    : _telemetry = telemetry ?? CommandTelemetry.instance {
     _clientManager.registerBusyProbes(
       command: () => commandBusy,
       stream: () => streamBusy,
@@ -497,6 +505,7 @@ class SSHCommandExecutor implements CommandExecutor {
         attempt,
         deadline: timeout + CommandLaneScheduler.watchdogMargin,
       ),
+      telemetry: _telemetry,
     );
     if (!result.isSuccess) {
       throw Exception(
@@ -586,6 +595,7 @@ class SSHCommandExecutor implements CommandExecutor {
           deadline: timeout + CommandLaneScheduler.watchdogMargin,
           onStarted: lifecycle?.started,
         ),
+        telemetry: _telemetry,
       );
       if (result.isSuccess) {
         lifecycle?.succeeded();
@@ -619,13 +629,19 @@ class SSHCommandExecutor implements CommandExecutor {
   /// can never head-of-line-block other commands already queued behind it. When
   /// omitted (tests, or a caller that doesn't schedule), each attempt runs
   /// directly with identical retry semantics.
+  /// [telemetry] is the calling session's sink. It is a parameter rather than
+  /// a field read because this method is static — `LocalCommandExecutor` calls
+  /// it too — and each caller has its own session to record against. Omitted,
+  /// it falls back to the process-wide instance (MADR 0039 F5).
   static Future<SSHCommandResult> runWithRetries(
     Future<SSHCommandResult> Function() attempt,
     int retries, {
     Duration backoff = _retryBackoff,
     Future<SSHCommandResult> Function(Future<SSHCommandResult> Function())?
     enqueue,
+    CommandTelemetry? telemetry,
   }) async {
+    final sink = telemetry ?? CommandTelemetry.instance;
     final run = enqueue ?? (a) => a();
     var n = 0;
     while (true) {
@@ -635,7 +651,7 @@ class SSHCommandExecutor implements CommandExecutor {
         // Observe MaxSessions / channel-open pressure once per failure, even
         // when we will not retry (retries == 0 or non-transient).
         if (e is SSHChannelOpenError) {
-          CommandTelemetry.instance.recordChannelOpenError();
+          sink.recordChannelOpenError();
         }
         if (!isTransientTransportError(e) || n++ >= retries) rethrow;
         await Future<void>.delayed(backoff);
@@ -886,7 +902,7 @@ class SSHCommandExecutor implements CommandExecutor {
     // and it must name the same command the success path does.
     final label = gitArgs.join(' ');
     void recordFailureSample() {
-      CommandTelemetry.instance.record(
+      _telemetry.record(
         CommandSample(
           lane: lane,
           duration: sw.elapsed,
@@ -1016,7 +1032,7 @@ class SSHCommandExecutor implements CommandExecutor {
       ], eagerError: true);
       final exitCode = await s.waitForExit() ?? -1;
       void recordSample(int effectiveExit) {
-        CommandTelemetry.instance.record(
+        _telemetry.record(
           CommandSample(
             lane: lane,
             duration: sw.elapsed,
@@ -1220,6 +1236,7 @@ class SSHCommandExecutor implements CommandExecutor {
           session,
           onByte: _noteStreamByte,
           onClosed: _noteStreamClosed,
+          telemetry: _telemetry,
         ),
         lifecycle,
       );
@@ -1230,7 +1247,7 @@ class SSHCommandExecutor implements CommandExecutor {
       unawaited(attempt.then(killAndCloseSession, onError: (_) {}));
       throw SSHCommandTimeout(gitArgs.join(' '));
     } on SSHChannelOpenError {
-      CommandTelemetry.instance.recordChannelOpenError();
+      _telemetry.recordChannelOpenError();
       lifecycle?.failed();
       rethrow;
     } catch (_) {

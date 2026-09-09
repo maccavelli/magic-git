@@ -364,7 +364,7 @@ class _DashboardSheetState extends ConsumerState<DashboardSheet> {
       _ => '—',
     };
     final cap = ref.read(executorProvider).adaptiveReadCap;
-    final opens = CommandTelemetry.instance.channelOpenErrors;
+    final opens = ref.read(commandTelemetryProvider).channelOpenErrors;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -568,9 +568,9 @@ class _DashboardSheetState extends ConsumerState<DashboardSheet> {
 
   Widget _commandsSection(MacosTypography typography) {
     return ListenableBuilder(
-      listenable: CommandTelemetry.instance,
+      listenable: ref.watch(commandTelemetryProvider),
       builder: (context, _) {
-        final t = CommandTelemetry.instance;
+        final t = ref.read(commandTelemetryProvider);
         final saved = t.compressedBytes - t.compressedWireBytes;
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,

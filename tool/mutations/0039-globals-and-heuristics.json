@@ -188,5 +188,44 @@
     "tests": [
       "test/secondary_window_app_test.dart"
     ]
+  },
+  {
+    "label": "f5: the provider hands every container the singleton",
+    "file": "lib/core/providers/app_providers.dart",
+    "find": "final commandTelemetryProvider = Provider<CommandTelemetry>(\n  (ref) => CommandTelemetry(),\n);",
+    "replace": "final commandTelemetryProvider = Provider<CommandTelemetry>(\n  (ref) => CommandTelemetry.instance,\n);",
+    "tests": [
+      "test/session_telemetry_isolation_test.dart"
+    ]
+  },
+  {
+    "label": "f5: connect() resets the process-wide sink again",
+    "file": "lib/core/providers/app_providers.dart",
+    "find": "    if (!reconnecting) {\n      ref.read(outputLogProvider.notifier).clear();\n    }\n    // Session-scoped dashboard metrics start over with the session.\n    ref.read(commandTelemetryProvider).reset();",
+    "replace": "    if (!reconnecting) {\n      ref.read(outputLogProvider.notifier).clear();\n    }\n    // Session-scoped dashboard metrics start over with the session.\n    CommandTelemetry.instance.reset();",
+    "tests": [
+      "test/session_telemetry_isolation_test.dart",
+      "test/dashboard_sheet_test.dart"
+    ]
+  },
+  {
+    "label": "f5: the SSH executor records into the singleton",
+    "file": "lib/core/ssh/ssh_command_executor.dart",
+    "find": "  SSHCommandExecutor(this._clientManager, {CommandTelemetry? telemetry})\n    : _telemetry = telemetry ?? CommandTelemetry.instance {",
+    "replace": "  SSHCommandExecutor(this._clientManager, {CommandTelemetry? telemetry})\n    : _telemetry = CommandTelemetry.instance {",
+    "tests": [
+      "test/session_telemetry_isolation_test.dart",
+      "test/ssh_command_executor_test.dart"
+    ]
+  },
+  {
+    "label": "f5: the local executor records into the singleton",
+    "file": "lib/core/exec/local_command_executor.dart",
+    "find": "  LocalCommandExecutor({CommandTelemetry? telemetry})\n    : _telemetry = telemetry ?? CommandTelemetry.instance;",
+    "replace": "  LocalCommandExecutor({CommandTelemetry? telemetry})\n    : _telemetry = CommandTelemetry.instance;",
+    "tests": [
+      "test/session_telemetry_isolation_test.dart",
+      "test/local_command_executor_test.dart"
+    ]
   }
 ]

@@ -61,15 +61,32 @@ class TransportDropSample {
 }
 
 /// Session-wide command measurements, recorded by both executors (SSH and
-/// local) and read by the Dashboard. A process-wide singleton rather than a
-/// provider: the executors are plain classes with no Riverpod access, and
-/// one shared sink keeps the recording call a one-liner on their hot path.
+/// local) and read by the Dashboard.
 ///
 /// Keeps a bounded ring of recent samples (for latency percentiles/sparkline)
 /// plus running totals. [reset] is called on every connect, so the numbers
 /// always describe the current session.
+///
+/// **One instance per session, not one per process.** It used to be a bare
+/// singleton, on the reasoning that the executors are plain classes with no
+/// Riverpod access. That reasoning survives — they are still handed an instance
+/// rather than reaching for a provider — but the conclusion did not: every tab
+/// is its own container with its own executors and its own live connection, so
+/// a single sink mixed every tab's commands into one set of figures and
+/// `reset()` (called on each connect) wiped whichever tab happened to be
+/// looking. A diagnostic instrument giving a confidently wrong reading is worse
+/// than none, because the next audit trusts it (MADR 0039 F5).
+///
+/// [instance] remains as the default for callers that genuinely have no
+/// session: a secondary window runs in its own engine, where process-wide and
+/// session-wide are the same thing, and the tests construct executors directly.
 class CommandTelemetry extends ChangeNotifier {
+  CommandTelemetry();
+
   CommandTelemetry._();
+
+  /// The process-wide fallback — see the class doc. Production code inside a
+  /// tab gets its own instance through `commandTelemetryProvider`.
   static final CommandTelemetry instance = CommandTelemetry._();
 
   static const int _ringCapacity = 200;

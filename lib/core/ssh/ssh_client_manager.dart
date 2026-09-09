@@ -137,6 +137,13 @@ class ConnectionHealthMonitor {
 /// so bulk pack transfer does not share a TCP connection with interactive
 /// reads. Stream and sync each fail-open onto the command client.
 class SSHClientManager {
+  /// [telemetry] is the session's sink; omitted, transport drops land in the
+  /// process-wide fallback (see [CommandTelemetry]).
+  SSHClientManager({CommandTelemetry? telemetry})
+    : _telemetry = telemetry ?? CommandTelemetry.instance;
+
+  final CommandTelemetry _telemetry;
+
   static const Duration _socketTimeout = Duration(seconds: 15);
   static const Duration _authTimeout = Duration(seconds: 15);
 
@@ -247,7 +254,7 @@ class SSHClientManager {
     required bool Function()? busy,
   }) {
     _lastDropCause = TransportDropCause.monitor;
-    CommandTelemetry.instance.recordTransportDrop(
+    _telemetry.recordTransportDrop(
       TransportDropSample(
         cause: TransportDropCause.monitor,
         failures: monitor.failures,

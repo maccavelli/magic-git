@@ -139,21 +139,38 @@ class WindowBoundsStore {
 /// channels over this one authenticated client, so it is held for the app's
 /// lifetime and torn down on dispose.
 final sshClientManagerProvider = Provider<SSHClientManager>((ref) {
-  final manager = SSHClientManager();
+  final manager = SSHClientManager(
+    telemetry: ref.watch(commandTelemetryProvider),
+  );
   ref.onDispose(manager.disconnect);
   return manager;
 });
 
+/// This session's command measurements.
+///
+/// One per container, not one per process: every tab is its own session with
+/// its own executors and its own connection, and the Dashboard's "this session"
+/// figures have to describe the tab the user is looking at. As a process-wide
+/// singleton they were the union of every tab's commands, truncated by whichever
+/// tab connected last — latency percentiles mixing hosts, `countsByLabel`
+/// attributing one tab's refresh storm to another's session (MADR 0039 F5).
+final commandTelemetryProvider = Provider<CommandTelemetry>(
+  (ref) => CommandTelemetry(),
+);
+
 /// Serialized command executor over the shared SSH connection.
 final executorProvider = Provider<SSHCommandExecutor>((ref) {
-  return SSHCommandExecutor(ref.watch(sshClientManagerProvider));
+  return SSHCommandExecutor(
+    ref.watch(sshClientManagerProvider),
+    telemetry: ref.watch(commandTelemetryProvider),
+  );
 });
 
 /// Serialized command executor for a repo on this machine's own filesystem —
 /// no SSH, no shell string, just `Process.start` directly. Stateless enough
 /// to be a single app-lifetime instance, same as [executorProvider].
 final localExecutorProvider = Provider<LocalCommandExecutor>((ref) {
-  return LocalCommandExecutor();
+  return LocalCommandExecutor(telemetry: ref.watch(commandTelemetryProvider));
 });
 
 /// Ensures the shared [LocalCommandExecutor] has its augmented PATH and
@@ -1328,7 +1345,7 @@ class ConnectionController extends Notifier<ConnectionState> {
       ref.read(outputLogProvider.notifier).clear();
     }
     // Session-scoped dashboard metrics start over with the session.
-    CommandTelemetry.instance.reset();
+    ref.read(commandTelemetryProvider).reset();
     ref.read(pingSamplesProvider.notifier).clear();
     // Clear the previous connection's resolved environment up front. Switching
     // hosts (e.g. a macOS laptop → a Linux bastion) means a different OS, PATH,
@@ -1826,7 +1843,7 @@ class ConnectionController extends Notifier<ConnectionState> {
   }) async {
     final attempt = ++_attempt;
     // Session-scoped dashboard metrics start over with the session.
-    CommandTelemetry.instance.reset();
+    ref.read(commandTelemetryProvider).reset();
     ref.read(pingSamplesProvider.notifier).clear();
     // Same supersession guard as connect(): a host-key prompt left open from
     // a still-in-flight SSH attempt must not orphan its Completer just
@@ -2114,18 +2131,20 @@ class ConnectionController extends Notifier<ConnectionState> {
     if (state.phase != ConnectionPhase.connected) return; // intentional close
     final manager = ref.read(sshClientManagerProvider);
     if (manager.lastDropCause == null) {
-      CommandTelemetry.instance.recordTransportDrop(
-        TransportDropSample(
-          cause: error != null
-              ? TransportDropCause.transportError
-              : TransportDropCause.remoteClosed,
-          failures: 0,
-          busy: ref.read(executorProvider).transportBusy,
-          connectionAge: Duration.zero,
-          at: DateTime.now(),
-          peerReason: peerDisconnectReason(error),
-        ),
-      );
+      ref
+          .read(commandTelemetryProvider)
+          .recordTransportDrop(
+            TransportDropSample(
+              cause: error != null
+                  ? TransportDropCause.transportError
+                  : TransportDropCause.remoteClosed,
+              failures: 0,
+              busy: ref.read(executorProvider).transportBusy,
+              connectionAge: Duration.zero,
+              at: DateTime.now(),
+              peerReason: peerDisconnectReason(error),
+            ),
+          );
     }
     state = state.copyWith(
       phase: ConnectionPhase.lost,
@@ -2615,7 +2634,7 @@ class ConnectionController extends Notifier<ConnectionState> {
     // Same contract as [connect]/[connectLocal]: session metrics always
     // describe the current session, so a wizard-provisioned connection must
     // not inherit the previous host's command counts or latency samples.
-    CommandTelemetry.instance.reset();
+    ref.read(commandTelemetryProvider).reset();
     ref.read(pingSamplesProvider.notifier).clear();
 
     state = ConnectionState(

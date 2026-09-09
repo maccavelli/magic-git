@@ -9,8 +9,10 @@ import 'dart:async';
 /// reloads from disk in response — the same disk-broadcast contract the History
 /// window already uses across isolates ([AppSettingsNotifier.reloadFromDisk]),
 /// now fired in-process too. It is a plain singleton in the same category as
-/// `CommandTelemetry.instance` / `WindowBoundsStore` — reached statically, no
-/// Riverpod wiring.
+/// `WindowBoundsStore` — reached statically, no Riverpod wiring. Unlike
+/// `CommandTelemetry`, which used to sit in this category and no longer does
+/// (MADR 0039 F5), a singleton is *right* here: the whole point is to reach
+/// every container at once, where telemetry's job was to describe exactly one.
 ///
 /// Echo-termination: only a *write* announces; a reload applies a value-equal
 /// state and so triggers no further write, so there is no ping-pong.

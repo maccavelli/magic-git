@@ -18,6 +18,15 @@ import 'operation_activity.dart';
 /// persistent session to go stale, so (unlike [SSHCommandExecutor]) this class
 /// never throws [SSHCommandSuperseded].
 class LocalCommandExecutor implements CommandExecutor {
+  /// [telemetry] is this session's measurement sink; omitted, samples land in
+  /// the process-wide fallback (see [CommandTelemetry]).
+  LocalCommandExecutor({CommandTelemetry? telemetry})
+    : _telemetry = telemetry ?? CommandTelemetry.instance;
+
+  /// This session's measurement sink — one per tab, not one per process
+  /// (MADR 0039 F5).
+  final CommandTelemetry _telemetry;
+
   /// Lane-aware scheduler — mirrors [SSHCommandExecutor]'s: reads overlap,
   /// mutations run strictly alone, protecting `.git/index.lock` regardless of
   /// transport. See [ExecLane] / [CommandLaneScheduler].
@@ -145,6 +154,7 @@ class LocalCommandExecutor implements CommandExecutor {
           deadline: timeout + CommandLaneScheduler.watchdogMargin,
           onStarted: lifecycle?.started,
         ),
+        telemetry: _telemetry,
       );
       if (result.isSuccess) {
         lifecycle?.succeeded();
@@ -181,7 +191,7 @@ class LocalCommandExecutor implements CommandExecutor {
     // sample and must name the same command.
     final label = gitArgs.join(' ');
     void recordFailureSample() {
-      CommandTelemetry.instance.record(
+      _telemetry.record(
         CommandSample(
           lane: lane,
           duration: sw.elapsed,
@@ -309,7 +319,7 @@ class LocalCommandExecutor implements CommandExecutor {
         stderrFuture,
       ], eagerError: true);
       final exitCode = await p.exitCode;
-      CommandTelemetry.instance.record(
+      _telemetry.record(
         CommandSample(
           lane: lane,
           duration: sw.elapsed,
@@ -381,7 +391,7 @@ class LocalCommandExecutor implements CommandExecutor {
     try {
       final process = await attempt.timeout(openTimeout);
       return _LocalActivityStreamHandle(
-        _ProcessStreamHandle(process),
+        _ProcessStreamHandle(process, telemetry: _telemetry),
         lifecycle,
       );
     } on TimeoutException {
@@ -435,14 +445,15 @@ class _LocalActivityStreamHandle implements CommandStreamHandle {
 /// [CommandStreamHandle] backed by a live local [Process].
 class _ProcessStreamHandle implements SSHStreamHandle {
   final Process _process;
+  final CommandTelemetry _telemetry;
   late final int _telemetryEpoch;
   bool _closed = false;
 
-  _ProcessStreamHandle(this._process) {
+  _ProcessStreamHandle(this._process, {required this._telemetry}) {
     // Mirror _SshSessionStreamHandle: the dashboard's open/peak-stream
     // counters describe streams on *any* transport, so a local session's
     // watcher must count too. Natural process exit closes the same as cancel.
-    _telemetryEpoch = CommandTelemetry.instance.streamOpened();
+    _telemetryEpoch = _telemetry.streamOpened();
     unawaited(
       _process.exitCode.then((_) {}, onError: (_) {}).whenComplete(_noteClosed),
     );
@@ -451,7 +462,7 @@ class _ProcessStreamHandle implements SSHStreamHandle {
   void _noteClosed() {
     if (_closed) return;
     _closed = true;
-    CommandTelemetry.instance.streamClosed(_telemetryEpoch);
+    _telemetry.streamClosed(_telemetryEpoch);
   }
 
   @override
