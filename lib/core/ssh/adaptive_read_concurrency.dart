@@ -27,8 +27,24 @@
 /// (0024 Amendment A2.1). One step per confirmed direction behaves correctly at
 /// this magnitude.
 ///
+/// **Compared against what, though.** The gradient is only a queueing estimate
+/// if `minRtt` and `currentRtt` describe the *same kind of work*. They did not.
+/// Everything on the read lane fed one distribution, and that lane spans three
+/// orders of magnitude of perfectly healthy work: a `git rev-parse` is about one
+/// round trip, a `glab api` call has a 20 s timeout, and one branch-review batch
+/// is up to 100 `git rev-list` walks under a 60 s timeout. `minRtt` was
+/// therefore anchored by the cheapest command the session had ever issued, so
+/// opening the Branches tab on a 500-ref repository drove the gradient far below
+/// [shrinkBelow] and the controller shed concurrency — during the one gesture in
+/// the app that most needs parallel reads. A healthy link throttled because the
+/// user asked an expensive question. Samples are now bucketed by normalised
+/// command (`CommandTelemetry.bucketLabel`) and each bucket carries its own
+/// `minRtt`, EWMA and window, so a slow `rev-list` batch is compared against
+/// other `rev-list` batches (MADR 0039 H1).
+///
 /// A channel-open failure ([onChannelOpenError]) still drops an independent
-/// error floor immediately: `MaxSessions` is a cliff, not a gradient.
+/// error floor immediately: `MaxSessions` is a cliff, not a gradient. Recovery
+/// from that floor is time-based as well as count-based — see [errorMemory].
 library;
 
 class AdaptiveReadConcurrency {
@@ -80,6 +96,24 @@ class AdaptiveReadConcurrency {
   static const int minRttWindowSamples = 300;
   static const Duration minRttWindowAge = Duration(minutes: 5);
 
+  /// Distinct command buckets tracked at once, least-recently-sampled evicted.
+  ///
+  /// [CommandTelemetry.bucketLabel] collapses `-c key=value` pairs, `--format`
+  /// variants and every shell wrapper to `sh -c`, so a real session produces a
+  /// small, stable set and this is never reached in practice. It is here because
+  /// an unbounded map on a hot path is how the ignore oracle's own
+  /// `_maxFilesPerRepo` bound came to exist.
+  static const int maxBuckets = 64;
+
+  /// How long a channel-open error is remembered for the purpose of sizing the
+  /// next dwell. After this long without one, the escalation resets.
+  static const Duration errorMemory = Duration(minutes: 15);
+
+  /// First dwell after a channel-open error; each further recent error doubles
+  /// it, capped at [maxFloorDwell].
+  static const Duration baseFloorDwell = Duration(seconds: 30);
+  static const Duration maxFloorDwell = Duration(minutes: 8);
+
   int _effective;
 
   /// What the controller wants before the error floor is applied. Kept separate
@@ -90,36 +124,62 @@ class AdaptiveReadConcurrency {
   int _errorFloor;
   int _successStreak = 0;
 
-  int _samples = 0;
-  int? _minRttMicros;
-  double? _currentRttMicros;
-  DateTime? _windowStart;
-  int _windowSamples = 0;
+  /// One bucket's view of the link. Insertion order in [_buckets] is the
+  /// recency order used for eviction.
+  final Map<String, _BucketStats> _buckets = {};
+
+  /// The bucket that reported most recently — what the un-suffixed [minRtt],
+  /// [currentRtt] and [gradient] getters describe.
+  String? _lastBucket;
 
   int _pendingDirection = 0;
   int _pendingCount = 0;
 
+  /// Channel-open errors inside [errorMemory], and when the last one landed.
+  int _recentErrors = 0;
+  DateTime? _lastErrorAt;
+
+  /// The floor may not rise before this. Null when nothing is holding it.
+  DateTime? _floorHoldUntil;
+
   /// Current effective max concurrent reads.
   int get effectiveCap => _effective;
 
-  /// Best read duration in the current window, or null before any sample.
-  Duration? get minRtt =>
-      _minRttMicros == null ? null : Duration(microseconds: _minRttMicros!);
+  /// Best duration in the most-recently-sampled bucket's window, or null before
+  /// any sample. Per bucket, because comparing a `rev-list` batch against a
+  /// `rev-parse` measures the command, not the link.
+  Duration? get minRtt {
+    final b = _buckets[_lastBucket];
+    return b?.minRttMicros == null
+        ? null
+        : Duration(microseconds: b!.minRttMicros!);
+  }
 
-  /// Smoothed current read duration, or null before any sample.
-  Duration? get currentRtt => _currentRttMicros == null
-      ? null
-      : Duration(microseconds: _currentRttMicros!.round());
+  /// Smoothed duration in the most-recently-sampled bucket, or null.
+  Duration? get currentRtt {
+    final b = _buckets[_lastBucket];
+    return b?.currentRttMicros == null
+        ? null
+        : Duration(microseconds: b!.currentRttMicros!.round());
+  }
 
-  /// Queueing estimate in `(0, 1]`: 1.0 is no queue, falling means work is
-  /// piling up. Null until the first sample.
-  double? get gradient {
-    final best = _minRttMicros;
-    final current = _currentRttMicros;
+  /// Queueing estimate in `(0, 1]` for the most-recently-sampled bucket: 1.0 is
+  /// no queue, falling means work is piling up. Null until that bucket has a
+  /// sample.
+  double? get gradient => gradientFor(_lastBucket);
+
+  /// [gradient] for one command bucket, or null if it has no samples.
+  double? gradientFor(String? bucket) {
+    final b = bucket == null ? null : _buckets[bucket];
+    final best = b?.minRttMicros;
+    final current = b?.currentRttMicros;
     if (best == null || current == null || current <= 0) return null;
     final g = best / current;
     return g > 1.0 ? 1.0 : g;
   }
+
+  /// Buckets currently tracked — for tests/diagnostics.
+  int get bucketCount => _buckets.length;
 
   void _commit(int candidate) {
     final next = candidate.clamp(1, _errorFloor).clamp(1, ceiling);
@@ -129,34 +189,51 @@ class AdaptiveReadConcurrency {
   }
 
   /// Feed one completed [ExecLane.read] command duration.
-  void onReadSample(Duration duration) {
+  ///
+  /// [bucket] is the command's normalised label — pass
+  /// `CommandTelemetry.bucketLabel(gitArgs.join(' '))`. Samples are compared
+  /// only against others in the same bucket, so an expensive command cannot read
+  /// as congestion (MADR 0039 H1). The default exists for tests that feed one
+  /// homogeneous population, which is exactly the single-bucket case.
+  void onReadSample(Duration duration, {String bucket = '(test)'}) {
     final micros = duration.inMicroseconds;
     if (micros <= 0) return;
-    _samples++;
 
-    final now = _now();
-    final start = _windowStart;
-    final expired =
-        start == null ||
-        _windowSamples >= minRttWindowSamples ||
-        now.difference(start) >= minRttWindowAge;
-    if (_minRttMicros == null || expired) {
-      _minRttMicros = micros;
-      _windowStart = now;
-      _windowSamples = 1;
-    } else {
-      if (micros < _minRttMicros!) _minRttMicros = micros;
-      _windowSamples++;
+    // Re-insert so iteration order is least-recently-sampled first.
+    final stats = _buckets.remove(bucket) ?? _BucketStats();
+    _buckets[bucket] = stats;
+    _lastBucket = bucket;
+    while (_buckets.length > maxBuckets) {
+      _buckets.remove(_buckets.keys.first);
     }
 
-    final current = _currentRttMicros;
-    _currentRttMicros = current == null
+    stats.samples++;
+
+    final now = _now();
+    final start = stats.windowStart;
+    final expired =
+        start == null ||
+        stats.windowSamples >= minRttWindowSamples ||
+        now.difference(start) >= minRttWindowAge;
+    if (stats.minRttMicros == null || expired) {
+      stats.minRttMicros = micros;
+      stats.windowStart = now;
+      stats.windowSamples = 1;
+    } else {
+      if (micros < stats.minRttMicros!) stats.minRttMicros = micros;
+      stats.windowSamples++;
+    }
+
+    final current = stats.currentRttMicros;
+    stats.currentRttMicros = current == null
         ? micros.toDouble()
         : current * (1 - alpha) + micros * alpha;
 
-    if (_samples < warmupSamples) return;
+    // Warmup is per bucket: below it the gradient is noise, because minRtt and
+    // currentRtt for that command are still nearly the same number.
+    if (stats.samples < warmupSamples) return;
 
-    final g = gradient;
+    final g = gradientFor(bucket);
     if (g == null) return;
     final direction = g < shrinkBelow ? -1 : (g > growAbove ? 1 : 0);
     if (direction == 0) {
@@ -176,8 +253,33 @@ class AdaptiveReadConcurrency {
     _commit(_desired);
   }
 
-  /// A channel-open failure (typically MaxSessions) drops the cap immediately.
+  /// A channel-open failure (typically MaxSessions) drops the cap immediately,
+  /// and holds it down for a dwell that grows with how often this has been
+  /// happening.
+  ///
+  /// Recovery used to be a bare count: [consecutiveRequired] successes and the
+  /// floor rose. Reads complete constantly, so on a busy session that is a
+  /// fraction of a second — and against a host with a genuinely hard limit
+  /// (`MaxSessions 1..2`, a gateway, a rate limiter) the controller oscillated
+  /// indefinitely: three successes, floor up, open error, floor down. Each cycle
+  /// costs a failed channel open, which the Dashboard also counts as a transport
+  /// error. The dwell makes it a circuit breaker instead — the floor must *hold*
+  /// before it is probed again, and the hold doubles with each recent error
+  /// (MADR 0039 H3).
   void onChannelOpenError() {
+    final now = _now();
+    final last = _lastErrorAt;
+    if (last == null || now.difference(last) >= errorMemory) {
+      _recentErrors = 1;
+    } else {
+      _recentErrors++;
+    }
+    _lastErrorAt = now;
+
+    var dwell = baseFloorDwell * (1 << (_recentErrors - 1).clamp(0, 20));
+    if (dwell > maxFloorDwell) dwell = maxFloorDwell;
+    _floorHoldUntil = now.add(dwell);
+
     _errorFloor = (_effective - 1).clamp(1, ceiling);
     _pendingDirection = 0;
     _pendingCount = 0;
@@ -185,9 +287,14 @@ class AdaptiveReadConcurrency {
     _commit(_errorFloor);
   }
 
-  /// A successful command. After [consecutiveRequired] successes, the error
-  /// floor rises one step toward [ceiling] and the cap returns to whatever the
-  /// gradient controller last asked for.
+  /// A successful **read**. After [consecutiveRequired] successes *and* once the
+  /// dwell from the last channel-open error has elapsed, the error floor rises
+  /// one step toward [ceiling] and the cap returns to whatever the gradient
+  /// controller last asked for.
+  ///
+  /// Reads only — the caller enforces that. A commit or a fetch succeeding says
+  /// nothing about how many parallel channels the host will grant, which is the
+  /// same argument the sample path has always made.
   void onSuccess() {
     if (_errorFloor >= ceiling) {
       _successStreak = 0;
@@ -195,6 +302,12 @@ class AdaptiveReadConcurrency {
     }
     _successStreak++;
     if (_successStreak < consecutiveRequired) return;
+    final hold = _floorHoldUntil;
+    if (hold != null && _now().isBefore(hold)) {
+      // Keep the streak: the floor is not being refused, only held. It rises on
+      // the first success after the dwell rather than needing three more.
+      return;
+    }
     _successStreak = 0;
     _errorFloor = (_errorFloor + 1).clamp(1, ceiling);
     _commit(_desired);
@@ -202,14 +315,14 @@ class AdaptiveReadConcurrency {
 
   /// Reset to the no-sample cap (on connect / disconnect).
   void reset() {
-    _samples = 0;
-    _minRttMicros = null;
-    _currentRttMicros = null;
-    _windowStart = null;
-    _windowSamples = 0;
+    _buckets.clear();
+    _lastBucket = null;
     _pendingDirection = 0;
     _pendingCount = 0;
     _successStreak = 0;
+    _recentErrors = 0;
+    _lastErrorAt = null;
+    _floorHoldUntil = null;
     _errorFloor = ceiling;
     _desired = noSampleCap;
     if (_effective != noSampleCap) {
@@ -217,4 +330,13 @@ class AdaptiveReadConcurrency {
       onCapChanged?.call(_effective);
     }
   }
+}
+
+/// Per-command-bucket link statistics. See [AdaptiveReadConcurrency.onReadSample].
+class _BucketStats {
+  int samples = 0;
+  int? minRttMicros;
+  double? currentRttMicros;
+  DateTime? windowStart;
+  int windowSamples = 0;
 }

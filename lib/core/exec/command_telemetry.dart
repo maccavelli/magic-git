@@ -124,7 +124,13 @@ class CommandTelemetry extends ChangeNotifier {
   /// carries `-c i18n.logOutputEncoding=UTF-8` and the plain form does not.
   /// Shell wrappers collapse to `sh -c`: their script is opaque and unique per
   /// call, so bucketing on it would defeat the point.
-  @visibleForTesting
+  ///
+  /// Public because it has a second consumer beyond this counter:
+  /// `AdaptiveReadConcurrency` partitions its latency samples by the same
+  /// buckets, so a `rev-list` batch is compared against other `rev-list`
+  /// batches rather than against the session's cheapest command (MADR 0039 H1).
+  /// The two must agree on what "the same command" means, which is exactly why
+  /// there is one definition rather than two.
   static String bucketLabel(String raw) {
     final tokens = raw.trim().split(RegExp(r'\s+'))
       ..removeWhere((t) => t.isEmpty);

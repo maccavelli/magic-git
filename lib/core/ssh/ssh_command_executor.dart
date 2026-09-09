@@ -335,10 +335,17 @@ class SSHCommandExecutor implements CommandExecutor {
   /// let one slow network op head-of-line-block every read in the app.
   final CommandLaneScheduler _scheduler = CommandLaneScheduler();
 
-  /// Soft-throttles [_scheduler]'s read ceiling from keepalive RTT samples.
-  late final AdaptiveReadConcurrency _adaptiveReads = AdaptiveReadConcurrency(
-    onCapChanged: _scheduler.setMaxConcurrentReads,
-  );
+  /// Soft-throttles [_scheduler]'s read ceiling from command-duration samples.
+  late final AdaptiveReadConcurrency _adaptiveReads =
+      _injectedAdaptiveReads ??
+      AdaptiveReadConcurrency(onCapChanged: _scheduler.setMaxConcurrentReads);
+
+  /// Test-supplied controller, so a test can drive the error-floor dwell on an
+  /// injected clock. The dwell is measured in tens of seconds by design, which
+  /// otherwise hides the read-lane guard it sits in front of: with the floor
+  /// held, no lane's successes lift it, and a test cannot tell the guard from
+  /// the hold (MADR 0039 H3).
+  final AdaptiveReadConcurrency? _injectedAdaptiveReads;
 
   /// Augmented remote `$PATH` (discovered at connect), exported before every
   /// command so user-installed tools resolve on the minimal exec-channel PATH.
@@ -386,14 +393,18 @@ class SSHCommandExecutor implements CommandExecutor {
       _lastStreamByteAt != null &&
       DateTime.now().difference(_lastStreamByteAt!) < streamBusyWindow;
 
-  SSHCommandExecutor(this._clientManager, {CommandTelemetry? telemetry})
-    : _telemetry = telemetry ?? CommandTelemetry.instance {
+  SSHCommandExecutor(
+    this._clientManager, {
+    CommandTelemetry? telemetry,
+    @visibleForTesting AdaptiveReadConcurrency? adaptiveReads,
+  }) : _telemetry = telemetry ?? CommandTelemetry.instance,
+       _injectedAdaptiveReads = adaptiveReads {
     _clientManager.registerBusyProbes(
       command: () => commandBusy,
       stream: () => streamBusy,
       sync: () => syncBusy,
     );
-    // Start at the adaptive no-sample cap (3) until RTT samples arrive.
+    // Start at the adaptive no-sample cap (3) until duration samples arrive.
     _scheduler.setMaxConcurrentReads(_adaptiveReads.effectiveCap);
   }
 
@@ -419,8 +430,15 @@ class SSHCommandExecutor implements CommandExecutor {
   /// as commands complete; this exists so a test can drive the controller's
   /// wiring — the cap plumbing and the reset paths — without a transport.
   @visibleForTesting
-  void noteReadSample(Duration duration) =>
-      _adaptiveReads.onReadSample(duration);
+  void noteReadSample(Duration duration, {String bucket = '(test)'}) =>
+      _adaptiveReads.onReadSample(duration, bucket: bucket);
+
+  /// The adaptive controller itself, so a test can assert which *bucket* a
+  /// command's sample landed in and that the error floor answers only to read-
+  /// lane successes — neither of which is visible through [adaptiveReadCap]
+  /// alone (MADR 0039 H1/H3).
+  @visibleForTesting
+  AdaptiveReadConcurrency get adaptiveReads => _adaptiveReads;
 
   /// Reset adaptive concurrency to the no-sample cap (on connect/disconnect).
   void resetAdaptiveReads() {
@@ -840,11 +858,23 @@ class SSHCommandExecutor implements CommandExecutor {
         activityIdle,
         onOutput,
       );
-      _adaptiveReads.onSuccess();
-      // Only the read lane: this is the lane whose concurrency is being
-      // controlled, and a fetch or a commit says nothing about how many
-      // parallel reads the host will serve happily (0024 M1/A2).
-      if (lane == ExecLane.read) _adaptiveReads.onReadSample(sw.elapsed);
+      // Only the read lane, for BOTH signals: this is the lane whose
+      // concurrency is being controlled, and a fetch or a commit says nothing
+      // about how many parallel reads — or parallel channels — the host will
+      // serve happily (0024 M1/A2). `onSuccess` used to sit outside this guard,
+      // so an exclusive commit could lift the channel-open error floor
+      // (MADR 0039 H3).
+      //
+      // The sample is bucketed by normalised command so it is compared against
+      // its own kind rather than against the cheapest command of the session
+      // (MADR 0039 H1).
+      if (lane == ExecLane.read) {
+        _adaptiveReads.onSuccess();
+        _adaptiveReads.onReadSample(
+          sw.elapsed,
+          bucket: CommandTelemetry.bucketLabel(gitArgs.join(' ')),
+        );
+      }
       return result;
     } on SSHChannelOpenError {
       _adaptiveReads.onChannelOpenError();

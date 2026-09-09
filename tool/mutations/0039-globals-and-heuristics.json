@@ -227,5 +227,59 @@
       "test/session_telemetry_isolation_test.dart",
       "test/local_command_executor_test.dart"
     ]
+  },
+  {
+    "label": "h1: every bucket shares one minRtt again",
+    "file": "lib/core/ssh/adaptive_read_concurrency.dart",
+    "find": "    final stats = _buckets.remove(bucket) ?? _BucketStats();\n    _buckets[bucket] = stats;",
+    "replace": "    final stats = _buckets.remove('(all)') ?? _BucketStats();\n    _buckets['(all)'] = stats;",
+    "tests": [
+      "test/adaptive_read_concurrency_test.dart"
+    ]
+  },
+  {
+    "label": "h1: the bucket map is unbounded",
+    "file": "lib/core/ssh/adaptive_read_concurrency.dart",
+    "find": "    while (_buckets.length > maxBuckets) {\n      _buckets.remove(_buckets.keys.first);\n    }",
+    "replace": "",
+    "tests": [
+      "test/adaptive_read_concurrency_test.dart"
+    ]
+  },
+  {
+    "label": "h1: the executor stops bucketing its samples",
+    "file": "lib/core/ssh/ssh_command_executor.dart",
+    "find": "          bucket: CommandTelemetry.bucketLabel(gitArgs.join(' ')),",
+    "replace": "          bucket: '(all)',",
+    "tests": [
+      "test/ssh_command_executor_bucketing_test.dart"
+    ]
+  },
+  {
+    "label": "h3: the dwell is ignored, so the floor climbs on count alone",
+    "file": "lib/core/ssh/adaptive_read_concurrency.dart",
+    "find": "    final hold = _floorHoldUntil;\n    if (hold != null && _now().isBefore(hold)) {",
+    "replace": "    final hold = _floorHoldUntil;\n    if (false && hold != null && _now().isBefore(hold)) {",
+    "tests": [
+      "test/adaptive_read_concurrency_test.dart"
+    ]
+  },
+  {
+    "label": "h3: the dwell stops escalating with repeated errors",
+    "file": "lib/core/ssh/adaptive_read_concurrency.dart",
+    "find": "    var dwell = baseFloorDwell * (1 << (_recentErrors - 1).clamp(0, 20));",
+    "replace": "    var dwell = baseFloorDwell;",
+    "tests": [
+      "test/adaptive_read_concurrency_test.dart"
+    ]
+  },
+  {
+    "label": "h3: a success on any lane lifts the error floor",
+    "file": "lib/core/ssh/ssh_command_executor.dart",
+    "find": "      if (lane == ExecLane.read) {\n        _adaptiveReads.onSuccess();",
+    "replace": "      _adaptiveReads.onSuccess();\n      if (lane == ExecLane.read) {",
+    "tests": [
+      "test/ssh_command_executor_bucketing_test.dart"
+    ]
   }
 ]
