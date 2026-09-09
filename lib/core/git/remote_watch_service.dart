@@ -12,13 +12,42 @@ import 'watch_path_filter.dart';
 
 enum RemoteWatcherTool { fswatch, inotifywait, none }
 
-/// Exclude git internals that flood a recursive watch during fetch/gc.
+/// Suppress lock-file churn during git operations.
+///
+/// **ONE flag, and that is not a simplification.** `inotifywait` takes only the
+/// LAST `--exclude` it is given and says so on stderr — verified on the host,
+/// where `--exclude '/a/' --exclude '/b/'` delivered events from `a/` and
+/// suppressed only `b/`. This was four flags, so three of them — objects,
+/// reflogs and lock files, the three that matter — had never been in force on
+/// the inotify arm, and the tool had been reporting that on the very channel
+/// this app reads (MADR 0041 F8).
+///
+/// Lock files stay a `--exclude` because they live in `.git/` itself, which
+/// must remain watched. The directories move to [_inotifyUnwatchedPaths], which
+/// is a stronger mechanism — see there.
+///
 /// Shared by both sides of the `stdbuf` / bare `inotifywait` fork.
-const _inotifyExcludeFlags =
-    r"--exclude '/\.git/objects/' "
-    r"--exclude '/\.git/logs/' "
-    r"--exclude '\.lock$' "
-    r"--exclude '/\.git/fsmonitor--daemon/' ";
+const _inotifyExcludeFlags = r"--exclude '\.lock$' ";
+
+/// Git-internal subtrees the recursive arm must not watch AT ALL.
+///
+/// `--exclude` filters events the kernel has already delivered; `@<path>`
+/// stops the watch being established. Measured on the host: the largest
+/// repository holds 701 directories and its `inotifywait` held exactly 701
+/// watch descriptors, 259 of them under `.git/objects` and 5 under `.git/logs`
+/// — about 38 % of the total spent on subtrees whose every event is discarded
+/// on arrival (MADR 0041 F9).
+///
+/// **The `./` prefix is required and is not cosmetic.** inotifywait matches the
+/// path string it builds while walking, which is `./`-prefixed when the watch
+/// root is `.`. Verified on the host: `@./.git/objects` took a nine-directory
+/// tree from 9 watches to 5; `@.git/objects` and an absolute path both left it
+/// at 9, silently.
+///
+/// Placed AFTER the watch root on the command line, which is the form that was
+/// verified.
+const _inotifyUnwatchedPaths =
+    ' @./.git/objects @./.git/logs @./.git/fsmonitor--daemon';
 
 /// Argv for the remote watcher process. Extracted so tests can assert
 /// inotifywait excludes without arming an SSH stream.
@@ -69,6 +98,7 @@ List<String> remoteWatcherArgs(
       recursiveWatchScript(
         inotify: tool == RemoteWatcherTool.inotifywait,
         excludes: _inotifyExcludeFlags,
+        unwatched: _inotifyUnwatchedPaths,
         pidFile: pidFile,
         heartbeat: heartbeat,
         lock: lock,
@@ -106,15 +136,31 @@ List<String> remoteWatcherArgs(
         'if command -v stdbuf >/dev/null 2>&1; then '
             'exec stdbuf -oL inotifywait -m -r '
             '-e modify,create,delete,move $_inotifyExcludeFlags'
-            '--format %w%f .; '
+            '--format %w%f .$_inotifyUnwatchedPaths; '
             'else exec inotifywait -m -r '
             '-e modify,create,delete,move $_inotifyExcludeFlags'
-            '--format %w%f .; fi',
+            '--format %w%f .$_inotifyUnwatchedPaths; fi',
       ];
     case RemoteWatcherTool.none:
       return const [];
   }
 }
+
+/// Lines `inotifywait` prints on every arm, which say nothing about this one.
+///
+/// The budget is [RemoteWatchService.maxDiagnosticLines] lines per arm, and
+/// these two spent two of them every time — and did it right where a real
+/// message lands. `--exclude: only the last option will be taken into
+/// consideration` was arriving on this channel for months, next to
+/// `Setting up watches`, and nobody read it (MADR 0041 F8). The one message
+/// that matters most, `upper limit on inotify watches reached`, arrives the
+/// same way.
+///
+/// Matched by prefix rather than by pattern: an exact, enumerated list of noise
+/// cannot accidentally swallow a message nobody has seen yet.
+bool _isWatcherStartupNoise(String line) =>
+    line.startsWith('Setting up watches') ||
+    line.startsWith('Watches established');
 
 /// Watches a remote repository for filesystem changes and emits a coalesced
 /// [RepoWatchEvent] per settled burst, carrying the active [WatchMode] so the UI
@@ -705,7 +751,9 @@ class RemoteWatchService {
             while (i >= 0) {
               final line = errBuffer.substring(start, i).trim();
               start = i + 1;
-              if (line.isNotEmpty && diagnosticsSeen < maxDiagnosticLines) {
+              if (line.isNotEmpty &&
+                  !_isWatcherStartupNoise(line) &&
+                  diagnosticsSeen < maxDiagnosticLines) {
                 diagnosticsSeen++;
                 developer.log(line, name: 'RemoteWatchService');
                 onDiagnostic?.call(line);

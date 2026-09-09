@@ -261,4 +261,80 @@ void main() {
       expect(boundedInotifyScript(['/r/.git']), isNot(contains('-t ')));
     });
   });
+
+  // ---- the recursive watch surface (MADR 0041 phase 5) -------------------
+  //
+  // COMPOSITION ONLY, and here that is a limit worth stating rather than a
+  // convention being followed. The behaviour of `--exclude` and `@<path>` is
+  // inotifywait's, this suite runs on macOS where there is no inotifywait, and
+  // the executing tests shim it — so a shim can only ever confirm the argv it
+  // was handed. What these assertions pin is the two things that were measured
+  // on a real host and are silently wrong if they drift (0041 F8, F9):
+  //
+  //   * exactly ONE --exclude, because inotifywait honours only the last and
+  //     four of them meant three were dead;
+  //   * @-paths spelled `./…`, because that is the only spelling that works
+  //     when the watch root is `.` — 9 watches to 5, where `@.git/objects` and
+  //     an absolute path both left it at 9.
+
+  group('recursive watch surface', () {
+    String recursive() => recursiveWatchScript(
+      inotify: true,
+      excludes: r"--exclude '\.lock$' ",
+      unwatched: ' @./.git/objects @./.git/logs @./.git/fsmonitor--daemon',
+      pidFile: '/r/.git/mg-watch.t.pid',
+      heartbeat: '/r/.git/mg-watch.t.hb',
+    );
+
+    test('emits exactly one --exclude', () {
+      expect(
+        '--exclude '.allMatches(recursive()).length,
+        // Once per branch of the stdbuf fork, and no more.
+        2,
+        reason:
+            'inotifywait takes only the LAST --exclude and warns about it; '
+            'more than one per branch means the earlier ones do nothing',
+      );
+    });
+
+    test('the unwatched subtrees are @-paths, and carry the ./ prefix', () {
+      final s = recursive();
+      for (final p in const [
+        '@./.git/objects',
+        '@./.git/logs',
+        '@./.git/fsmonitor--daemon',
+      ]) {
+        expect(s, contains(p), reason: 'missing $p');
+      }
+      expect(
+        s,
+        isNot(contains('@.git/')),
+        reason: 'the bare form matches nothing and fails silently',
+      );
+    });
+
+    test('the @-paths come after the watch root, not before it', () {
+      final s = recursive();
+      expect(
+        s.indexOf('@./.git/objects'),
+        greaterThan(s.indexOf('--format %w%f .')),
+        reason: 'the verified form puts them after the root',
+      );
+    });
+
+    test('the fswatch branch takes no @-paths', () {
+      // fswatch has no such flag, and accepts repeated --exclude correctly, so
+      // it needs neither half of this. Stated so the asymmetry reads as a
+      // decision rather than an oversight.
+      final s = recursiveWatchScript(
+        inotify: false,
+        excludes: '',
+        unwatched: ' @./.git/objects',
+        pidFile: '/r/.git/mg-watch.t.pid',
+        heartbeat: '/r/.git/mg-watch.t.hb',
+      );
+      expect(s, isNot(contains('@./.git/objects')));
+      expect(s, contains('fswatch'));
+    });
+  });
 }

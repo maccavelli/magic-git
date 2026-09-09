@@ -20,8 +20,8 @@
   {
     "label": "p1: the kill target is the wrapper, not the watcher (no exec)",
     "file": "lib/core/git/bounded_watch.dart",
-    "find": "        'exec stdbuf -oL inotifywait $fmt $excludes--format %w%f .; '",
-    "replace": "        'stdbuf -oL inotifywait $fmt $excludes--format %w%f .; '",
+    "find": "        'exec stdbuf -oL inotifywait $fmt $excludes--format %w%f .$unwatched; '",
+    "replace": "        'stdbuf -oL inotifywait $fmt $excludes--format %w%f .$unwatched; '",
     "tests": [
       "test/watch_lease_teardown_exec_test.dart"
     ]
@@ -186,6 +186,60 @@
     "replace": "  late final int _pinned = _streamBudget();\n  int get maxConcurrentWatchers {\n    final derived = _pinned - reservedStreams;",
     "tests": [
       "test/watch_ceiling_derived_test.dart"
+    ]
+  },
+  {
+    "label": "p5: the four dead --exclude flags come back",
+    "file": "lib/core/git/remote_watch_service.dart",
+    "find": "const _inotifyExcludeFlags = r\"--exclude '\\.lock$' \";",
+    "replace": "const _inotifyExcludeFlags =\n    r\"--exclude '/\\.git/objects/' \"\n    r\"--exclude '/\\.git/logs/' \"\n    r\"--exclude '\\.lock$' \"\n    r\"--exclude '/\\.git/fsmonitor--daemon/' \";",
+    "tests": [
+      "test/remote_watch_service_test.dart"
+    ]
+  },
+  {
+    "label": "p5: the @-paths lose their ./ prefix and match nothing",
+    "file": "lib/core/git/remote_watch_service.dart",
+    "find": "    ' @./.git/objects @./.git/logs @./.git/fsmonitor--daemon';",
+    "replace": "    ' @.git/objects @.git/logs @.git/fsmonitor--daemon';",
+    "tests": [
+      "test/remote_watch_service_test.dart"
+    ]
+  },
+  {
+    "label": "p5: the @-paths are dropped, so objects are watched again",
+    "file": "lib/core/git/remote_watch_service.dart",
+    "find": "        unwatched: _inotifyUnwatchedPaths,\n",
+    "replace": "",
+    "tests": [
+      "test/remote_watch_service_test.dart"
+    ]
+  },
+  {
+    "label": "p5: the @-paths land before the watch root",
+    "file": "lib/core/git/bounded_watch.dart",
+    "find": "        'exec stdbuf -oL inotifywait $fmt $excludes--format %w%f .$unwatched; '",
+    "replace": "        'exec stdbuf -oL inotifywait $fmt $excludes$unwatched --format %w%f .; '",
+    "tests": [
+      "test/bounded_watch_test.dart"
+    ]
+  },
+  {
+    "label": "p5: a real stderr message is filtered as startup noise",
+    "file": "lib/core/git/remote_watch_service.dart",
+    "find": "    line.startsWith('Setting up watches') ||\n    line.startsWith('Watches established');",
+    "replace": "    line.startsWith('Setting up watches') ||\n    line.startsWith('Watches established') ||\n    line.startsWith('--exclude');",
+    "tests": [
+      "test/remote_watch_service_test.dart"
+    ]
+  },
+  {
+    "label": "p5: startup noise is forwarded again and spends the log budget",
+    "file": "lib/core/git/remote_watch_service.dart",
+    "find": "                  !_isWatcherStartupNoise(line) &&\n",
+    "replace": "",
+    "tests": [
+      "test/remote_watch_service_test.dart"
     ]
   }
 ]

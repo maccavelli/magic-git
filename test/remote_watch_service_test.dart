@@ -368,35 +368,71 @@ void main() {
     });
   });
 
-  test('inotifywait argv excludes git objects, logs, locks, and fsmonitor', () {
+  test('inotifywait argv carries one --exclude and three @-paths', () {
+    // Was: assert all four `--exclude` flags are present. They were — on both
+    // arms of the stdbuf fork — and three of them did nothing, because
+    // inotifywait honours only the LAST one and warns about it on the very
+    // stderr this app reads (MADR 0041 F8). A `contains` sees presence, never
+    // effect; a COUNT is what would have caught it, so that is what this
+    // asserts now.
     final args = remoteWatcherArgs(RemoteWatcherTool.inotifywait, null);
     expect(args.take(2), ['sh', '-c']);
     final script = args.last;
-    const excludes = [
-      r"--exclude '/\.git/objects/'",
-      r"--exclude '/\.git/logs/'",
-      r"--exclude '\.lock$'",
-      r"--exclude '/\.git/fsmonitor--daemon/'",
-    ];
-    for (final flag in excludes) {
-      expect(script, contains(flag));
-      expect(
-        flag.allMatches(script),
-        hasLength(2),
-        reason: '$flag must appear on both the stdbuf and fallback arms',
-      );
-    }
+
     expect(
-      script,
-      contains(
-        '-e modify,create,delete,move '
-        r"--exclude '/\.git/objects/' "
-        r"--exclude '/\.git/logs/' "
-        r"--exclude '\.lock$' "
-        r"--exclude '/\.git/fsmonitor--daemon/' "
-        '--format',
-      ),
+      '--exclude '.allMatches(script),
+      hasLength(2),
+      reason: 'exactly one per fork arm — more means the earlier ones are dead',
     );
+    expect(
+      r"--exclude '\.lock$'".allMatches(script),
+      hasLength(2),
+      reason: 'lock files stay a filter: they live in .git/, which is watched',
+    );
+
+    // The three subtrees are not watched at all rather than filtered after the
+    // fact — 259 of the largest repo's 701 watch descriptors sat under
+    // .git/objects (0041 F9). The `./` prefix is the only spelling that works
+    // when the watch root is `.`; the bare and absolute forms match nothing.
+    for (final p in const [
+      '@./.git/objects',
+      '@./.git/logs',
+      '@./.git/fsmonitor--daemon',
+    ]) {
+      expect(p.allMatches(script), hasLength(2), reason: '$p on both arms');
+    }
+    expect(script, isNot(contains('@.git/')));
+    expect(
+      script.indexOf('@./.git/objects'),
+      greaterThan(script.indexOf('--format %w%f .')),
+      reason: 'after the watch root, which is the form verified on a host',
+    );
+  });
+
+  test('the LEASED recursive argv carries the same surface', () {
+    // The assertion above reaches the un-leased legacy branch, which no live
+    // arm takes: production always passes a heartbeat, so it always builds the
+    // leased script. A sabotage run caught this — dropping the @-paths from the
+    // leased branch alone left every assertion above green (MADR 0041 phase 5,
+    // one survivor).
+    final args = remoteWatcherArgs(
+      RemoteWatcherTool.inotifywait,
+      null,
+      pidFile: '/r/.git/mg-watch.t.pid',
+      heartbeat: '/r/.git/mg-watch.t.hb',
+      lock: (gitDir: '/r/.git', token: 't'),
+    );
+    final script = args.last;
+
+    expect(script, contains('mg-watch.t.hb'), reason: 'it is the leased form');
+    expect('--exclude '.allMatches(script), hasLength(2));
+    for (final p in const [
+      '@./.git/objects',
+      '@./.git/logs',
+      '@./.git/fsmonitor--daemon',
+    ]) {
+      expect(p.allMatches(script), hasLength(2), reason: '$p on both arms');
+    }
   });
 
   // ---- 0024 A1: the record split ----------------------------------------
@@ -495,6 +531,52 @@ void main() {
       expect(diagnostics.single, contains('upper limit on inotify watches'));
       await sub.cancel();
     });
+
+    test(
+      'startup chatter is dropped, so it cannot crowd out a real one',
+      () async {
+        // `inotifywait` prints these on every arm. They spent two of the twenty
+        // lines each time, right where a real message lands — and next to them,
+        // for months, sat `--exclude: only the last option will be taken into
+        // consideration`, which nobody read (MADR 0041 F8).
+        final handle = _DrivableStreamHandle();
+        final executor = _DrivableExecutor(tool: 'inotifywait', handle: handle);
+        final diagnostics = <String>[];
+        final service = RemoteWatchService(
+          executor,
+          onDiagnostic: diagnostics.add,
+        );
+
+        final sub = service.watch('/repo').listen((_) {});
+        await executor.armed.future;
+        await settleArm();
+
+        handle.emitStderr(
+          'Setting up watches.  Beware: since -r was given, this may take a '
+          'while!\n'
+          'Watches established.\n'
+          '--exclude: only the last option will be taken into consideration.\n',
+        );
+        await Future<void>.delayed(Duration.zero);
+
+        expect(
+          diagnostics.where((d) => d.startsWith('Setting up watches')),
+          isEmpty,
+        );
+        expect(
+          diagnostics.where((d) => d.startsWith('Watches established')),
+          isEmpty,
+        );
+        expect(
+          diagnostics.where((d) => d.contains('only the last option')),
+          isNotEmpty,
+          reason:
+              'the filter is an enumerated list of noise, not a pattern — it '
+              'must not swallow a message nobody has seen yet',
+        );
+        await sub.cancel();
+      },
+    );
 
     test('a flooding watcher cannot fill the log', () async {
       // inotifywait prints one failure line per directory it cannot watch, so

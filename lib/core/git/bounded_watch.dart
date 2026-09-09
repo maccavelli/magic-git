@@ -508,6 +508,7 @@ String watcherSweepScript(
 String recursiveWatchScript({
   required bool inotify,
   required String excludes,
+  String unwatched = '',
   String? pidFile,
   String? heartbeat,
   WatchLock? lock,
@@ -523,10 +524,14 @@ String recursiveWatchScript({
     // `exec`, so the pid the lease loop holds is the watcher's own — see
     // [_leaseLoop]. No `-t`: the watch is established once and kept, rather
     // than torn down and re-walked every two minutes (0041 F2).
+    // [unwatched] goes AFTER the watch root: `@<path>` arguments stop those
+    // subtrees being watched at all, where `--exclude` only filters events the
+    // kernel already delivered. The fswatch branch has no equivalent and takes
+    // none.
     final inner =
         'if command -v stdbuf >/dev/null 2>&1; then '
-        'exec stdbuf -oL inotifywait $fmt $excludes--format %w%f .; '
-        'else exec inotifywait $fmt $excludes--format %w%f .; fi';
+        'exec stdbuf -oL inotifywait $fmt $excludes--format %w%f .$unwatched; '
+        'else exec inotifywait $fmt $excludes--format %w%f .$unwatched; fi';
     return '$prelude'
         '${_leaseLoop(inner: inner, heartbeat: heartbeat!, staleAfter: staleAfter, leasePoll: leasePoll, pidFile: pidFile, lock: lock)}';
   }
