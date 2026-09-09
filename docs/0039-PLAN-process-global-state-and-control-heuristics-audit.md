@@ -1056,16 +1056,18 @@ publication is a local operation.
 ## Execution record
 
 **Phases 1, 2, 3, 5 and 6 executed 2026-09-09** against `dc78436`, on the
-maintainer's instruction to run those five. Phases 4 (F5, telemetry), 7 (H1/H3),
-8 (A1), 9 (A3) and 10 (A2) are **not started**; nothing in the tree depends on
-them, and the seam Phase 1 introduced names F5 explicitly as its next caller so
-the gap is discoverable from the code rather than only from here.
+maintainer's instruction to run those five; committed as `3ece3b6` (code) +
+`0cc1897` (docs) and pushed. **Phase 4 executed 2026-09-09** on the instruction
+to proceed, and committed separately per the maintainer's standing request that
+each phase get its own commit so rollback is easier.
 
-**Not committed.** `AGENTS.md` says "Don't commit or push unless asked. The
-maintainer commits each work cycle himself", which is more specific to this
-repository than this plan's own per-phase commit rule, so the work is left staged
-in the working tree for the maintainer. Nothing was pushed. The per-phase commit
-boundaries the plan describes are recoverable from the file list below.
+Phases 7 (H1/H3), 8 (A1), 9 (A3) and 10 (A2) follow.
+
+**Commit cadence.** Each phase is its own commit, `git commit --no-edit` only —
+`AGENTS.md` forbids composing message text and a global `prepare-commit-msg`
+hook writes it. Nothing is pushed except on explicit instruction. See deviation
+D4: the hook needs docs and code committed *separately*, or it summarises the
+plan instead of the diff.
 
 ### Prerequisites
 
@@ -1081,11 +1083,11 @@ The tree was **not** empty, and that is deviation D1 below.
 
 ### Baselines and outcomes
 
-| | before | after |
-|---|---|---|
-| `flutter analyze` | clean | clean |
-| `flutter test` | 3804 passed, 3 skipped | 3841 passed, 3 skipped (+37) |
-| mutations killed | — | 20 of 20, 0 survived, 0 did not apply |
+| | before | after phases 1/2/3/5/6 | after phase 4 |
+|---|---|---|---|
+| `flutter analyze` | clean | clean | clean |
+| `flutter test` | 3804 passed, 3 skipped | 3841 passed, 3 skipped (+37) | 3849 passed, 3 skipped (+8) |
+| mutations killed | — | 20 of 20 | 24 of 24, 0 survived, 0 did not apply |
 
 ### Phase 1 — session-scope seam
 
@@ -1192,12 +1194,46 @@ Each of the widget tests has a **control** — an ordinary unsuppressed tick sti
 refreshing immediately — because without one, a deferral that swallowed the
 normal path would pass just as happily.
 
+### Phase 4 — session-scope telemetry (F5)
+
+`CommandTelemetry` gained a public constructor; `instance` stays as the
+**fallback** for callers with no session — the secondary window runs in its own
+engine, where process-wide and session-wide are the same thing, and roughly
+fifteen existing test files construct executors directly. That default is why
+none of them needed an edit.
+
+`SSHCommandExecutor`, `LocalCommandExecutor` and `SSHClientManager` each take an
+optional `telemetry` and hold it as a field; the two stream handles
+(`_SshSessionStreamHandle`, `_ProcessStreamHandle`) take it too, so the
+open/peak-stream gauges are session-scoped as well.
+`commandTelemetryProvider` hands each container its own, and the three connect
+resets plus the transport-drop recorder go through it.
+
+Two things the plan did not anticipate, both resolved without changing its
+decision:
+
+* **`runWithRetries` is `static`** and shared with `LocalCommandExecutor`, so it
+  cannot read an instance field. It now takes an optional `telemetry`, defaulting
+  to the fallback, and both executors pass their own. The channel-open error
+  counter therefore lands in the right session too.
+* **`ProxyCommandExecutor` records no telemetry at all** — the plan's acceptance
+  criterion mentioned "`ProxyCommandExecutor`'s window-local uses", and there are
+  none. The criterion is satisfied vacuously on that clause.
+
+`settings_bus.dart`'s doc cited `CommandTelemetry.instance` as a fellow static
+singleton; it now says why a singleton is right *there* (the point is to reach
+every container) and wrong for telemetry (the point was to describe exactly one).
+
+Eight tests. Three go beyond the plan's sketch, and deviation D5 says why:
+the first draft asserted only that the constructor argument existed, and two
+mutations walked straight through it.
+
 ### Sabotage
 
-`tool/mutations/0039-globals-and-heuristics.json`, 20 entries, final run:
+`tool/mutations/0039-globals-and-heuristics.json`, 24 entries, final run:
 
 ```
-20 killed, 0 survived, 0 did not apply
+24 killed, 0 survived, 0 did not apply
 ```
 
 Every check this work introduced has been observed failing against a deliberately
@@ -1241,15 +1277,40 @@ correction (compare MADR 0028's amendment) and worth more than a clean grep.
 *Resolution:* amend the criterion rather than delete the record. Criterion 5 above
 is struck through and restated.
 
+**D4 — 2026-09-09 — the commit-message hook described the plan, not the diff.**
+The first commit of phases 1/2/3/5/6 put ~1,800 lines of MADR and PLAN prose in
+with the code. The `prepare-commit-msg` hook summarised the *documents* and
+produced a message crediting five phases that do not exist in the tree —
+telemetry scoping, the adaptive-read bucketing and circuit breaker, the
+`for-each-ref` ahead-behind path, incremental graph layout, and cost-aware
+eviction. A later bisect would have believed all five shipped.
+*Resolution:* `git reset --soft HEAD~1` (nothing discarded; unpushed), then
+commit code alone — the hook then described the diff accurately — then the docs.
+`AGENTS.md` forbids writing the message by hand, so the fix had to be to the
+*input*. **Standing rule from here: docs and code go in separate commits, and
+the generated message is read back before moving on.**
+
+**D5 — 2026-09-09 — Phase 4's first mutation run had two survivors and a broken
+entry.** The survivors were `f5: the SSH executor records into the singleton`
+and its local twin. The test asserted that the executors were *constructed* with
+the session's sink and that the counters were still zero — which a body still
+reaching for `CommandTelemetry.instance` satisfies perfectly. Fixed by driving a
+real command through each executor and following where the sample lands: `sh -c
+true` through `LocalCommandExecutor`, and a `FakeSshClient`-backed command
+through `SSHCommandExecutor`. Test gap, not a code hole.
+The broken entry (`connect()` resets the process-wide sink) matched three
+identical call sites, then survived once anchored: nothing drove
+`ConnectionController.connect()`. Rather than stub a handshake to pin one of the
+three, a **membership scan** now asserts `app_providers.dart` contains no
+`CommandTelemetry.instance` at all — the same instrument, and the same reasoning,
+as `branch_diff_lru_test`'s clear-list guard, and it fails on a fourth call site
+added later. It reads the file as *bytes* with a lenient decode, because that
+file is the one `grep` treats as binary.
+
 **No deviation was found in Phases 1, 2 or 3.**
 
 ### Not done, and why
 
-* **Phase 4 (F5, telemetry)** — not in the approved set. The Dashboard's session
-  figures remain the union of every tab's commands, truncated by whichever tab
-  connected last. `session_scope.dart`'s doc names it as the next caller of the
-  seam.
-* **Phases 7–10 (H1, H3, A1, A3, A2)** — not in the approved set. Each is
-  independent of what landed here; Phase 9 (A3) builds on Phase 2 and is
-  unblocked by it.
+* **Phases 7–10 (H1, H3, A1, A3, A2)** — in progress. Each is independent of
+  what landed here; Phase 9 (A3) builds on Phase 2 and is unblocked by it.
 
