@@ -3486,10 +3486,16 @@ printf '%s\n%s\n%s\n' "$top" "$git_dir" "$common_dir"
 
   /// Base-relative divergence for local branch tips. Ref names never enter the
   /// host script; rows join back through captured ordinal + immutable OID.
+  /// [useAheadBehindAtom] takes the single-walk `for-each-ref` path — see
+  /// [_branchReviewFastPath]. Gated by the caller on the host's Git version
+  /// (`aheadBehindAtomForVersion`); defaults to false, so every caller that has
+  /// not opted in — and every existing test — exercises the batch fallback
+  /// unchanged (MADR 0039 A1).
   Future<BranchReviewBatchResult> branchReviewSummaries(
     String repoPath, {
     required String baseOid,
     required List<({String refName, String oid})> branches,
+    bool useAheadBehindAtom = false,
   }) async {
     if (!isFullGitOid(baseOid)) {
       throw ArgumentError.value(baseOid, 'baseOid', 'must be a full Git OID');
@@ -3504,6 +3510,15 @@ printf '%s\n%s\n%s\n' "$top" "$git_dir" "$common_dir"
       }
     }
 
+    if (useAheadBehindAtom) {
+      final fast = await _branchReviewFastPath(repoPath, baseOid, branches);
+      // Null means the host could not answer in this shape at all — a non-zero
+      // exit (an older Git rejects the atom with "unknown field name") or output
+      // this cannot parse. A per-branch problem is a RESULT, not a reason to
+      // re-ask every branch the slow way.
+      if (fast != null) return fast;
+    }
+
     final summaries = <String, BranchReviewSummary>{};
     final failures = <String, BranchReviewFailure>{};
     for (
@@ -3516,6 +3531,106 @@ printf '%s\n%s\n%s\n' "$top" "$git_dir" "$common_dir"
       final parsed = await _branchReviewBatch(repoPath, baseOid, batch);
       summaries.addAll(parsed.summariesByRefName);
       failures.addAll(parsed.failuresByRefName);
+    }
+    return BranchReviewBatchResult(
+      summariesByRefName: summaries,
+      failuresByRefName: failures,
+    );
+  }
+
+  /// Base-relative divergence for every local branch in **one** revision walk.
+  ///
+  /// `git for-each-ref --format='…%(ahead-behind:<base>)' refs/heads/` shares a
+  /// single traversal across all refs, where the fallback runs one
+  /// `git rev-list --left-right --count` per branch. No ref name and no branch
+  /// OID enters argv — the refs come back in *output* — which is a strictly
+  /// stronger form of the property the ordinal join was built for, and the base
+  /// is already validated as a full OID by the caller.
+  ///
+  /// **The two primitives disagree about field order, and this is the whole risk
+  /// of the path.** Verified against git 2.55.0:
+  ///
+  /// ```text
+  /// %(ahead-behind:HEAD~5)                  ->  "5 0"   ahead behind, space
+  /// rev-list --left-right --count A...B     ->  "0\t5"  behind ahead, tab
+  /// ```
+  ///
+  /// Returns null when the host could not answer in this shape — exit non-zero,
+  /// or a line this cannot parse — so the caller falls back. A branch that is
+  /// missing from the output, or whose tip moved since the caller's snapshot, is
+  /// reported as a [BranchReviewFailure] with the reason codes the batch parser
+  /// already uses.
+  Future<BranchReviewBatchResult?> _branchReviewFastPath(
+    String repoPath,
+    String baseOid,
+    List<({String refName, String oid})> branches,
+  ) async {
+    const sep = _branchReviewFieldSep;
+    final result = await _executor.execute(
+      repoPath: repoPath,
+      extraEnv: {...?_scopeEnvFor(repoPath), 'LC_ALL': 'C'},
+      gitArgs: [
+        'git',
+        'for-each-ref',
+        '--format=%(refname)$sep%(objectname)$sep%(ahead-behind:$baseOid)',
+        '--end-of-options',
+        'refs/heads/',
+      ],
+      timeout: branchReviewBatchTimeout,
+      retries: 0,
+      lane: ExecLane.read,
+    );
+    if (!result.isSuccess) return null;
+
+    // Ref names cannot contain a control character, so neither separator can
+    // collide with one: fields split on U+001F, records on newline.
+    final rows = <String, ({String oid, int ahead, int behind})>{};
+    for (final line in const LineSplitter().convert(result.stdout)) {
+      if (line.isEmpty) continue;
+      final fields = line.split(sep);
+      if (fields.length != 3) return null;
+      final counts = fields[2].split(' ');
+      if (counts.length != 2) return null;
+      final ahead = int.tryParse(counts[0]);
+      final behind = int.tryParse(counts[1]);
+      if (ahead == null || behind == null || ahead < 0 || behind < 0) {
+        return null;
+      }
+      rows[fields[0]] = (oid: fields[1], ahead: ahead, behind: behind);
+    }
+
+    final summaries = <String, BranchReviewSummary>{};
+    final failures = <String, BranchReviewFailure>{};
+    for (final branch in branches) {
+      final row = rows[branch.refName];
+      if (row == null) {
+        failures[branch.refName] = BranchReviewFailure(
+          refName: branch.refName,
+          branchOid: branch.oid,
+          reasonCode: 'missingRecord',
+        );
+        continue;
+      }
+      if (row.oid != branch.oid) {
+        // The ref moved between the caller's snapshot and this walk. The batch
+        // path computes against the OID it was handed and so cannot see this;
+        // here the counts describe a tip the caller did not ask about, and a
+        // wrong number is worse than a reported failure.
+        failures[branch.refName] = BranchReviewFailure(
+          refName: branch.refName,
+          branchOid: branch.oid,
+          reasonCode: 'oidMismatch',
+        );
+        continue;
+      }
+      summaries[branch.refName] = BranchReviewSummary(
+        refName: branch.refName,
+        shortName: branch.refName.replaceFirst('refs/heads/', ''),
+        branchOid: branch.oid,
+        baseOid: baseOid,
+        aheadOfBase: row.ahead,
+        behindBase: row.behind,
+      );
     }
     return BranchReviewBatchResult(
       summariesByRefName: summaries,

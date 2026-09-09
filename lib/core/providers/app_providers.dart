@@ -4000,12 +4000,22 @@ final branchReviewProvider = FutureProvider.autoDispose
       if (validLocals.isEmpty) {
         return BranchReviewBatchResult(failuresByRefName: invalidOidFailures);
       }
+      // `ref.read`, not `watch`: this family is already re-keyed by the refs
+      // fingerprint, and watching the version notifier would re-run it when the
+      // background probe lands. Versions arrive from `_refreshToolVersions`
+      // off the connect critical path, so a session's first Branches load takes
+      // the fallback and later ones take the fast path — deliberate, since the
+      // alternative is a probe on the connect path (MADR 0039 A1).
+      final fastPath = aheadBehindAtomForVersion(
+        ref.read(binaryEnvironmentProvider).versionOf('git'),
+      );
       final result = await ref
           .read(gitServiceProvider)
           .branchReviewSummaries(
             key.repoPath,
             baseOid: key.baseOid,
             branches: validLocals,
+            useAheadBehindAtom: fastPath,
           );
       final refsByName = {for (final gitRef in refs) gitRef.name: gitRef};
       return BranchReviewBatchResult(
@@ -4185,6 +4195,25 @@ final branchDiffProvider = FutureProvider.autoDispose
 
 /// Minimum Git for modern `merge-tree --write-tree` (not trivial-merge).
 const ToolVersion kMergeTreeMinGit = ToolVersion(2, 38);
+
+/// Minimum Git for `for-each-ref --format='%(ahead-behind:<committish>)'`,
+/// which lands in 2.41. It computes ahead/behind for every ref in ONE revision
+/// walk, where the fallback spawns a `git rev-list --left-right --count` per
+/// branch — 500 walks on the 500-ref fixture (MADR 0039 A1).
+const ToolVersion kAheadBehindAtomMinGit = ToolVersion(2, 41);
+
+/// Whether this host's Git has the `ahead-behind` ref-filter atom.
+///
+/// Returns **false**, not null, for a missing or unparseable version — and that
+/// is the deliberate difference from [mergePreviewCapabilityForVersion] directly
+/// below. Merge preview has no fallback, so "unknown" there is an error a caller
+/// must surface; this gates an *optimisation* whose fallback is the shipped
+/// code path, so "unknown" simply means take the slow road.
+bool aheadBehindAtomForVersion(String? versionString) {
+  if (versionString == null || versionString.isEmpty) return false;
+  final v = ToolVersion.parse(versionString);
+  return v != null && v >= kAheadBehindAtomMinGit;
+}
 
 /// Pure mapping from a landed/on-demand Git version string to capability.
 /// Returns null when [versionString] is null/unparseable — callers treat that

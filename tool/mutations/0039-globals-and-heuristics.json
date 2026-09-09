@@ -281,5 +281,59 @@
     "tests": [
       "test/ssh_command_executor_bucketing_test.dart"
     ]
+  },
+  {
+    "label": "a1: ahead and behind are transposed",
+    "file": "lib/core/git/git_service.dart",
+    "find": "      final ahead = int.tryParse(counts[0]);\n      final behind = int.tryParse(counts[1]);",
+    "replace": "      final behind = int.tryParse(counts[0]);\n      final ahead = int.tryParse(counts[1]);",
+    "tests": [
+      "test/branch_review_fast_path_test.dart"
+    ]
+  },
+  {
+    "label": "a1: the version gate is always on",
+    "file": "lib/core/providers/app_providers.dart",
+    "find": "  if (versionString == null || versionString.isEmpty) return false;\n  final v = ToolVersion.parse(versionString);\n  return v != null && v >= kAheadBehindAtomMinGit;",
+    "replace": "  return true;",
+    "tests": [
+      "test/branch_review_fast_path_test.dart"
+    ]
+  },
+  {
+    "label": "a1: the minimum version is lowered below the atom",
+    "file": "lib/core/providers/app_providers.dart",
+    "find": "const ToolVersion kAheadBehindAtomMinGit = ToolVersion(2, 41);",
+    "replace": "const ToolVersion kAheadBehindAtomMinGit = ToolVersion(2, 30);",
+    "tests": [
+      "test/branch_review_fast_path_test.dart"
+    ]
+  },
+  {
+    "label": "a1: a failed walk throws instead of falling back",
+    "file": "lib/core/git/git_service.dart",
+    "find": "    if (!result.isSuccess) return null;\n\n    // Ref names cannot contain a control character",
+    "replace": "    if (!result.isSuccess) {\n      throw GitException('for-each-ref ahead-behind failed', result);\n    }\n\n    // Ref names cannot contain a control character",
+    "tests": [
+      "test/branch_review_fast_path_test.dart"
+    ]
+  },
+  {
+    "label": "a1: a moved ref reports the current tip's counts anyway",
+    "file": "lib/core/git/git_service.dart",
+    "find": "      if (row.oid != branch.oid) {",
+    "replace": "      if (false && row.oid != branch.oid) {",
+    "tests": [
+      "test/branch_review_fast_path_test.dart"
+    ]
+  },
+  {
+    "label": "a1: the fast path is never taken",
+    "file": "lib/core/git/git_service.dart",
+    "find": "    if (useAheadBehindAtom) {",
+    "replace": "    if (false && useAheadBehindAtom) {",
+    "tests": [
+      "test/branch_review_fast_path_test.dart"
+    ]
   }
 ]

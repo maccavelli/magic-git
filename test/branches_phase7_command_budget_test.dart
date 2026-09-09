@@ -113,6 +113,7 @@ class _CountingGit extends GitService {
     String repoPath, {
     required String baseOid,
     required List<({String refName, String oid})> branches,
+    bool useAheadBehindAtom = false,
   }) async {
     ops.add('branchReviewSummaries:n=${branches.length}');
     // Batch size constant is the gate — large inputs must be chunked in service.
