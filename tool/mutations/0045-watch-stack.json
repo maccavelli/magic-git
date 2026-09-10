@@ -1,0 +1,57 @@
+[
+  {
+    "label": "p1: coherence accepts a release timeout at the grace",
+    "file": "lib/core/git/watch/watch_timings.dart",
+    "find": "    if (releaseTimeout >= admissionGrace)",
+    "replace": "    if (releaseTimeout > admissionGrace)",
+    "tests": [
+      "test/watch_timings_test.dart"
+    ]
+  },
+  {
+    "label": "p1: the splitter drops the trailing partial",
+    "file": "lib/core/git/watch/source/remote/record_splitter.dart",
+    "find": "    if (start > 0) _buffer = _buffer.substring(start);",
+    "replace": "    _buffer = '';",
+    "tests": [
+      "test/record_splitter_test.dart"
+    ]
+  },
+  {
+    "label": "p1: the reader forwards startup chatter",
+    "file": "lib/core/git/watch/source/remote/stderr_line_reader.dart",
+    "find": "            !isStartupNoise(line) &&\n",
+    "replace": "",
+    "tests": [
+      "test/stderr_line_reader_test.dart"
+    ]
+  },
+  {
+    "label": "p1: any line counts as the readiness marker",
+    "file": "lib/core/git/watch/source/remote/stderr_line_reader.dart",
+    "find": "      if (line == watchArmedMarker) {",
+    "replace": "      if (line.isNotEmpty) {",
+    "tests": [
+      "test/stderr_line_reader_test.dart",
+      "test/watch_arm_signal_test.dart"
+    ]
+  },
+  {
+    "label": "p1: a work-tree path re-arms a bounded surface",
+    "file": "lib/core/git/watch/source/surface_rearm_policy.dart",
+    "find": "    if (!bounded || !path.startsWith('.git/')) return;",
+    "replace": "    if (!bounded) return;",
+    "tests": [
+      "test/surface_rearm_policy_test.dart"
+    ]
+  },
+  {
+    "label": "p1: re-arms are not debounced",
+    "file": "lib/core/git/watch/source/surface_rearm_policy.dart",
+    "find": "    _timer?.cancel();\n    _timer = Timer(debounce, () {",
+    "replace": "    _timer = Timer(debounce, () {",
+    "tests": [
+      "test/surface_rearm_policy_test.dart"
+    ]
+  }
+]

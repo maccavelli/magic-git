@@ -5,6 +5,10 @@ import 'package:flutter/foundation.dart' show visibleForTesting;
 import '../ssh/shell_escaper.dart';
 import '../ssh/ssh_command_executor.dart';
 import 'bounded_watch.dart';
+import 'watch/source/remote/record_splitter.dart';
+import 'watch/source/remote/stderr_line_reader.dart';
+import 'watch/source/surface_rearm_policy.dart';
+import 'watch/watch_timings.dart';
 import 'watch_diagnostics.dart';
 import 'watch_event.dart';
 import 'watch_lifecycle.dart';
@@ -152,22 +156,6 @@ List<String> remoteWatcherArgs(
 /// for a process killed by a signal, so any in-band marker would collide with
 /// it (MADR 0044).
 typedef _ArmProbe = ({int? exit, bool ready});
-
-/// Lines `inotifywait` prints on every arm, which say nothing about this one.
-///
-/// The budget is [RemoteWatchService.maxDiagnosticLines] lines per arm, and
-/// these two spent two of them every time — and did it right where a real
-/// message lands. `--exclude: only the last option will be taken into
-/// consideration` was arriving on this channel for months, next to
-/// `Setting up watches`, and nobody read it (MADR 0041 F8). The one message
-/// that matters most, `upper limit on inotify watches reached`, arrives the
-/// same way.
-///
-/// Matched by prefix rather than by pattern: an exact, enumerated list of noise
-/// cannot accidentally swallow a message nobody has seen yet.
-bool _isWatcherStartupNoise(String line) =>
-    line.startsWith('Setting up watches') ||
-    line.startsWith('Watches established');
 
 /// One repository path's watcher, and every subscriber attached to it.
 ///
@@ -356,7 +344,7 @@ class RemoteWatchService {
   static int _defaultStreamBudget() => 2;
 
   /// Diagnostic lines reported per arm.
-  static const int maxDiagnosticLines = 20;
+  static const int maxDiagnosticLines = WatchTimings.defaultMaxDiagnosticLines;
 
   /// Channels reserved for the other two long-lived stream consumers: the CI
   /// job trace (`glab_service.dart`) and clone progress (`clone_controller`).
@@ -415,7 +403,8 @@ class RemoteWatchService {
   /// Proceeding anyway on expiry is deliberate: it yields today's behaviour — a
   /// possible race with a dying watcher — and never a repository that cannot be
   /// watched again because one teardown wedged.
-  static const Duration sharedTeardownGrace = Duration(minutes: 3);
+  static const Duration sharedTeardownGrace =
+      WatchTimings.defaultAdmissionGrace;
 
   /// Upper bound on how long an arm waits for either signal before giving up
   /// on both and treating the watcher as armed.
@@ -430,15 +419,16 @@ class RemoteWatchService {
   /// was paid by every arm that SUCCEEDED, which made it 63 % of the cost of a
   /// tab switch (MADR 0044 F7); this is paid only by an arm that has already
   /// gone wrong.
-  static const Duration armSignalCeiling = Duration(seconds: 2);
+  static const Duration armSignalCeiling = WatchTimings.defaultArmSignalCeiling;
 
   /// How often the client refreshes a watcher's heartbeat while it is alive.
-  static const Duration heartbeatInterval = Duration(seconds: 60);
+  static const Duration heartbeatInterval =
+      WatchTimings.defaultHeartbeatInterval;
 
   /// A heartbeat older than this means the client that armed the watcher is
   /// gone. Generously above [heartbeatInterval] so a slow link or a busy
   /// exclusive lane cannot orphan a live watcher.
-  static const Duration leaseStaleAfter = Duration(minutes: 5);
+  static const Duration leaseStaleAfter = WatchTimings.defaultLeaseStaleAfter;
 
   /// Registry paths for [repoPath], in the git-dir so they travel with the
   /// repository and never sit at a guessable /tmp path (0025 M4's lesson).
@@ -487,7 +477,7 @@ class RemoteWatchService {
             watcherSweepScript([entry.value], staleAfter: leaseStaleAfter),
           ],
           lane: ExecLane.isolated,
-          timeout: const Duration(seconds: 20),
+          timeout: WatchTimings.defaultSweepTimeout,
         );
       } catch (e) {
         onDiagnostic?.call('watcher sweep failed for ${entry.key}: $e');
@@ -531,15 +521,6 @@ class RemoteWatchService {
   @visibleForTesting
   static void resetWatcherCount() => _liveByHost.clear();
 
-  /// The token a refusing lock script names on stderr.
-  ///
-  /// Matches what `_lockPrelude` emits before exiting with
-  /// [boundedWatchLockedExit]. Read line by line by the arm's stderr listener
-  /// as it arrives, rather than by draining the stream after the refusal is
-  /// detected — which used to cost the refusal path its own 250 ms timeout, and
-  /// meant a second subscription on a single-subscription stream (MADR 0044).
-  static final RegExp _lockHeldBy = RegExp(r'mg-watch: lock held by (\S+)');
-
   /// Files one transition against [repoPath], stamping it with the live watcher
   /// count — the field that separates a leaked **slot** (H1: refusals persist
   /// with no watcher process alive) from a leaked **process** (H3). MADR 0026.
@@ -560,18 +541,6 @@ class RemoteWatchService {
           restarts: restarts,
         ),
       );
-
-  /// Cap on the un-delimited stdout buffer. A watcher tool that streams partial
-  /// output without ever emitting the record delimiter (a wedged or misbehaving
-  /// fswatch/inotifywait) would otherwise grow `buffer` without bound. Past this
-  /// we drop what's accumulated and resync on the next delimiter.
-  static const int _maxBufferChars = 1 << 20; // 1 MiB
-
-  /// How long a bounded watch waits after a git-state event before recomputing
-  /// its surface and re-arming. Long enough that one `git add`/commit — which
-  /// writes the index, refs and lock files in quick succession — costs a single
-  /// re-arm rather than one per write.
-  static const Duration _rearmDebounce = Duration(seconds: 2);
 
   /// Watches [repoPath] for changes.
   ///
@@ -611,11 +580,11 @@ class RemoteWatchService {
   Stream<RepoWatchEvent> watch(
     String repoPath, {
     BoundedWatchSpecSource? bounded,
-    Duration trailing = const Duration(milliseconds: 150),
-    Duration maxWait = const Duration(seconds: 1),
-    Duration minInterval = const Duration(seconds: 1),
-    Duration pollInterval = const Duration(seconds: 5),
-    Duration recoveryInterval = const Duration(minutes: 3),
+    Duration trailing = WatchTimings.defaultTrailing,
+    Duration maxWait = WatchTimings.defaultMaxWait,
+    Duration minInterval = WatchTimings.defaultMinInterval,
+    Duration pollInterval = WatchTimings.defaultPollInterval,
+    Duration recoveryInterval = WatchTimings.defaultRecoveryInterval,
   }) {
     final shared = _shared.putIfAbsent(repoPath, _SharedWatch.new);
     shared.build = () => _createLifecycle(
@@ -651,11 +620,11 @@ class RemoteWatchService {
   Stream<RepoWatchEvent> _createLifecycle(
     String repoPath, {
     BoundedWatchSpecSource? bounded,
-    Duration trailing = const Duration(milliseconds: 150),
-    Duration maxWait = const Duration(seconds: 1),
-    Duration minInterval = const Duration(seconds: 1),
-    Duration pollInterval = const Duration(seconds: 5),
-    Duration recoveryInterval = const Duration(minutes: 3),
+    Duration trailing = WatchTimings.defaultTrailing,
+    Duration maxWait = WatchTimings.defaultMaxWait,
+    Duration minInterval = WatchTimings.defaultMinInterval,
+    Duration pollInterval = WatchTimings.defaultPollInterval,
+    Duration recoveryInterval = WatchTimings.defaultRecoveryInterval,
   }) {
     // Cached across restarts within this stream's lifetime — the answer can't
     // change between one blip's retries, so there's no need to re-probe the
@@ -664,7 +633,9 @@ class RemoteWatchService {
     RemoteWatcherTool? cachedTool;
     // Debounces the deliberate re-arm below. Lives outside `arm` so it spans
     // re-arms; cancelled by every teardown.
-    Timer? rearmTimer;
+    final rearmPolicy = SurfaceRearmPolicy(
+      debounce: WatchTimings.defaultRearmDebounce,
+    );
     // Refreshes the watcher's heartbeat while this client is alive. The
     // watcher reads it and exits on its own when it goes stale, which is the
     // only thing that survives losing the channel (0025 A/C1).
@@ -785,7 +756,7 @@ class RemoteWatchService {
                   'touch ${ShellEscaper.escape(heartbeat)}',
                 ],
                 lane: ExecLane.isolated,
-                timeout: const Duration(seconds: 15),
+                timeout: WatchTimings.defaultReleaseTimeout,
               );
             } catch (_) {
               // Best-effort once the watcher is up. A missed beat costs nothing
@@ -821,7 +792,7 @@ class RemoteWatchService {
                       '${watchLockReleaseScript(lock)}',
                 ],
                 lane: ExecLane.isolated,
-                timeout: const Duration(seconds: 15),
+                timeout: WatchTimings.defaultReleaseTimeout,
               );
             } catch (_) {
               // See the doc comment: swallowing is the contract, not an
@@ -889,34 +860,26 @@ class RemoteWatchService {
           // heap (0024 H3) rather than lengthening it.
           final ready = Completer<void>();
           String? incumbent;
-          var diagnosticsSeen = 0;
-          var errBuffer = '';
+          // What each line MEANS is decided by the reader; what to do about it
+          // stays here, where the race and the diagnostics live (MADR 0045 F6).
+          final stderrLines = StderrLineReader(
+            maxDiagnosticLines: maxDiagnosticLines,
+            maxBufferChars: WatchTimings.defaultMaxBufferChars,
+          );
           final errSub = handle.stderr.listen((chunk) {
-            errBuffer += chunk;
-            var start = 0;
-            var i = errBuffer.indexOf('\n', start);
-            while (i >= 0) {
-              final line = errBuffer.substring(start, i).trim();
-              start = i + 1;
-              if (line == watchArmedMarker) {
-                // The arm succeeded. Not a diagnostic: it is addressed to this
-                // client, not to the user.
-                if (!ready.isCompleted) ready.complete();
-              } else {
-                final held = _lockHeldBy.firstMatch(line);
-                if (held != null) incumbent ??= held[1];
-                if (line.isNotEmpty &&
-                    !_isWatcherStartupNoise(line) &&
-                    diagnosticsSeen < maxDiagnosticLines) {
-                  diagnosticsSeen++;
-                  developer.log(line, name: 'RemoteWatchService');
-                  onDiagnostic?.call(line);
-                }
+            for (final line in stderrLines.add(chunk)) {
+              switch (line) {
+                case ReadinessMarker():
+                  // The arm succeeded. Not a diagnostic: it is addressed to
+                  // this client, not to the user.
+                  if (!ready.isCompleted) ready.complete();
+                case LockHeldBy(:final token):
+                  incumbent ??= token;
+                case Diagnostic(line: final text):
+                  developer.log(text, name: 'RemoteWatchService');
+                  onDiagnostic?.call(text);
               }
-              i = errBuffer.indexOf('\n', start);
             }
-            if (start > 0) errBuffer = errBuffer.substring(start);
-            if (errBuffer.length > _maxBufferChars) errBuffer = '';
           }, onError: (Object _) {});
 
           // A script-level refusal arrives as an exit STATUS, not an exception:
@@ -1022,23 +985,24 @@ class RemoteWatchService {
             }
           }
 
-          var buffer = '';
           final delimiter = tool == RemoteWatcherTool.fswatch ? '\u0000' : '\n';
+          // Linear splitting lives in the splitter now (0024 A1). Past the cap
+          // the watcher is emitting output that never completes a record: drop
+          // the partial and resync on the next delimiter rather than buffering
+          // unbounded.
+          final records = RecordSplitter(
+            delimiter: delimiter,
+            maxBufferChars: WatchTimings.defaultMaxBufferChars,
+            onOverflow: () => developer.log(
+              'watcher output exceeded ${WatchTimings.defaultMaxBufferChars} '
+              'chars with no delimiter; dropping buffered partial',
+              name: 'RemoteWatchService',
+            ),
+          );
           final sub = handle.stdout.listen(
             (chunk) {
               hooks.noteActivity();
-              buffer += chunk;
-              // Cursor, not repeated re-slicing. `buffer = buffer.substring(...)`
-              // per record copies the whole remainder AND restarts the scan at 0,
-              // which is quadratic in the arriving chunk — measured at 522 ms of
-              // UI-isolate time for a 20k-event `git checkout` burst at
-              // dartssh2's 32 KiB packet size, against ~1 ms here (0024 A1).
-              // One remainder copy per chunk instead of one per record.
-              var start = 0;
-              var idx = buffer.indexOf(delimiter, start);
-              while (idx >= 0) {
-                final event = buffer.substring(start, idx);
-                start = idx + 1;
+              for (final event in records.add(chunk)) {
                 // Bounded mode watches absolute paths; remap them to the
                 // repo-relative (`.git/…` for git-dir) shape the filter expects.
                 // Recursive mode already emits repo-relative paths (cwd = repo).
@@ -1051,28 +1015,13 @@ class RemoteWatchService {
                   // change can mean "there are now tracked files in directories
                   // this arming does not cover". Recompute and re-arm, debounced
                   // — one `git add` writes the index several times (0022 H5).
-                  if (spec != null && path.startsWith('.git/')) {
-                    rearmTimer?.cancel();
-                    rearmTimer = Timer(_rearmDebounce, () {
-                      if (hooks.isCancelled()) return;
-                      hooks.rearm();
-                    });
-                  }
+                  rearmPolicy.onPath(
+                    path,
+                    bounded: spec != null,
+                    rearm: hooks.rearm,
+                    cancelled: hooks.isCancelled,
+                  );
                 }
-                idx = buffer.indexOf(delimiter, start);
-              }
-              if (start > 0) buffer = buffer.substring(start);
-              // Whatever remains is an unterminated partial record. If it has
-              // grown past a sane bound, the watcher is emitting output that
-              // never completes a record — drop it and resync on the next
-              // delimiter rather than buffering unbounded.
-              if (buffer.length > _maxBufferChars) {
-                developer.log(
-                  'watcher output exceeded $_maxBufferChars chars with no '
-                  'delimiter; dropping buffered partial',
-                  name: 'RemoteWatchService',
-                );
-                buffer = '';
               }
             },
             // WHY the stream ended, filed before the engine turns it into a
@@ -1106,8 +1055,7 @@ class RemoteWatchService {
             releaseSlot();
             heartbeatTimer?.cancel();
             heartbeatTimer = null;
-            rearmTimer?.cancel();
-            rearmTimer = null;
+            rearmPolicy.cancel();
             // Cancel the stdout subscription *before* the handle, mirroring the
             // engine's source-before-coalescer ordering.
             await sub.cancel();

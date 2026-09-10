@@ -3,6 +3,8 @@ import 'dart:developer' as developer;
 import 'dart:io';
 import '../local/linked_worktree_probe.dart';
 import 'bounded_watch.dart';
+import 'watch/source/surface_rearm_policy.dart';
+import 'watch/watch_timings.dart';
 import 'watch_diagnostics.dart';
 import 'watch_event.dart';
 import 'watch_lifecycle.dart';
@@ -175,20 +177,14 @@ class LocalWatchService {
   /// such; an ordinary repo leaves it null and behaves exactly as before. Mirror
   /// of [RemoteWatchService.watch]'s `bounded` so the DI hub can pick the backend
   /// without either caring which it got.
-  /// How long a bounded watch waits after a git-state event before recomputing
-  /// its surface and re-arming. Matches the remote twin: one `git add` writes
-  /// the index, refs and lock files in quick succession, and should cost a
-  /// single re-arm rather than one per write.
-  static const Duration _rearmDebounce = Duration(seconds: 2);
-
   Stream<RepoWatchEvent> watch(
     String repoPath, {
     BoundedWatchSpecSource? bounded,
-    Duration trailing = const Duration(milliseconds: 150),
-    Duration maxWait = const Duration(seconds: 1),
-    Duration minInterval = const Duration(seconds: 1),
-    Duration pollInterval = const Duration(seconds: 5),
-    Duration recoveryInterval = const Duration(minutes: 3),
+    Duration trailing = WatchTimings.defaultTrailing,
+    Duration maxWait = WatchTimings.defaultMaxWait,
+    Duration minInterval = WatchTimings.defaultMinInterval,
+    Duration pollInterval = WatchTimings.defaultPollInterval,
+    Duration recoveryInterval = WatchTimings.defaultRecoveryInterval,
   }) {
     // An ORDINARY repo's roots are resolved once: the layout of a checkout
     // can't change while it's open (only `worktree move`/`repair` does that,
@@ -201,7 +197,9 @@ class LocalWatchService {
     // rebuilt (0022 H5).
     final fixedRoots = bounded == null ? _rootsFor(repoPath) : null;
     // Debounces the deliberate re-arm; spans re-arms, cancelled by teardown.
-    Timer? rearmTimer;
+    final rearmPolicy = SurfaceRearmPolicy(
+      debounce: WatchTimings.defaultRearmDebounce,
+    );
 
     return watchLifecycle(
       trailing: trailing,
@@ -218,8 +216,7 @@ class LocalWatchService {
 
         final subs = <StreamSubscription<FileSystemEvent>>[];
         Future<void> teardown() async {
-          rearmTimer?.cancel();
-          rearmTimer = null;
+          rearmPolicy.cancel();
           for (final sub in subs) {
             await sub.cancel();
           }
@@ -240,13 +237,12 @@ class LocalWatchService {
                         // See the remote twin: a bounded surface derives from
                         // the index, so a git-state write can mean the surface
                         // is now too small. Recompute and re-arm, debounced.
-                        if (spec != null && path.startsWith('.git/')) {
-                          rearmTimer?.cancel();
-                          rearmTimer = Timer(_rearmDebounce, () {
-                            if (hooks.isCancelled()) return;
-                            hooks.rearm();
-                          });
-                        }
+                        rearmPolicy.onPath(
+                          path,
+                          bounded: spec != null,
+                          rearm: hooks.rearm,
+                          cancelled: hooks.isCancelled,
+                        );
                       }
                       // A move has both a source and a destination. The source may be
                       // a transient lock (e.g. `.git/index.lock`) that

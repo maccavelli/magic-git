@@ -37,9 +37,9 @@
  },
  {
   "label": "p2: the marker is treated as startup noise, so nothing settles a healthy arm",
-  "file": "lib/core/git/remote_watch_service.dart",
-  "find": "              if (line == watchArmedMarker) {",
-  "replace": "              if (_isWatcherStartupNoise(line)) {",
+  "file": "lib/core/git/watch/source/remote/stderr_line_reader.dart",
+  "find": "      if (line == watchArmedMarker) {",
+  "replace": "      if (isStartupNoise(line)) {",
   "tests": [
    "test/watch_arm_signal_test.dart"
   ]
@@ -56,8 +56,8 @@
  {
   "label": "p2: the incumbent is captured but never kept",
   "file": "lib/core/git/remote_watch_service.dart",
-  "find": "                if (held != null) incumbent ??= held[1];",
-  "replace": "                if (held != null) incumbent ??= incumbent;",
+  "find": "                  incumbent ??= token;",
+  "replace": "                  incumbent ??= incumbent;",
   "tests": [
    "test/watch_arm_signal_test.dart",
    "test/watch_lease_release_test.dart"

@@ -1,4 +1,5 @@
 import '../ssh/shell_escaper.dart';
+import 'watch/watch_timings.dart';
 
 /// Bounded watch surface for a **scoped work-tree repo** — the dotfiles pattern
 /// where a single git-dir (e.g. `~/.home.git`) has its work tree set to a huge
@@ -177,7 +178,7 @@ const int boundedWatchLockedExit = 98;
 /// established" — exactly what the fixed 250 ms wait it replaces established,
 /// which only ever proved "no refusal within 250 ms" (MADR 0044 amendment
 /// 0044.1). `inotifywait` does print `Watches established.`, and
-/// `_isWatcherStartupNoise` already recognises it, but `fswatch` prints no
+/// `StderrLineReader.isStartupNoise` recognises it, but `fswatch` prints no
 /// equivalent — so it cannot be the signal for both backends.
 const String watchArmedMarker = 'mg-watch: armed';
 
@@ -356,8 +357,8 @@ String boundedInotifyScript(
   String? pidFile,
   String? heartbeat,
   WatchLock? lock,
-  Duration leasePoll = const Duration(seconds: 60),
-  Duration staleAfter = const Duration(minutes: 5),
+  Duration leasePoll = WatchTimings.defaultHostLeasePoll,
+  Duration staleAfter = WatchTimings.defaultLeaseStaleAfter,
 }) {
   final joined = watchDirs.map(ShellEscaper.escape).join(' ');
   const fmt = '-m -e modify,create,delete,move --format %w%f';
@@ -411,8 +412,8 @@ String boundedFswatchScript(
   String? pidFile,
   String? heartbeat,
   WatchLock? lock,
-  Duration leasePoll = const Duration(seconds: 60),
-  Duration staleAfter = const Duration(minutes: 5),
+  Duration leasePoll = WatchTimings.defaultHostLeasePoll,
+  Duration staleAfter = WatchTimings.defaultLeaseStaleAfter,
 }) {
   final joined = watchDirs.map(ShellEscaper.escape).join(' ');
   final prelude =
@@ -568,8 +569,8 @@ String recursiveWatchScript({
   String? pidFile,
   String? heartbeat,
   WatchLock? lock,
-  Duration leasePoll = const Duration(seconds: 60),
-  Duration staleAfter = const Duration(minutes: 5),
+  Duration leasePoll = WatchTimings.defaultHostLeasePoll,
+  Duration staleAfter = WatchTimings.defaultLeaseStaleAfter,
 }) {
   // The claim comes BEFORE the pid file, so a refusal leaves nothing behind.
   final prelude =

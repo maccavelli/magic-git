@@ -66,7 +66,7 @@
     "label": "p2: a failing lease removal escapes the teardown",
     "file": "lib/core/git/remote_watch_service.dart",
     "find": "            } catch (_) {\n              // See the doc comment: swallowing is the contract, not an\n              // oversight.\n            }",
-    "replace": "            } on _NeverThrown catch (_) {\n            }",
+    "replace": "            } on FormatException catch (_) {\n            }",
     "tests": [
       "test/watch_lease_release_test.dart"
     ]
@@ -226,17 +226,17 @@
   },
   {
     "label": "p5: a real stderr message is filtered as startup noise",
-    "file": "lib/core/git/remote_watch_service.dart",
-    "find": "    line.startsWith('Setting up watches') ||\n    line.startsWith('Watches established');",
-    "replace": "    line.startsWith('Setting up watches') ||\n    line.startsWith('Watches established') ||\n    line.startsWith('--exclude');",
+    "file": "lib/core/git/watch/source/remote/stderr_line_reader.dart",
+    "find": "      line.startsWith('Setting up watches') ||\n      line.startsWith('Watches established');",
+    "replace": "      line.startsWith('Setting up watches') ||\n      line.startsWith('Watches established') ||\n      line.startsWith('--exclude');",
     "tests": [
       "test/remote_watch_service_test.dart"
     ]
   },
   {
     "label": "p5: startup noise is forwarded again and spends the log budget",
-    "file": "lib/core/git/remote_watch_service.dart",
-    "find": "                  !_isWatcherStartupNoise(line) &&\n",
+    "file": "lib/core/git/watch/source/remote/stderr_line_reader.dart",
+    "find": "            !isStartupNoise(line) &&\n",
     "replace": "",
     "tests": [
       "test/remote_watch_service_test.dart"

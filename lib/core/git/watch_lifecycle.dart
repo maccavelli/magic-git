@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'coalescer.dart';
+import 'watch/watch_timings.dart';
 import 'watch_diagnostics.dart';
 import 'watch_event.dart';
 
@@ -139,13 +140,13 @@ class WatchHooks {
 ///   everything.
 Stream<RepoWatchEvent> watchLifecycle({
   required Future<WatchArm> Function(WatchHooks hooks) arm,
-  Duration trailing = const Duration(milliseconds: 150),
-  Duration maxWait = const Duration(seconds: 1),
-  Duration minInterval = const Duration(seconds: 1),
-  Duration pollInterval = const Duration(seconds: 5),
-  Duration recoveryInterval = const Duration(minutes: 3),
+  Duration trailing = WatchTimings.defaultTrailing,
+  Duration maxWait = WatchTimings.defaultMaxWait,
+  Duration minInterval = WatchTimings.defaultMinInterval,
+  Duration pollInterval = WatchTimings.defaultPollInterval,
+  Duration recoveryInterval = WatchTimings.defaultRecoveryInterval,
   void Function()? onPollingRecoveryAttempt,
-  int maxRestarts = 3,
+  int maxRestarts = WatchTimings.defaultMaxRestarts,
 
   /// Records mode transitions for diagnosis (MADR 0026). Purely
   /// observational: every transition reported here already happened, and
@@ -190,7 +191,7 @@ Stream<RepoWatchEvent> watchLifecycle({
   // tick fires with this empty, which is exactly the documented "unknown
   // scope".
   final pending = <String>{};
-  const maxPaths = 512;
+  const maxPaths = WatchTimings.defaultMaxPathsPerTick;
   var overflowed = false;
 
   void emit() {
@@ -254,7 +255,7 @@ Stream<RepoWatchEvent> watchLifecycle({
     emit();
     restarts++;
     restartTimer?.cancel();
-    restartTimer = Timer(Duration(seconds: restarts * 2), () {
+    restartTimer = Timer(WatchTimings.defaultRestartBackoffStep * restarts, () {
       if (cancelled || controller.isClosed) return;
       start().catchError((_) => scheduleRestart());
     });
