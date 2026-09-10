@@ -156,6 +156,34 @@ const int boundedWatchNoPathsExit = 97;
 /// doomed restarts first.
 const int boundedWatchLockedExit = 98;
 
+/// The line a watcher writes to **stderr** once it holds every claim it needs
+/// and its watcher process has been started.
+///
+/// stderr, not stdout, for three reasons that all matter. stdout is the event
+/// channel and is parsed as delimited records, so a marker there would have to
+/// be filtered out of every event path. stderr is unbuffered by POSIX, so the
+/// line leaves the host the moment it is written rather than sitting in a stdio
+/// buffer the way inotifywait's own output does without `stdbuf -oL`. And there
+/// is already a precedent for a script-authored line the client matches —
+/// `_lockPrelude` writes `mg-watch: lock held by $o` here.
+///
+/// **Its position in the script is the whole guarantee.** Both refusals exit
+/// before it: [boundedWatchNoPathsExit] from the existence filter, and
+/// [boundedWatchLockedExit] from `_lockPrelude`. So this line cannot be
+/// produced by an arm that was refused, which makes the client's race
+/// well-ordered rather than a matter of timing.
+///
+/// It says "the watcher process was started", not "the watches are
+/// established" — exactly what the fixed 250 ms wait it replaces established,
+/// which only ever proved "no refusal within 250 ms" (MADR 0044 amendment
+/// 0044.1). `inotifywait` does print `Watches established.`, and
+/// `_isWatcherStartupNoise` already recognises it, but `fswatch` prints no
+/// equivalent — so it cannot be the signal for both backends.
+const String watchArmedMarker = 'mg-watch: armed';
+
+/// Shell that announces [watchArmedMarker] on stderr.
+String _armedMarker() => 'echo ${ShellEscaper.escape(watchArmedMarker)} >&2; ';
+
 /// One repository's exclusive claim, held by one watcher instance.
 ///
 /// [gitDir] is where the claim lives — beside the registry files, so it travels
@@ -312,6 +340,7 @@ String _leaseLoop({
       'trap cleanup TERM INT HUP; '
       '{ $leaseAlive; } || { ${release}exit 0; }; '
       '{ $inner; } & w=\$!; '
+      '${_armedMarker()}'
       '( cat <&3 >/dev/null 2>&1; kill -TERM "\$\$" 2>/dev/null ) & e=\$!; '
       '( while :; do '
       'kill -0 "\$w" 2>/dev/null || exit 0; '
@@ -346,6 +375,7 @@ String boundedInotifyScript(
   if (heartbeat == null) {
     // Unchanged legacy form for callers that supply no lease.
     return '$prelude'
+        '${_armedMarker()}'
         'if command -v stdbuf >/dev/null 2>&1; then '
         'exec stdbuf -oL inotifywait $fmt "\$@"; '
         'else exec inotifywait $fmt "\$@"; fi';
@@ -395,7 +425,7 @@ String boundedFswatchScript(
       '${lock == null ? '' : _lockPrelude(lock, staleAfter: staleAfter)}'
       '${_recordPid(pidFile)}';
   if (heartbeat == null) {
-    return '${prelude}exec fswatch -0 --latency 0.5 "\$@"';
+    return '$prelude${_armedMarker()}exec fswatch -0 --latency 0.5 "\$@"';
   }
   // The `timeout` wrapper is gone, and with it the caveat that a bare macOS
   // host without coreutils could not self-terminate: fswatch has no `-t` of its

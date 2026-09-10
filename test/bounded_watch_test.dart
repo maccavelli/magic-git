@@ -176,10 +176,20 @@ void main() {
       expect(s, contains(r'$$'));
     });
 
-    test('no pid file means the script is unchanged', () {
+    test('no pid file means no registry file is referenced', () {
       // The recursive (non-bounded) path and every existing caller must keep
       // working untouched.
-      expect(boundedInotifyScript(['/r/.git']), isNot(contains('mg-watch')));
+      //
+      // Named for the registry, not for a prefix. This asserted
+      // `isNot(contains('mg-watch'))` until MADR 0044 added a readiness marker
+      // that legitimately writes `mg-watch: armed` to stderr, and the test
+      // failed on a string that shares six characters with what it guards.
+      // The invariant was always "an unleased arm claims no registry file", so
+      // the registry paths are what it names now.
+      final s = boundedInotifyScript(['/r/.git']);
+      expect(s, isNot(contains('mg-watch.')));
+      expect(s, isNot(contains('.pid')));
+      expect(s, isNot(contains('.hb')));
     });
 
     test('the sweep script is built from the paths it was given', () {

@@ -548,4 +548,122 @@ void main() {
       p.kill(ProcessSignal.sigkill);
     });
   });
+  // MADR 0044 phase 1. The client settles an arm on whichever arrives first —
+  // a refusal exit status, or this marker — instead of waiting a fixed 250 ms
+  // for an exit that a healthy watcher never produces. The race is only
+  // well-ordered because of WHERE the marker sits in the script: after both
+  // refusals, after the claim, after the watcher is started. That is a property
+  // of a running shell, not of the script's text, so these execute it.
+
+  group('the readiness marker', () {
+    WatchLock lockFor(String token) =>
+        (gitDir: '${dir.path}/.git', token: token);
+
+    test('a refused arm emits no readiness marker', () async {
+      File('${dir.path}/.git/mg-watch.a.hb').writeAsStringSync('');
+      final first = await start(token: 'a', lock: lockFor('a'));
+      expect(await settles(() async => arms() == 1), isTrue);
+
+      File('${dir.path}/.git/mg-watch.b.hb').writeAsStringSync('');
+      final second = await start(token: 'b', lock: lockFor('b'));
+      final err = await second.stderr
+          .transform(const SystemEncoding().decoder)
+          .join();
+      final code = await second.exitCode.timeout(const Duration(seconds: 10));
+
+      expect(code, boundedWatchLockedExit);
+      expect(err, contains('lock held by a'));
+      expect(
+        err,
+        isNot(contains(watchArmedMarker)),
+        reason:
+            'the marker is what tells the client an arm succeeded. A refusal '
+            'that emitted it would be read as a live watcher, and the '
+            'exclusion this lock exists for would silently stop working',
+      );
+      first.kill(ProcessSignal.sigkill);
+    });
+
+    test('an arm with no watchable paths emits no readiness marker', () async {
+      // The other refusal, and the earlier one: the existence filter runs
+      // before the lock is even attempted, so this arm claims nothing at all.
+      final p = await Process.start('sh', [
+        '-c',
+        boundedInotifyScript(
+          ['${dir.path}/nope', '${dir.path}/also-nope'],
+          pidFile: pidPath(),
+          heartbeat: hbPath(),
+          lock: lockFor('t'),
+        ),
+      ], workingDirectory: dir.path);
+      spawned.add(p);
+
+      final err = await p.stderr
+          .transform(const SystemEncoding().decoder)
+          .join();
+      final code = await p.exitCode.timeout(const Duration(seconds: 10));
+
+      expect(code, boundedWatchNoPathsExit);
+      expect(err, isNot(contains(watchArmedMarker)));
+      expect(
+        Directory('${dir.path}/.git/mg-watch.lock').existsSync(),
+        isFalse,
+        reason: 'a repo with nothing to watch never takes a lock it cannot use',
+      );
+    });
+
+    test('a live arm emits the marker, and only after it has claimed', () async {
+      File(hbPath()).writeAsStringSync('');
+      final p = await start(lock: lockFor('t'));
+      // Collected as it arrives, so the marker can be observed while the
+      // process is still running. `join()` waits for the stream to close,
+      // which for a live watcher never happens.
+      final err = StringBuffer();
+      final sub = p.stderr
+          .transform(const SystemEncoding().decoder)
+          .listen(err.write);
+
+      expect(
+        await settles(() async => err.toString().contains(watchArmedMarker)),
+        isTrue,
+        reason: 'a healthy arm announces itself rather than being inferred '
+            'from the absence of a refusal',
+      );
+
+      // WHERE it sits, which is the whole guarantee. By the time the marker is
+      // out, the lock is held, the pid is recorded, and the watcher is running
+      // — so a client that acts on it is acting on a watcher that exists.
+      expect(await isAlive(p.pid), isTrue);
+      expect(File(pidPath()).existsSync(), isTrue);
+      expect(Directory('${dir.path}/.git/mg-watch.lock').existsSync(), isTrue);
+
+      // The watcher itself may not have run yet — on the first pass this
+      // asserted `arms() == 1` outright and read 0. That is the marker being
+      // honest about what it claims: the watcher was STARTED, not that it has
+      // established its watches. The same guarantee the fixed 250 ms wait
+      // gave, which only ever proved "no refusal within 250 ms" — and the
+      // reason the marker costs nothing, since it never waits for the walk.
+      expect(await settles(() async => arms() == 1), isTrue);
+
+      await sub.cancel();
+      p.kill(ProcessSignal.sigkill);
+    });
+
+    test('a stale lease exits before the marker', () async {
+      // The lease-alive check sits between the claim and the marker. This exit
+      // is a plain 0, so the client reads it as a watcher that armed and died
+      // — unchanged from before, and stated here so the ordering is pinned
+      // rather than assumed.
+      File(hbPath()).writeAsStringSync('');
+      await Process.run('touch', ['-t', '202001010000', hbPath()]);
+      final p = await start(lock: lockFor('t'));
+      final err = await p.stderr
+          .transform(const SystemEncoding().decoder)
+          .join();
+      await p.exitCode.timeout(const Duration(seconds: 10));
+
+      expect(err, isNot(contains(watchArmedMarker)));
+      expect(arms(), 0);
+    });
+  });
 }
