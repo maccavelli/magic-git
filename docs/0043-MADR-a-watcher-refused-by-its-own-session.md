@@ -155,9 +155,26 @@ the lock.
 
 **This is not what happened in the observed incident**, and the record should
 say so plainly: this ordering fires `onCancel` (and therefore records `stopped`)
-*before* the new arm, and F1's log has no `stopped`. It is included because it is
-a second, independently reachable route to the same collision, it is
-demonstrated rather than argued, and any fix must close it too.
+*before* the new arm, and F1's log has no `stopped`.
+
+Both rebuild routes were measured and both order the same way — `invalidate()`
+on the provider itself, and a change to a watched dependency:
+
+```text
+teardown-start:1     <- onCancel first, in BOTH cases
+ARM-start:2
+ARM-done:2
+teardown-done:1
+```
+
+So **no Riverpod rebuild can produce F1's record pair**, because every one of
+them records `stopped` before the new arm. That narrows F9 usefully: the second
+subscription was not a replacement for the first, it was *concurrent with* it.
+Two live subscriptions, both wanted, at the same time.
+
+The route is included because it is a second, independently reachable way to
+collide — the new arm completes entirely inside the old teardown's window — and
+any fix must close it too.
 
 ### F4 — The host lock releases quickly; the window is real but short
 
@@ -322,40 +339,69 @@ rather than to enumerate its origins. Naming the trigger would let it be fixed
 
 ## Decision Outcome
 
-Chosen option: **C and D together** — a per-repository-path serialisation gate
-in `RemoteWatchService`, and a teardown that does not report completion until the
-host-side lock it held is actually gone.
+Chosen option: **C and D together, with C read as *sharing* rather than merely
+queueing** — one watcher per repository path per service, additional subscribers
+attached to it rather than arming their own; plus a teardown that does not report
+completion until the host-side lock it held is actually gone.
 
-Neither is sufficient alone, which is why both are chosen:
+**A correction, made while planning this work and recorded here rather than
+buried.** An earlier draft of this outcome read C as "serialise arms per path:
+make a new arm wait for the previous one's teardown." That closes F3's route and
+does nothing whatever for the incident actually reported. F1 establishes that the
+first watcher was **still running** — not tearing down — when the second was
+refused. There is no teardown in flight for a queue to wait on. A gate keyed on
+teardowns would have shipped, passed its tests, and left the reported symptom
+exactly as it is.
 
-* **C without D** gates a new arm behind the previous teardown's *future*, but
-  that future currently completes while the remote process is still running
-  (F4). The gate would let the arm through into the same window.
-* **D without C** makes teardown honest, but nothing awaits it across instances
-  — generation 2 never had a reference to generation 1's teardown future in the
-  first place (F3). The guarantee would exist and go unused.
+The distinction is between two collisions that look identical from the host:
 
-Together they compose into one property: **by the time an arm for a repository
-path begins, every previous arm for that path from this process has released its
-host-side lock.**
+| | First watcher | What the second must do |
+| --- | --- | --- |
+| **Coexistence** (F1, F2 — the reported incident) | alive, staying alive | attach to it; never arm |
+| **Teardown seam** (F3) | dying, lock not yet released | wait for the release, then arm |
+
+So the fix has two halves, and each covers a case the other cannot:
+
+* **Sharing** covers coexistence. A second `watch()` for a path this service is
+  already watching returns the *same* underlying watcher's events. No second
+  arm, no second token, no second slot, no refusal.
+* **The teardown gate + awaited lock release** covers the seam. When the last
+  subscriber leaves and a new one arrives before teardown has finished, the new
+  arm waits for the lock to be genuinely released rather than racing it (F4's
+  sub-second window).
+
+Together: **this process arms at most one watcher per repository path, and never
+begins an arm while a previous arm for that path still holds its lock.**
 
 Sketch, to be settled in the plan:
 
-1. `RemoteWatchService` keeps a per-`(host, gitDir)` chain of in-flight
-   teardowns — keyed by git dir rather than `repoPath`, since the git dir is what
-   the lock is keyed by, and two path spellings that resolve to one git dir
-   contend for one lock (F9).
-2. `arm()` awaits that chain before it opens its stream. Bounded, so a teardown
+1. `RemoteWatchService` holds one shared watch per `repoPath`, created on the
+   first subscriber and torn down when the last one leaves. Dart's
+   `StreamController.broadcast` already provides exactly that refcount through
+   its `onListen`/`onCancel`, so this is a small amount of new machinery rather
+   than a new lifecycle.
+2. A late subscriber receives the current `RepoWatchEvent` immediately, so its
+   mode indicator is correct without waiting for the next tick — the shared
+   watch retains the last event for replay.
+3. The teardown future is retained; a `watch()` arriving for that path while it
+   is pending awaits it before creating a new lifecycle. Bounded, so a teardown
    that never completes degrades to today's behaviour rather than hanging a
-   repository forever — a timeout here yields the current race, not a worse
-   state.
-3. The `WatchArmed` teardown releases the lock explicitly and **awaited**,
+   repository forever — a timeout yields the current race, not a worse state.
+4. The `WatchArmed` teardown releases the lock explicitly and **awaited**,
    guarded by token ownership exactly as the host-side `cleanup()` trap is:
    remove the lock directory only while it still names this token. The client
    already knows the git dir and its own token, and already issues a comparable
    removal for the heartbeat.
-4. The heartbeat removal moves out of the `WatchArmed` closure so the refusal
+5. The heartbeat removal moves out of the `WatchArmed` closure so the refusal
    path can use it too, closing F6.
+
+**Deliberately not process-wide.** Sharing is scoped to one service instance,
+which is one connection, which is one tab. Two tabs on one repository still
+collide on the host lock, and that is correct — they are different sessions with
+different connections, and MADR 0041 F12 built the lock for exactly that. It
+also means a service rebuild (a new executor after a reconnect) starts with an
+empty map, so sharing does not span reconnects; the teardown gate and the lock
+cover that seam.
 
 The host-side lock stays exactly as it is. Its job becomes what it was designed
 for: refusing a genuinely foreign session.
