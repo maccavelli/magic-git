@@ -1,5 +1,5 @@
 ---
-status: "proposed"
+status: "accepted"
 date: 2026-09-10
 decision-makers: [Maintainer]
 consulted: []
@@ -415,6 +415,8 @@ migration and are retired at the end.
   so that the class disappears first.
 
 ### Migration sequence (the plan holds the detail)
+
+The executable detail — files, steps, tests, catalogue changes and acceptance per phase — is [0045-PLAN-one-owner-per-watcher-concern.md](0045-PLAN-one-owner-per-watcher-concern.md).
 
 1. **Foundations, no behaviour change:** `WatchTimings`, `WatchTarget` and `WatcherId`;
    the pure units `RecordSplitter`, `StderrLineReader` and `SurfaceRearmPolicy`,
