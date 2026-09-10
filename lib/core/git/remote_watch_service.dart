@@ -162,6 +162,100 @@ bool _isWatcherStartupNoise(String line) =>
     line.startsWith('Setting up watches') ||
     line.startsWith('Watches established');
 
+/// One repository path's watcher, and every subscriber attached to it.
+///
+/// The refcount is not hand-rolled: a broadcast [StreamController] already
+/// calls `onListen` when its FIRST listener arrives and `onCancel` when its
+/// LAST one leaves, which is exactly "build on first subscriber, tear down on
+/// last". Counting by hand would mean getting the same thing right a second
+/// time, in a class whose whole purpose is that one watcher exists.
+///
+/// See [RemoteWatchService.watch] for why one watcher per path is a
+/// correctness requirement rather than a saving (MADR 0043).
+class _SharedWatch {
+  /// Builds a fresh watcher for this path. Replaced by every
+  /// [RemoteWatchService.watch] call so the next build uses the latest
+  /// caller's parameters — a rebuilt provider hands over a new `bounded`
+  /// closure over new dependencies, and building the next watcher from the
+  /// first caller's stale one would watch the wrong surface.
+  late Stream<RepoWatchEvent> Function() build;
+
+  /// Cancelled by [_detach] when the last subscriber leaves; the analyzer
+  /// cannot see a cancel that happens in a sibling method.
+  // ignore: cancel_subscriptions
+  StreamSubscription<RepoWatchEvent>? _source;
+
+  /// The most recent event, replayed to a subscriber that arrives after it.
+  ///
+  /// `watchLifecycle` emits once on arm and then only on real events or poll
+  /// ticks, so without this a subscriber attaching to an already-armed,
+  /// quiet repository would sit with no mode at all until something happened.
+  RepoWatchEvent? _last;
+
+  late final StreamController<RepoWatchEvent> _out =
+      StreamController<RepoWatchEvent>.broadcast(
+        onListen: _attach,
+        onCancel: _detach,
+      );
+
+  /// Builds the watcher. Called by [_out] when the first subscriber arrives —
+  /// never at construction, so a stream handed out by [RemoteWatchService.watch]
+  /// and never listened to arms nothing.
+  void _attach() {
+    final Stream<RepoWatchEvent> source;
+    try {
+      source = build();
+    } catch (e, st) {
+      // A throw here would escape through the controller's onListen and
+      // surface somewhere unrelated. Report it to the subscriber instead.
+      if (!_out.isClosed) _out.addError(e, st);
+      return;
+    }
+    _source = source.listen(
+      (event) {
+        _last = event;
+        if (!_out.isClosed) _out.add(event);
+      },
+      onError: (Object e, StackTrace st) {
+        if (!_out.isClosed) _out.addError(e, st);
+      },
+      // The underlying lifecycle closed its controller, which it does from
+      // `stop()` — i.e. because we cancelled. Drop the handle; do NOT close
+      // [_out], which outlives any one watcher and may get new subscribers.
+      onDone: () => _source = null,
+    );
+  }
+
+  /// Tears the watcher down. Called by [_out] when the last subscriber leaves.
+  void _detach() {
+    final source = _source;
+    _source = null;
+    // A stale event must never be replayed to the next subscriber as though it
+    // described a live watcher: by the time anyone attaches again, this
+    // watcher is gone and its mode is meaningless.
+    _last = null;
+    unawaited(source?.cancel() ?? Future<void>.value());
+  }
+
+  /// A stream for one subscriber: the retained event first, then the live feed.
+  ///
+  /// `Stream.multi` gives every subscriber its own controller, so each one's
+  /// cancellation is independent and only the last of them reaches [_detach].
+  Stream<RepoWatchEvent> subscribe() =>
+      Stream<RepoWatchEvent>.multi((controller) {
+        // Subscribe BEFORE replaying, so an event arriving in between is
+        // delivered rather than dropped in favour of the older retained one.
+        final sub = _out.stream.listen(
+          controller.add,
+          onError: controller.addError,
+          onDone: controller.close,
+        );
+        controller.onCancel = sub.cancel;
+        final last = _last;
+        if (last != null) controller.add(last);
+      });
+}
+
 /// Watches a remote repository for filesystem changes and emits a coalesced
 /// [RepoWatchEvent] per settled burst, carrying the active [WatchMode] so the UI
 /// can distinguish live events from polling fallback.
@@ -388,13 +482,80 @@ class RemoteWatchService {
 
   /// Watches [repoPath] for changes.
   ///
+  /// **One watcher per repository path, however many callers ask for it.** The
+  /// first subscriber arms; every later subscriber is attached to that same
+  /// watcher and receives the same events, with the most recent one replayed
+  /// immediately so a late arrival's mode indicator is right without waiting
+  /// for the next tick. The watcher is torn down when the LAST subscriber
+  /// leaves.
+  ///
+  /// This is a correctness guarantee, not an optimisation. Arming twice used to
+  /// be possible and the second arm was refused by this app's own host-side
+  /// lock — a healthy repository degraded to polling for three minutes because
+  /// it collided with itself, and the diagnostic blamed "another live watcher"
+  /// when there was no other session (MADR 0043 F1, F2). `heldByAnother` must
+  /// only ever mean another SESSION, and that is true only if one session
+  /// cannot arm a repository twice.
+  ///
+  /// Scoped to this service instance, which is one connection, which is one
+  /// tab. Two tabs watching one repository still meet at the host lock, and
+  /// that is correct — they are different sessions (MADR 0041 F12).
+  ///
   /// [bounded], when supplied, switches to the **scoped work-tree** surface for
   /// a dotfiles-style repo (git-dir + tracked-file dirs, non-recursive) instead
   /// of a recursive watch of the whole work tree — see [BoundedWatchSpec] for
   /// why a recursive `$HOME` watch is unacceptable. Only pass it when the repo's
   /// type toggle marks it as such; an ordinary repo leaves it null and gets the
   /// unchanged recursive behaviour.
+  ///
+  /// The timing parameters and [bounded] belong to whichever call most recently
+  /// asked for this path; they are used when the NEXT watcher for it is built.
+  /// A watcher already running keeps what it was built with. In production
+  /// `repoWatchProvider` is the only caller and passes only [bounded], derived
+  /// from the same connection state for the same path — but it passes a FRESH
+  /// closure on every rebuild, which is why the latest one has to win rather
+  /// than the first (MADR 0043 plan, deviation (a)).
   Stream<RepoWatchEvent> watch(
+    String repoPath, {
+    BoundedWatchSpecSource? bounded,
+    Duration trailing = const Duration(milliseconds: 150),
+    Duration maxWait = const Duration(seconds: 1),
+    Duration minInterval = const Duration(seconds: 1),
+    Duration pollInterval = const Duration(seconds: 5),
+    Duration recoveryInterval = const Duration(minutes: 3),
+  }) {
+    final shared = _shared.putIfAbsent(repoPath, _SharedWatch.new);
+    shared.build = () => _createLifecycle(
+      repoPath,
+      bounded: bounded,
+      trailing: trailing,
+      maxWait: maxWait,
+      minInterval: minInterval,
+      pollInterval: pollInterval,
+      recoveryInterval: recoveryInterval,
+    );
+    return shared.subscribe();
+  }
+
+  /// The watchers this service has built, one per repository path.
+  ///
+  /// An INSTANCE field, deliberately. A static map would share one watcher
+  /// between two tabs, which are two connections with two independent
+  /// executors — and would re-create exactly the process-global coupling MADR
+  /// 0039 spent ten phases partitioning by session.
+  ///
+  /// Entries are never removed. One idle entry per path is a broadcast
+  /// controller and two null fields; the alternative — retiring an entry when
+  /// its last subscriber leaves — races a subscriber that has been handed a
+  /// stream by [watch] and has not listened to it yet, which would build a
+  /// watcher no map knows about. The service itself is rebuilt whenever the
+  /// executor is, so the map's lifetime is one connection's.
+  final Map<String, _SharedWatch> _shared = {};
+
+  /// Builds one watcher for [repoPath]. Everything below is per-watcher state,
+  /// which is why it lives in a factory rather than in [watch]: [watch] may be
+  /// called many times for one path and must not produce a second one.
+  Stream<RepoWatchEvent> _createLifecycle(
     String repoPath, {
     BoundedWatchSpecSource? bounded,
     Duration trailing = const Duration(milliseconds: 150),
