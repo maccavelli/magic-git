@@ -195,6 +195,12 @@ These are the facts the steps below depend on. Line numbers cite
    * A **SURVIVED** is reproduced by hand in a scratch `git worktree` before it is
      believed.
    * An entry is retired only where the retirement tables below list it.
+   * *(Added 2026-09-10, deviations (a)–(c) in the execution record.)*
+     - `tool/mutate.py` enforces the baseline itself: `BASELINE RED` stops the run.
+     - A failed run is a kill only when a named test failed. **DOES NOT COMPILE** and
+       **OBSERVED BY NO TEST** are broken entries, fixed like a DID NOT APPLY.
+     - At each phase boundary, before any catalogue runs, `tool/mutate.py --check` on the
+       catalogues that phase runs must report every entry sound.
 5. **Process hygiene.** `pkill` is never used, suggested or called, in any form, on the
    Mac or on a host. I stop only my own background tasks (`TaskStop`), or the exact
    `Process` objects a test spawned. No destructive git commands.
@@ -393,7 +399,8 @@ listed in the execution record.
 
 **Commit (code):** the new `lib` files, the modified `lib` files, the new tests, and the
 0041, 0044 and 0045 catalogue files. Phase 1 does not modify
-`test/watch_shared_path_test.dart`.
+`test/watch_shared_path_test.dart`. *(Deviation (a), 2026-09-10: plus `tool/mutate.py` —
+see the execution record.)*
 
 **Commit (docs):** this plan's execution record for phase 1.
 
@@ -1044,6 +1051,397 @@ remote tabs six times. Report each heartbeat-to-lock interval and the median aga
 * the README rows for 0043, 0044 and 0045.
 
 Commit (docs).
+
+## Execution Record
+
+### Phase 0 — preconditions
+
+* Flutter 3.47.2; `flutter pub get --enforce-lockfile` → `Got dependencies!`.
+* `HEAD` was `7898950` with exactly the three expected docs files dirty; committed as
+  `6c25baa`.
+* Baseline: `flutter analyze` → no issues. `flutter test` →
+  `03:40 +3956 ~3 -2: Some tests failed.` The two failures are exactly
+  `a subscriber leaving while a build is deferred orphans nothing` and
+  `arriving, leaving and arriving during a teardown arms once, after it`.
+
+### Phase 1 — foundations
+
+**Complete — code committed as `1d71f14`** (19 files: the ten `lib` files, five new tests,
+`tool/mutate.py` and the 0041, 0044 and 0045 catalogues; `test/watch_shared_path_test.dart`
+untouched). Gate at commit: `flutter analyze` no issues; `dart format --output=none
+--set-exit-if-changed` on the 15 staged Dart files, 0 changed; the identifier scan
+`+2: All tests passed!`; no Dart file changed after the full-suite run below, and no test
+reads `tool/` or the catalogues. The generated commit message describes the watch-stack
+modules only; the harness work is recorded here, in deviations (a)–(c).
+
+Code complete: formatted, `flutter analyze` clean, targeted tests
+`+120: All tests passed!`, and the full suite `03:33 +3979 ~3 -2` — the 23 new unit tests
+pass, and the only failures are the same two. The acceptance grep found one stale doc
+comment in `bounded_watch.dart` still naming `_isWatcherStartupNoise`; it was corrected,
+and the grep is now clean.
+
+Catalogue census before any run: 0041 had 2 DID NOT APPLY entries (the two `p5` noise
+entries, as predicted) and 0044 had 2 (`the marker is treated as startup noise`, as
+predicted, and **`the incumbent is captured but never kept`, not predicted**). All four
+were re-anchored onto the lines that now own the same behaviour: three into
+`stderr_line_reader.dart`, and the incumbent entry onto `incumbent ??= token;` in the arm.
+`tool/mutations/0045-watch-stack.json` was created with the six phase-1 entries.
+
+#### Deviation (a) — the mutation harness mirrored no new directory, and reported false kills (2026-09-10)
+
+**Found.** The first catalogue runs printed `mirrored 12 uncommitted file(s)`, reported a
+column of `KILLED` lines, and then crashed on `FileNotFoundError` for files under
+`lib/core/git/watch/`. `mirror_working_tree` in `tool/mutate.py` reads plain
+`git status --porcelain`, which lists a new untracked directory as the single entry
+`?? lib/core/git/watch/`, and skips it: `if not os.path.isfile(src): continue`. Nothing
+checks that the unmutated tree passes before mutating, and a failing exit code counts as
+a kill.
+
+**Reproduced, not inferred.** In a scratch worktree at `HEAD`, holding exactly the 12
+files the harness copied and **no mutation**, `bounded_watch_test.dart` failed to build:
+
+```
+lib/core/git/bounded_watch.dart:2:8: Error: Error when reading
+'lib/core/git/watch/watch_timings.dart': No such file or directory
+```
+
+So the 25 `KILLED` lines from 0041 and the first 4 from 0044 were compile errors, not
+kills, and are not recorded as results.
+
+**Pre-existing.** `tool/mutate.py` is untouched by this work. Earlier catalogue runs were
+valid because they only ever added files inside directories git already tracked, which
+plain `--porcelain` lists individually. The mirror also skips deleted paths, which phase 4
+would have hit when it removes `watch_lifecycle.dart`.
+
+**Decision: resolution 1, fix the harness properly.**
+
+* Mirror with `git status --porcelain --untracked-files=all`.
+* Delete in the worktree anything deleted in the working tree.
+* Stop with an error on any listed path that is neither copied nor deleted.
+* Before the first mutation, run the union of the catalogue's `tests` on the unmutated
+  worktree, and stop with a "baseline red" error if it fails. That makes rule 4 part of
+  the tool.
+
+The rejected alternative fixed the mirroring alone, which would have left every other way
+an unmutated tree can fail producing silent false kills. Committing phase 1 first, so the
+files became tracked, was not offered: it hides the defect and inverts this plan's
+verify-then-commit order.
+
+**Scope added to phase 1:** `tool/mutate.py`.
+
+**Executed.** `mirror_working_tree` now reads
+`git status --porcelain --untracked-files=all -z`, copies every listed file, removes a
+deleted path (and a rename's old name) from the worktree, and exits naming any path that
+is neither. It returns `(copied, deleted)`. Before the first mutation, `main` runs
+`flutter test` on the union of the selected entries' `tests` (the whole suite if any
+entry has none), and on failure prints `BASELINE RED`, lists the failing tests and exits 2.
+The failing-test-name parser the kill report already used is now the shared
+`failing_test_names`. The docstring's load-bearing properties gain a fourth.
+
+**The fix was seen to fail both ways, outside the tree.**
+
+* *Mirror.* A scratch-directory check built a throwaway repository and worktree with a
+  modified file, a staged rename, a deleted file, an untracked file two directories deep
+  under a new directory, and — separately — an untracked symlink to a directory. Against
+  the fixed harness: all 7 checks `PASS`; the symlink stopped the mirror with
+  `mirror: cannot mirror 'dirlink' ('??') — neither a file nor a deletion`. Against the
+  committed harness (`git show HEAD:tool/mutate.py`, copied to the scratch directory):
+  5 of 7 `FAIL` — the new-directory file, the deletion, the rename's old name, the counts
+  (`copied=2 deleted=0`), and the unmirrorable path, which it skipped.
+* *Baseline.* A scratch catalogue whose one entry names `test/watch_timings_test.dart`
+  and `test/watch_shared_path_test.dart` — the second red by design since `7898950` —
+  printed `mirrored 20 uncommitted file(s), removed 0 deleted` (the 20 paths
+  `git status --porcelain --untracked-files=all` lists), then
+  `BASELINE RED: the unmutated tree fails the tests this catalogue relies on — no mutation
+  result would be valid.`, named exactly the two known failures, applied no mutation, and
+  exited `2`. `git worktree list` afterwards showed only the main tree.
+
+**Catalogue runs, on the fixed harness,** one at a time, with no other test run in
+progress. Each mirrored the same 20 paths and passed its baseline first:
+
+```text
+tool/mutate.py 0041-watcher-teardown   baseline green: 5 test file(s)   27 killed, 0 survived, 0 did not apply
+tool/mutate.py 0044-arm-readiness      baseline green: 3 test file(s)   10 killed, 0 survived, 0 did not apply
+tool/mutate.py 0045-watch-stack        baseline green: 5 test file(s)    6 killed, 0 survived, 0 did not apply
+```
+
+Every re-anchored entry was killed by the tests that owned the behaviour before it moved:
+the two `p5` noise entries by `watcher diagnostics startup chatter is dropped…`, the
+marker entry by `an arm settles on the marker, not on the ceiling`, and the incumbent
+entry by `a lock refusal is still a refusal, and still names its incumbent`.
+
+*(Superseded: one of those 27 kills was a compile failure — deviation (b). The final runs,
+on the harness as committed, are recorded at the end of deviation (c).)*
+
+#### Deviation (b) — a 0041 entry has never compiled, and was counted as a kill (2026-09-10)
+
+**Found.** One 0041 kill was a load failure, not a named test:
+`p2: a failing lease removal escapes the teardown → loading …/watch_lease_release_test.dart`.
+The entry replaces the `catch (_)` in `releaseHostClaims` with
+`} on _NeverThrown catch (_) {`, and `_NeverThrown` is defined nowhere. It never has been,
+since the entry was added in `6f2550e`.
+
+**Evidence.**
+
+* *Every catalogue this phase runs was checked.* A scratch-directory script applied each
+  of the 43 mutations in 0041, 0044 and 0045 in a scratch worktree and ran
+  `dart analyze --format=machine` on the mutated file, reporting only errors the unmutated
+  file lacks. Exactly one entry failed to compile:
+  `NON_TYPE_IN_CATCH_CLAUSE: The name '_NeverThrown' isn't a type and can't be used in an on-catch clause.`
+* *Reproduced by hand,* in a scratch worktree, running `flutter test
+  test/watch_lease_release_test.dart` three ways:
+
+  | variant | exit | output |
+  | --- | --- | --- |
+  | unmutated | 0 | `+9: All tests passed!` |
+  | the entry verbatim | 1 | `Compilation failed for testPath=…: lib/core/git/remote_watch_service.dart:797:18: Error: '_NeverThrown' isn't a type.` — no test ran |
+  | `} on FormatException catch (_) {` | 1 | `a removal that throws does not fail the teardown [E]`, `SSH transport is not ready yet: rm`, thrown from `releaseHostClaims` |
+
+* *Pre-existing.* The replacement has named `_NeverThrown` since `6f2550e` added the entry;
+  `dc62cde` (the 0043 deviation (f) re-anchor) changed only the lines around it, and this
+  work did not touch it before this deviation. The run counts that include it are the 0041
+  plan's `Verification, as run`, the 0043 plan's deviation (f) and `Verification, as run`,
+  and the 0044 plan's catalogue block, all recording `27 killed`.
+* *The contract was sound, but it was never proved.* The test does detect an escaping
+  removal error: the compiling variant is killed by exactly the test that names the
+  contract. What was missing was the sabotage evidence for it.
+* *Same class as deviation (a).* The harness reads any non-zero exit as a kill, so a
+  mutation that does not build is indistinguishable from one a test caught. The baseline
+  guard cannot see this: the baseline compiles, and the mutation does not.
+
+**Decision: resolution 1, fully implemented and hardened.**
+
+* Re-anchor the entry to the verified compiling form, `} on FormatException catch (_) {`,
+  keeping its label.
+* Stop `tool/mutate.py` from reading a failed run as a kill. A mutation is **KILLED** only
+  when at least one named test failed. A run whose output carries the tester's
+  compile-failure marker, `Compilation failed for testPath=` (emitted by
+  `flutter_tools/lib/src/test/flutter_platform.dart:662` on the pinned 3.47.2), is
+  **DOES NOT COMPILE**. A failed run with no named test failure (nothing but `loading`
+  pseudo-tests, or no `[E]` line at all) is **NOT OBSERVED**. Both are broken entries that
+  fail the run, exactly as DID NOT APPLY does.
+* Keep that detector honest. After the baseline, and before the first mutation, the
+  harness runs a compile canary. It writes a `lib` file with a type error and a test that
+  imports it into the scratch worktree, and requires that run to classify as DOES NOT
+  COMPILE; otherwise it stops with `CANARY`. A Flutter upgrade that rewords the marker
+  therefore stops the harness instead of silently turning compile failures back into
+  kills.
+* Record the correction where the count was recorded. Annotate each `27 killed` line
+  above — not rewritten — to say one of the 27 was a compile failure, and point here.
+
+**Rejected.** Fixing the entry alone leaves the next non-compiling mutation counted as a
+kill with nothing to notice it; the analyzer check that found this one lives only in a
+scratch directory. An analyzer pre-pass per mutation was not chosen as the detector: it
+adds a few seconds an entry, and it judges what the analyzer thinks rather than what the
+tester actually failed to build.
+
+**Scope added to phase 1:** the 0041 entry (the catalogue is already in scope), the
+further `tool/mutate.py` change, and annotations to
+`docs/0041-PLAN-the-watcher-the-client-cannot-kill.md`,
+`docs/0043-PLAN-a-watcher-refused-by-its-own-session.md` and
+`docs/0044-PLAN-the-watcher-follows-the-active-tab.md`.
+
+**Executed.**
+
+* `tool/mutate.py` gained `classify_failure`, `compile_canary` and `package_name`, a fifth
+  load-bearing property in its docstring, and a summary line that counts
+  `did not compile` and `observed by no test` beside `did not apply`. Property 4's
+  opening sentence no longer says a failing run is a kill. The canary writes
+  `lib/mutate_compile_canary.dart` (`const int mutateCompileCanary = 'not an int';`) and
+  `test/mutate_compile_canary_test.dart` into the scratch worktree, refuses to overwrite
+  either, and removes both before the first mutation.
+* The 0041 entry's replacement is now `} on FormatException catch (_) {` plus its closing
+  brace.
+* The catalogue JSON had been re-serialised with one-space indentation while phase 1
+  re-anchored it, turning a three-entry change into a 486-line diff. Each catalogue was
+  rewritten in its own committed style, checked by reproducing `HEAD` byte-for-byte
+  (0041 two-space, 0044 one-space) with the content asserted unchanged; the new 0045
+  takes the two-space style most committed catalogues use.
+
+**Seen to fail, both ways, outside the tree.**
+
+* *Classifier, on real tester output.* The logs the hand reproduction captured:
+  the `_NeverThrown` run → `DOES NOT COMPILE`, evidence
+  `lib/core/git/remote_watch_service.dart:797:18: Error: '_NeverThrown' isn't a type.`;
+  the compiling run → `KILLED` by `a removal that throws does not fail the teardown`; a
+  `loading … [E]`-only output and an empty output → `OBSERVED BY NO TEST`. On the same
+  `_NeverThrown` output the committed harness's rule gives `KILLED`, naming only the
+  `loading …` pseudo-test.
+* *End to end.* A scratch catalogue of one control and two negatives:
+
+  ```text
+  baseline green: 2 test file(s)
+  compile canary recognised: a mutation that does not build is not a kill
+  KILLED  : control: the re-anchored lease-removal entry is killed
+            -> a removal that throws does not fail the teardown
+  DOES NOT COMPILE: negative: the _NeverThrown form does not compile
+            -> lib/core/git/remote_watch_service.dart:797:18: Error: '_NeverThrown' isn't a type.
+  OBSERVED BY NO TEST: negative: a load-time throw is observed by no test
+            -> loading …/test/watch_timings_test.dart
+
+  1 killed, 0 survived, 0 did not apply, 1 did not compile, 1 observed by no test
+  ```
+
+  and exit `1`.
+* *Canary.* A scratch copy of the harness with its marker misspelled
+  (`'Compilation failed for testPathX='`), run on the same catalogue, passed the baseline
+  and then stopped before any mutation:
+  `CANARY: a deliberate compile error was classified 'OBSERVED BY NO TEST', not 'DOES NOT COMPILE'. …`
+  and exit `3`. No canary file was left in the working tree.
+
+#### Deviation (c) — every catalogue checked: a second entry that never compiled, and 15 stale anchors (2026-09-10)
+
+**Found.** Deviation (b)'s evidence covered only the three catalogues phase 1 runs. The
+same scratch-directory check was then run over all ten catalogues in `tool/mutations/`
+(215 entries), applying each mutation in a scratch worktree and running `dart analyze` on
+the mutated file. It reported 16 entries: `215 entries analysed, 16 do not compile`.
+
+* *A second entry that has never compiled.* `0043-one-watcher-per-repo.json`
+  `p1: the factory is not refreshed, so a rebuild keeps a stale closure` replaces
+  `shared.build = () => _createLifecycle(` with `shared.buildOnce ??= () => _createLifecycle(`:
+  `UNDEFINED_GETTER` / `UNDEFINED_SETTER: The getter 'buildOnce' isn't defined for the type '_SharedWatch'.`
+  `git log --all -S buildOnce` finds one commit, `dc62cde`, and in it only the catalogue
+  file — the member never existed in `lib/`. Its recorded counts, `10 killed`, are the 0043
+  plan's `Verification, as run` and the 0044 plan's catalogue block and phase-3 record.
+  Phase 2 of this plan already retires the entry ("There is no factory").
+* *Fifteen stale anchors,* all DID NOT APPLY: 2 in `0032-namespaces.json`
+  (`sheet: active connection not resolved for history`,
+  `clone: active connection not resolved for history`) and 13 in `0036-destination.json`.
+  Every target file exists; no anchor matches. Each anchor matched exactly once at its
+  catalogue's own last commit (`56c767d` for 0032, `5af35c7` for 0036). Stepping through
+  every later commit that touched each target file, the first where the anchor stopped
+  matching once was, all on 2026-09-08: `dc78436` (both 0032 entries), `fdd0d7b` (4),
+  `6117172` (4), `2e1f841` (4) and `c818bb0` (1). *(Corrected before commit: a first
+  attribution by `git log -S` on each anchor's first line wrongly named `116b861` and
+  `ee0c4a6`, where anchors were introduced, and missed `c818bb0`.)* For two entries the
+  distinctive identifier (`provisionTarget`, `_ensureProvisionTab`) is nowhere in `lib/`.
+  These were never false results — the harness reports them — but no record mentions them,
+  and their catalogues no longer exercise those contracts.
+
+**Pre-existing.** No catalogue other than 0041, 0044 and 0045 is touched by this work, and
+the two watcher-unrelated catalogues were last changed on 2026-09-07 and 2026-09-08.
+
+**Decision: resolution 1.**
+
+* Reproduce the 0043 entry by hand, annotate its three recorded counts, and leave the
+  entry to phase 2's planned retirement. Re-anchoring it now cannot be verified — its test
+  file carries the two phase-0 failures until phase 2 — and phase 2 deletes the code it
+  targets.
+* Promote the check into `tool/mutate.py --check [catalogue …]` (every catalogue by
+  default): for each entry, confirm it applies exactly once and that the package still
+  analyses without a new error, running no tests. Verify it both ways — it must flag
+  today's 16 entries, and pass the clean 0041, 0044 and 0045 catalogues.
+* Write a standalone plan to re-anchor or retire the 15 stale 0032 and 0036 entries, for
+  the maintainer's review after phase 1 commits.
+
+**Rejected.** Fixing the 15 inside phase 1 grows it with workspace-feature code unrelated to
+the watcher stack. Annotating alone, with no check mode, leaves the next broken or stale
+entry to be found only when someone happens to run its catalogue — which is how both
+false kills stood through three MADRs.
+
+**Scope added to phase 1:** the `--check` mode in `tool/mutate.py`, and annotations to
+`docs/0043-PLAN-a-watcher-refused-by-its-own-session.md` and
+`docs/0044-PLAN-the-watcher-follows-the-active-tab.md`. The standalone plan is a separate
+document and not part of phase 1.
+
+**Executed.**
+
+* *The 0043 entry, reproduced by hand* in a scratch worktree, running its
+  `test/watch_shared_path_test.dart`: unmutated, exit 1 with exactly the two phase-0
+  failures and no compile failure; with the entry applied verbatim, exit 1 and
+  `DOES NOT COMPILE`:
+  `lib/core/git/remote_watch_service.dart:590:12: Error: The getter 'buildOnce' isn't defined for the type '_SharedWatch'.`
+  The three recorded counts are annotated.
+* *`tool/mutate.py --check [catalogue …]`* (every catalogue in `tool/mutations/` when none
+  is named). It creates the scratch worktree as a run does, requires
+  `flutter pub get --enforce-lockfile` to succeed, and then:
+  * requires the unmutated package to analyse with no `ERROR` (`BASELINE RED`, exit 2);
+  * plants `lib/mutate_compile_canary.dart` and requires `dart analyze` to report an error
+    against it (`CANARY`, exit 3);
+  * for each entry, reports `DID NOT APPLY` unless the anchor matches exactly once, and
+    otherwise applies it, runs `dart analyze --format=machine .` over the whole package,
+    and reports `DOES NOT COMPILE` with the errors if there are any — the whole package,
+    because a mutation that compiles in its own file can break a file that uses it;
+  * stops if `dart analyze` exits outside 0–3, since an analysis that never completed
+    would otherwise read as "no errors";
+  * exits 1 on any broken entry and prints the elapsed time.
+* Run mode now shares the worktree setup, removes the worktree if mirroring fails, and
+  reads anchors through the same function — so a missing target file, or an empty
+  `find`, is `DID NOT APPLY` instead of a crash (or, for an empty `find` on an empty
+  file, a spurious apply). It also passes `--enforce-lockfile` to `flutter pub get`.
+  With zero or two catalogues and no `--check`, it exits 2 with a usage error and creates
+  no worktree.
+
+**`--check` seen to fail, outside the tree.**
+
+* *Canary.* A scratch copy whose error parser never matches (`fields[0] == 'ERROR_NEVER'`)
+  passed the baseline — an empty error set — and then stopped:
+  `CANARY: a planted type error was not reported by `dart analyze` — an entry that does not compile would pass the check.`,
+  exit `3`.
+* *Exit-code guard.* A scratch copy passing `dart analyze` an unknown flag stopped before
+  judging anything: `dart analyze did not complete (exit 64)`, followed by the analyzer's
+  usage text.
+* *The three verdicts, and why the whole package is analysed.* A scratch catalogue of a
+  sound entry (0045's coherence mutation), a stale anchor, and a rename of
+  `SurfaceRearmPolicy.cancel()` — a member its own file never calls, asserted by the
+  fixture builder before writing:
+
+  ```text
+  baseline clean: the unmutated package analyses without an error
+  analyzer canary recognised: a planted type error is reported
+  check_catalogue.json: 3 entries
+    DID NOT APPLY [0 matches]: stale: an anchor that matches nothing
+    DOES NOT COMPILE: cross-file: the policy's cancel() renamed; its own file stays clean
+            -> lib/core/git/local_watch_service.dart: UNDEFINED_METHOD: The method 'cancel' isn't defined for the type 'SurfaceRearmPolicy'.
+            -> lib/core/git/remote_watch_service.dart: UNDEFINED_METHOD: The method 'cancel' isn't defined for the type 'SurfaceRearmPolicy'.
+            -> test/surface_rearm_policy_test.dart: UNDEFINED_METHOD: The method 'cancel' isn't defined for the type 'SurfaceRearmPolicy'.
+
+  3 entries in 1 catalogue(s): 1 sound, 1 did not apply, 1 do not compile (0m 22s)
+  ```
+
+  exit `1`. No error is reported against the mutated file itself, so the scratch check's
+  per-file analysis would have passed this entry. (A first version of this fixture renamed
+  `WatchTimings.defaultMaxRestarts`, which the class's own constructor uses; it proved
+  nothing about other files and was replaced.)
+
+**`--check` over the real catalogues.**
+
+* *Every catalogue* (`tool/mutate.py --check`): exactly the 16 entries the scratch check
+  found, and no other — the whole-package analysis added none.
+
+  ```text
+  baseline clean: the unmutated package analyses without an error
+  analyzer canary recognised: a planted type error is reported
+  0043-one-watcher-per-repo.json: 10 entries
+    DOES NOT COMPILE: p1: the factory is not refreshed, so a rebuild keeps a stale closure
+            -> lib/core/git/remote_watch_service.dart: UNDEFINED_GETTER: The getter 'buildOnce' isn't defined for the type '_SharedWatch'.
+            -> lib/core/git/remote_watch_service.dart: UNDEFINED_SETTER: The setter 'buildOnce' isn't defined for the type '_SharedWatch'.
+
+  215 entries in 10 catalogue(s): 199 sound, 15 did not apply, 1 do not compile (12m 49s)
+  ```
+
+  with the 15 `DID NOT APPLY [0 matches]` lines for 0032 (2) and 0036 (13), and exit `1`.
+* *The phase-1 catalogues* (`--check` on 0041, 0044 and 0045):
+  `43 entries in 3 catalogue(s): 43 sound, 0 did not apply, 0 do not compile (2m 54s)`,
+  exit `0`.
+
+About 3.6 s an entry on this machine: under three minutes for the watcher catalogues at a
+phase boundary, and about thirteen for the full sweep — longer than the "few minutes"
+estimated when this resolution was chosen.
+
+**Final catalogue runs, on the harness as committed,** one at a time, after the checks and
+with no other test run in progress. Each mirrored the same 23 paths, passed its baseline,
+and recognised the compile canary:
+
+```text
+tool/mutate.py 0041-watcher-teardown  baseline green: 5 test file(s)  27 killed, 0 survived, 0 did not apply, 0 did not compile, 0 observed by no test
+tool/mutate.py 0044-arm-readiness    baseline green: 3 test file(s)  10 killed, 0 survived, 0 did not apply, 0 did not compile, 0 observed by no test
+tool/mutate.py 0045-watch-stack      baseline green: 5 test file(s)  6 killed, 0 survived, 0 did not apply, 0 did not compile, 0 observed by no test
+```
+
+Every kill names a real test; none rests on a `loading …` pseudo-test. The re-anchored
+`p2: a failing lease removal escapes the teardown` is killed by exactly
+`a removal that throws does not fail the teardown`.
 
 ## Verification
 

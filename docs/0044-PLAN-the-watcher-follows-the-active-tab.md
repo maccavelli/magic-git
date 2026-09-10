@@ -646,6 +646,10 @@ tool/mutate.py tool/mutations/0041-watcher-teardown.json
 27 killed, 0 survived, 0 did not apply
 ```
 
+*Annotated 2026-09-10 ([0045 plan](0045-PLAN-one-owner-per-watcher-concern.md), deviation (b)):* one of these 27 kills, `p2: a failing lease removal escapes the teardown`, never compiled — its replacement named `_NeverThrown`, a type that does not exist — so 26 were observed. The entry now uses a compiling form, which `a removal that throws does not fail the teardown` kills.
+
+*Annotated 2026-09-10 ([0045 plan](0045-PLAN-one-owner-per-watcher-concern.md), deviation (c)):* one of the 0043 catalogue's 10 kills, `p1: the factory is not refreshed, so a rebuild keeps a stale closure`, never compiled — its replacement assigns `shared.buildOnce`, a member `_SharedWatch` never had — so 9 were observed. Phase 2 of the 0045 plan retires the entry.
+
 The kills that matter most are the two that would have shipped a working suite
 over a broken feature: *"the marker is emitted before the lock prelude"* (a
 refusal would announce itself, and the exclusion would silently stop working)
@@ -691,6 +695,8 @@ building on first listen, not on the call, is what keeps an unused stream free
 
 The mutation **is** caught. Re-running the whole 0043 catalogue on an idle
 machine gave `10 killed, 0 survived, 0 did not apply`.
+
+*Annotated 2026-09-10 (0045 plan, deviation (c)):* one of those 10 never compiled; see the note after the catalogue block above.
 
 The cause is worth recording, because it is a property of this suite rather
 than of this change: both suspect tests assert on **real-time** delays —

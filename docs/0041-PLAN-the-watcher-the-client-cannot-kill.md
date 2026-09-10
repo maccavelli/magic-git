@@ -680,6 +680,8 @@ tool/mutate.py 0041-watcher-teardown  27 killed, 0 survived, 0 did not apply
 tool/mutate.py 0040-watcher-ceiling    2 killed, 0 survived, 0 did not apply
 ```
 
+*Annotated 2026-09-10 ([0045 plan](0045-PLAN-one-owner-per-watcher-concern.md), deviation (b)):* one of these 27 kills, `p2: a failing lease removal escapes the teardown`, never compiled — its replacement named `_NeverThrown`, a type that does not exist — so 26 were observed. The entry now uses a compiling form, which `a removal that throws does not fail the teardown` kills.
+
 Test count 3897 → **3926**. The suite gained the six executing teardown cases,
 five host-claim cases, six client-side refusal and lease-release cases, six
 derived-ceiling cases and six watch-surface cases.

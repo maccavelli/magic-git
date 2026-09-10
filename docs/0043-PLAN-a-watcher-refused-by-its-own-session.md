@@ -478,6 +478,8 @@ incumbent echo. Every one reported rather than silently passing.
 
 Re-anchored against the current tree and re-run: **27 killed, 0 survived**.
 
+*Annotated 2026-09-10 ([0045 plan](0045-PLAN-one-owner-per-watcher-concern.md), deviation (b)):* one of these 27 kills, `p2: a failing lease removal escapes the teardown`, never compiled — its replacement named `_NeverThrown`, a type that does not exist — so 26 were observed. The entry now uses a compiling form, which `a removal that throws does not fail the teardown` kills.
+
 Third time in this session that running the *whole* catalogue at a boundary
 caught anchors a later phase had quietly invalidated (MADR 0039 D9; 0041's own
 execution had two). It is the rule earning its keep, repeatedly.
@@ -520,6 +522,10 @@ flutter test                             3942 passed, 3 skipped, 0 failed
 tool/mutate.py 0043-one-watcher-per-repo 10 killed, 0 survived, 0 did not apply
 tool/mutate.py 0041-watcher-teardown     27 killed, 0 survived, 0 did not apply
 ```
+
+*Annotated 2026-09-10 ([0045 plan](0045-PLAN-one-owner-per-watcher-concern.md), deviation (b)):* one of these 27 kills, `p2: a failing lease removal escapes the teardown`, never compiled — its replacement named `_NeverThrown`, a type that does not exist — so 26 were observed. The entry now uses a compiling form, which `a removal that throws does not fail the teardown` kills.
+
+*Annotated 2026-09-10 ([0045 plan](0045-PLAN-one-owner-per-watcher-concern.md), deviation (c)):* one of the 0043 catalogue's 10 kills, `p1: the factory is not refreshed, so a rebuild keeps a stale closure`, never compiled — its replacement assigns `shared.buildOnce`, a member `_SharedWatch` never had — so 9 were observed. Phase 2 of the 0045 plan retires the entry.
 
 Test count 3926 → **3942**.
 
