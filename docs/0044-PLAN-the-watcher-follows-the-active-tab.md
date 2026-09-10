@@ -443,7 +443,7 @@ measured arm time, and a dated entry for every deviation.
 
 4.6 Update the `docs/README.md` row.
 
-4.7 **Serialize `_SharedWatch`** *(added by deviation (c), 2026-09-10).*
+4.7 ~~**Serialize `_SharedWatch`**~~ *(added by deviation (c), 2026-09-10; **superseded the same day** — see deviation (c)'s revised resolution. Do not execute this step: the watcher fix is re-planned under MADR 0045.)*
 
 * `lib/core/git/remote_watch_service.dart`: replace `_SharedWatch`'s retained
   `_teardown` and deferred build with one reconcile chain. Every `onListen` and
@@ -911,6 +911,33 @@ amendment 0044.3, and both README rows.
 
 **Consequence for this plan:** 4.3 is blocked until 4.7 is built, installed and 4.2
 repeated, because a tab switch that leaves an orphan behind measures the defect.
+
+**Resolution revised (2026-09-10).** Step 4.7 was implemented and not committed. It
+closed the orphan: both new tests, which had failed against the unmodified code
+(`has length of <2>`; `['arm', 'arm', 'teardown', 'arm']`), passed. **It also broke
+an existing test:** `a new subscriber waits for a pending teardown before arming`
+reported `Expected: ['arm', 'teardown', 'arm']`, `Actual: ['arm']`. Each chain step,
+as specified, compared "someone is subscribed" with "a watcher exists" when it ran, so
+a provider rebuild — cancel and re-subscribe in the same flush — looked like no
+change, and new watch parameters were dropped. Confirmed both ways with one scratch
+test, a recursive watch rebuilt with a bounded surface in the same flush: the rewrite
+armed `[recursive]`; a clean worktree of the unmodified code at `0d31f51` armed
+`[recursive, bounded]`.
+
+Three resolutions were offered: a generation-aware chain (recommended), rebuilding on
+every `watch()` call, and reverting to the two targeted guards. The maintainer chose
+the first, then directed an architectural review of the whole watcher stack before
+anything more was built. That review is
+[0045-MADR-one-owner-per-watcher-concern.md](0045-MADR-one-owner-per-watcher-concern.md)
+(proposed). Its finding is that the sharing layer solved an exclusion problem, and that
+a generation counter would add a fourth sequencer to a layer the decision removes.
+
+**State of the tree:** the step 4.7 rewrite of `_SharedWatch` was never committed, and
+**was discarded on the maintainer's approval** (2026-09-10), restoring
+`remote_watch_service.dart` to `0d31f51`; a reference patch was kept outside the
+repository. The three tests written for it remain uncommitted — two of them fail
+against the restored code, by design, until MADR 0045's plan delivers. The tests carry over to MADR 0045's plan as
+acceptance tests. **4.3 stays blocked** until that plan delivers.
 
 #### Still owed — 4.3
 

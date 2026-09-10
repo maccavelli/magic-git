@@ -12,6 +12,7 @@
 
 import 'dart:async';
 
+import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:remote_magic_git/core/git/remote_watch_service.dart';
 import 'package:remote_magic_git/core/git/watch_diagnostics.dart';
@@ -325,5 +326,109 @@ void main() {
     );
 
     await b.cancel();
+  });
+
+  // MADR 0043 amendment 0043.1 (0044 PLAN deviation (c)). Found on a live host:
+  // a backgrounded tab's watcher kept its lock and lease for over thirty minutes
+  // because nothing held it. The sequence below is the shape a reconnect's
+  // family-wide invalidate produces while the dying watcher's teardown is still
+  // talking to a redialing transport. None of the tests above lets a subscriber
+  // LEAVE while a build is still deferred, which is why it went unseen.
+
+  test('a subscriber leaving while a build is deferred orphans nothing', () async {
+    final exec = _ArmRecorder(cancelDelay: const Duration(milliseconds: 400));
+    final service = serviceOn(exec);
+    Iterable<FakeWatcherHandle> live() => exec.handles.where((h) => !h.cancelled);
+
+    final s1 = service.watch('/repo').listen((_) {});
+    await settleArm();
+
+    unawaited(s1.cancel()); // the teardown is now in flight
+    await pumpEventQueue();
+    final s2 = service.watch('/repo').listen((_) {});
+    await pumpEventQueue();
+    unawaited(s2.cancel()); // ...and this one leaves before it settles
+    await pumpEventQueue();
+    final s3 = service.watch('/repo').listen((_) {});
+    await Future<void>.delayed(const Duration(seconds: 2));
+
+    expect(
+      live(),
+      hasLength(1),
+      reason: 'one subscriber, so exactly one watcher — not one per interleaving',
+    );
+
+    await s3.cancel();
+    await Future<void>.delayed(const Duration(seconds: 2));
+
+    expect(
+      live(),
+      isEmpty,
+      reason:
+          'with every subscriber gone, a watcher still alive is held by nothing: '
+          'it keeps its host lock and lease until the connection dies',
+    );
+    expect(RemoteWatchService.liveWatchersFor('host'), 0);
+  });
+
+  test('arriving, leaving and arriving during a teardown arms once, after it', () async {
+    final exec = _ArmRecorder(cancelDelay: const Duration(milliseconds: 400));
+    final service = serviceOn(exec);
+
+    final a = service.watch('/repo').listen((_) {});
+    await settleArm();
+    unawaited(a.cancel());
+    await pumpEventQueue();
+    final b = service.watch('/repo').listen((_) {});
+    await pumpEventQueue();
+    unawaited(b.cancel());
+    await pumpEventQueue();
+    final c = service.watch('/repo').listen((_) {});
+    await Future<void>.delayed(const Duration(seconds: 2));
+
+    expect(
+      exec.log,
+      ['arm', 'teardown', 'arm'],
+      reason:
+          'however subscribers come and go while a teardown is in flight, the '
+          'next watcher is built once, and only after the lock has been given back',
+    );
+
+    await c.cancel();
+  });
+
+  test('a teardown that never settles holds the next arm only until the grace', () {
+    fakeAsync((async) {
+      // Longer than the grace by design: this teardown is, for the test's
+      // purposes, one that never completes.
+      final exec = _ArmRecorder(cancelDelay: const Duration(minutes: 10));
+      final service = serviceOn(exec);
+
+      final a = service.watch('/repo').listen((_) {});
+      async.elapse(const Duration(seconds: 1));
+      expect(exec.log, ['arm']);
+
+      unawaited(a.cancel());
+      async.flushMicrotasks();
+      final b = service.watch('/repo').listen((_) {});
+      async.elapse(RemoteWatchService.sharedTeardownGrace - const Duration(seconds: 5));
+      expect(
+        exec.log,
+        ['arm'],
+        reason: 'inside the grace, the next arm waits for the teardown',
+      );
+
+      async.elapse(const Duration(seconds: 10));
+      expect(
+        exec.log,
+        ['arm', 'arm'],
+        reason:
+            'past the grace, it arms anyway: a wedged teardown degrades to the old '
+            'race rather than leaving the repository unwatchable',
+      );
+
+      unawaited(b.cancel());
+      async.elapse(const Duration(minutes: 11));
+    });
   });
 }

@@ -541,6 +541,12 @@ The consequence here is sequencing: phase 4.3's tab-switch measurement waits for
 that fix to be built, because a switch that leaves an orphan behind would be
 measuring the defect rather than the arm.
 
+*Later the same day:* the serialized chain chosen for the fix dropped new watch
+parameters on rebuilds, and the maintainer directed an architectural review of the
+whole watcher stack instead of a further patch. That review is
+[0045-MADR-one-owner-per-watcher-concern.md](0045-MADR-one-owner-per-watcher-concern.md)
+(proposed), and 4.3 now waits on its plan.
+
 ## More Information
 
 * `lib/features/tabs/tabs_host.dart` — `KeyedSubtree` on `activeId`; the

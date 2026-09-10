@@ -578,6 +578,30 @@ And returning to its repository gets that repository's own new arm refused as
 `heldByAnother`, naming its own orphan, and polling at ~48 git processes a minute —
 this record's reported symptom, arriving by a different route.
 
+### 0043.2 — the serialized chain is superseded by MADR 0045 (2026-09-10)
+
+Amendment 0043.1's decision was implemented and then withdrawn before it was
+committed. As specified, each chain step compared "someone is subscribed" with "a
+watcher exists" when it ran, so a provider rebuild — which cancels the old
+subscription and subscribes the new one in the same flush — looked like no change at
+all, and **new watch parameters were dropped**. An existing test caught it
+(`Expected: ['arm', 'teardown', 'arm']`, `Actual: ['arm']`). A scratch rebuild with a
+bounded surface armed `[recursive]` against the chain, and `[recursive, bounded]`
+against a clean worktree of the unmodified code.
+
+The maintainer then directed an architectural review rather than another patch. It is
+recorded as
+[0045-MADR-one-owner-per-watcher-concern.md](0045-MADR-one-owner-per-watcher-concern.md)
+(proposed). Its central finding bears directly on this record: **sharing solved an
+exclusion problem.** Riverpod already gives one provider instance per repository per
+container, and the watch services have exactly two production callers, both inside
+`repoWatchProvider`. What production needed was the teardown seam this record's F3 and
+F4 describe, expressed as exclusion, not as a layer that owns watcher lifetime.
+
+This record's guarantees stand: one watcher per repository per session, and no arm
+while a predecessor holds the lock. Its mechanism — sketch items 1–3 and amendment
+0043.1 — is superseded by MADR 0045, once that record is accepted.
+
 ## More Information
 
 * [0041-MADR-the-watcher-the-client-cannot-kill.md](0041-MADR-the-watcher-the-client-cannot-kill.md)
