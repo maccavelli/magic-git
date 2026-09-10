@@ -1,5 +1,5 @@
 ---
-status: "proposed"
+status: "complete"
 date: 2026-09-09
 associated-madr: "0043-MADR-a-watcher-refused-by-its-own-session.md"
 ---
@@ -327,29 +327,235 @@ all.
 * A rebuild is required to see any of this; the behaviour is in the client, and
   the reported symptom only appears against a real host.
 
-## Decisions the maintainer should confirm before execution
+## Decisions taken
 
-1. **Sharing versus exclusion.** This plan attaches a second subscriber to the
-   existing watcher. The smaller alternative is to refuse it with a new,
-   honest reason (`alreadyWatchedHere`) and let it poll — less machinery, but it
-   leaves a subscriber polling while a perfectly good watcher for that exact
-   repository is live in the same process. Recommendation: **sharing**, because
-   the second subscriber is not doing anything wrong and there is no reason it
-   should get a worse answer.
-2. **Phase 4 in or out.** It is small and it is the diagnostic whose absence
-   made this investigation long. Recommendation: **in**.
-3. **The bounded timeout in 2.3.** A pending teardown blocks a new arm for at
-   most this long before proceeding anyway. Recommendation: a small number of
-   seconds — long enough to cover F4's sub-second window with margin, short
-   enough that a wedged teardown costs one slow arm rather than a visibly stuck
-   repository.
+Recorded 2026-09-09, before execution. Kept as asked so the record shows what
+was decided, not only what was done.
+
+1. ~~**Sharing versus exclusion.**~~ **Sharing**, and explicitly "carefully" —
+   the broadcast/replay/refcount machinery is the fiddly part of this work and
+   is where the review attention belongs.
+2. ~~**Phase 4 in or out.**~~ **In.**
+3. ~~**The bounded timeout in 2.3.**~~ **Three minutes**, matching
+   `recoveryInterval` — the cadence a degraded repository already waits on, so
+   the gate never makes a repository wait longer than the system's existing
+   worst case.
+
+   **Consequence to watch, stated because it is longer than this plan
+   recommended.** The gate holds a new arm while a teardown is pending, and
+   during that hold the repository has no watcher *and* no polling — the
+   lifecycle has not been created yet, so nothing emits and the UI shows no
+   mode. Three minutes of that would be very visible. It is acceptable only
+   because step 2.2's lock removal carries its own short timeout, so a
+   realistic teardown future always resolves in seconds and the three-minute
+   bound is a backstop that should never bind. **If 2.2's inner timeout is ever
+   removed, this becomes a three-minute stall** — the two are coupled and a
+   comment must say so at both ends.
 
 ## Deviations
 
-*(None yet — added here, dated, as execution finds them, per the rule that a
-deviation is prompted on and recorded before it is executed.)*
+### (a) 2026-09-09, phase 1 — "first caller's parameters win" would have watched the wrong surface
+
+**Found.** Step 1.4 settled the parameter question as *first caller wins*: the
+shared watch is built with the first subscriber's `bounded` and timings, and
+later callers' are ignored. Writing it revealed that this is wrong in the one
+case that matters most.
+
+`bounded` is not a value, it is a **closure** —
+`Future<BoundedWatchSpec> Function()` — and `repoWatchProvider` builds a fresh
+one on every rebuild, closing over that instance's `gitServiceProvider` and
+`connectionProvider.scopedGitDirFor(repoPath)`. Under first-wins, the sequence
+
+1. provider instance 1 calls `watch()`, its closure is stored;
+2. instance 1 is disposed, its subscriber leaves, the watcher is torn down;
+3. instance 2 subscribes after a rebuild — a new git service, or a changed
+   scoped git dir;
+
+builds watcher 2 from **instance 1's closure**, over dependencies that have been
+disposed and state that has changed. For a dotfiles repository whose scoped git
+dir moved, that watches the wrong surface entirely and reports nothing.
+
+**Genuinely pre-existing?** No — it would have been introduced by this phase.
+Today every `watch()` call builds its own lifecycle from its own arguments, so
+staleness is impossible; sharing is what creates the possibility.
+
+**Resolution taken.** The factory is **replaced on every `watch()` call**, so the
+most recent caller's parameters are the ones the NEXT watcher is built with. A
+watcher already running keeps what it was built with — it is not rebuilt
+underneath its subscribers. Documented at `watch()`, since "latest wins" is a
+contract a caller can depend on and a reader would otherwise have to infer.
+
+Rejected: keying the map by a composite of path and `bounded` identity (a fresh
+closure per rebuild would key differently every time, which is sharing that
+never shares), and re-resolving `bounded` per arm inside the shared watch
+(`watchLifecycle` already calls it per arm — the staleness is in *which*
+closure, not in how often it is called).
+
+**Not a scope change.** Same file, same phase, one field made settable.
+
+### (b) 2026-09-09, phase 1 — predicted test fallout did not occur
+
+Step 1.6 expected existing tests that watch one path twice to need updating.
+None did: the ceiling tests use distinct paths, and
+`watch_lease_identity_test.dart` arms the same path **sequentially** (cancel,
+then re-watch), which still yields two watchers and still passes unedited. The
+full suite went 3926 → 3935 with no edits to any existing test.
+
+Recorded because a prediction that does not come true is worth the same line as
+one that does — the next reader should not have to wonder whether the fallout
+was handled or overlooked.
+
+### (c) 2026-09-09, phase 2 — MADR 0029's registry caught the new host script
+
+**Found.** The full suite failed on `test/host_script_coverage_test.dart`:
+
+```text
+Expected: empty
+  Actual: Set:['watchLockReleaseScript']
+a new host script must be executed by a test or added to _exempt with a reason.
+```
+
+Step 2.1 makes `_unlockFragment` public as `watchLockReleaseScript` so the
+client can issue it. MADR 0029's scan finds script builders by **reading
+`lib/`**, not from a hand-kept list, so a new one appears the moment it exists
+and must be classified.
+
+**Why it is a deviation.** Phase 2's file list did not include
+`test/host_script_coverage_test.dart`, and the plan did not anticipate that
+promoting a private fragment to a public builder brings it into 0029's scope.
+
+**Genuinely pre-existing?** No — caused by this step, and correctly. The guard
+did exactly what it is for.
+
+**Resolution taken.** Registered in `_executed`, which is honest: 2.4's
+executing tests run it against a real lock directory both ways round — removing
+a claim this token holds, and declining to remove one it does not. The second
+is the half a string assertion could never establish, since the guard's whole
+value is in the case where it refuses to act. `test/host_script_coverage_test.dart`
+is added to phase 2's file list.
+
+Rejected: adding it to `_exempt`. It is executed; claiming otherwise to quiet a
+scan would be the precise failure 0029 was written about.
+
+### (d) 2026-09-09, phases 1–4 — step 3.1's hoist was unnecessary
+
+Step 3.1 planned to hoist `releaseLease` out of the `WatchArmed` closure so the
+refusal path could reach it. Reading the code, it is not in that closure at all
+— it is a sibling local function declared at line 782, and both refusal paths
+are at 860 and 876. It was already in scope; only the calls were missing.
+
+No hoist was performed. Recorded because a step that turns out to be
+unnecessary should be visible as *checked and not needed* rather than silently
+skipped.
+
+### (e) 2026-09-09, the sabotage round — one no-op mutation and one real gap
+
+The first catalogue run reported **2 survivors**, and they were different
+animals:
+
+* **A no-op mutation.** `p1: the watcher is built eagerly` replaced
+  `return shared.subscribe();` with `shared.build(); return shared.subscribe();`
+  — which creates the lifecycle *object* but never listens to it, so nothing
+  arms and the mutation changed nothing observable. The mutation was wrong, not
+  the test. Rewritten to `shared.build().listen((_) {});`, which actually arms,
+  and it dies.
+* **A real test gap.** `p2: a new arm does not wait for a pending teardown`
+  survived because every existing test settles between cancelling and
+  re-subscribing, so `_teardown` had already completed and the gate was never
+  exercised. Fixed with a test that gives the fake handle a 400 ms cancel,
+  cancels, re-subscribes **without settling**, and asserts the order is
+  `[arm, teardown, arm]` rather than `[arm, arm, teardown]`.
+
+The second is the one worth the entry: the gate had no test at all, and the
+suite was green.
+
+### (f) 2026-09-09, phase-boundary catalogue run — five 0041 anchors un-armed
+
+Running `tool/mutations/0041-watcher-teardown.json` at the boundary reported
+**five DID-NOT-APPLY**, all caused by this work: `releaseLease` became
+`releaseHostClaims` and gained the lock removal, and `_lockPrelude` gained the
+incumbent echo. Every one reported rather than silently passing.
+
+Re-anchored against the current tree and re-run: **27 killed, 0 survived**.
+
+Third time in this session that running the *whole* catalogue at a boundary
+caught anchors a later phase had quietly invalidated (MADR 0039 D9; 0041's own
+execution had two). It is the rule earning its keep, repeatedly.
 
 ## Execution record
 
-*(Added per phase as it lands: what the phase did, the verification output
-rather than a summary of it, and what was not done and why.)*
+Executed 2026-09-09, four phases, one commit each, in plan order. `master` is
+ahead of `origin/master` and nothing has been pushed.
+
+| Phase | Commit | What landed |
+| --- | --- | --- |
+| 1 | `edc06b3` | `_SharedWatch`: one watcher per repository path per service, refcounted by a broadcast controller's own `onListen`/`onCancel`, with the last event replayed to late subscribers |
+| 2 | `2cb8f9b` | `watchLockReleaseScript` (token-guarded, public); teardown awaits it; a new arm waits on a pending teardown, bounded at `sharedTeardownGrace` |
+| 3 | `1fe2da7` | both refusal paths give back the lease they stamped |
+| 4 | `dc62cde` | the refusing script names its incumbent on stderr; the arm reads it and the diagnostic says who |
+
+### Verification, as run
+
+```text
+flutter analyze                          0 issues (every phase boundary)
+flutter test                             3942 passed, 3 skipped, 0 failed
+tool/mutate.py 0043-one-watcher-per-repo 10 killed, 0 survived, 0 did not apply
+tool/mutate.py 0041-watcher-teardown     27 killed, 0 survived, 0 did not apply
+```
+
+Test count 3926 → **3942**.
+
+### The check that earned its keep
+
+Phase 1's first test is MADR F2's reproduction inverted, and it was run against
+the **pre-fix tree** in an isolated `git worktree` before being relied on:
+
+```text
+two concurrent watchers of one path arm exactly once  [E]
+  Expected: an object with length of <1>
+    Actual: ['hm5gqyz6ai0', 'hm5gqyz6ss1']
+```
+
+Two tokens for one repository path — the defect, reproduced on demand. The
+late-subscriber and refcount cases failed there too. After phase 1 the same file
+passes, and the worktree was removed.
+
+### What the sabotage round actually found
+
+Ten mutations, and the two that were not kills were the informative ones —
+recorded in full as deviations (e):
+
+* **one no-op mutation of my own writing**, which created a lifecycle object
+  without listening to it and so armed nothing; the mutation was wrong, not the
+  test;
+* **one real gap**: the teardown gate had *no test at all*. Every existing test
+  settled between cancelling and re-subscribing, so `_teardown` was already
+  null and the gate was never exercised. The suite was green and the feature
+  was unguarded. Closed with an ordering test that asserts
+  `[arm, teardown, arm]`.
+
+And **five 0041 anchors un-armed** by this work's renames, reported as
+DID-NOT-APPLY rather than passing (deviation (f)) — the third time this session
+that running the whole catalogue at a phase boundary caught exactly that.
+
+### What was NOT done, and why
+
+* **The reported symptom has not been confirmed fixed on the maintainer's
+  machine.** Everything here is unit and executing tests plus a pre-fix
+  reproduction; the incident itself was observed in a running app against a
+  real host, and only a rebuild there can close it.
+* **The cross-session case has not been re-verified live** — that two tabs on
+  one repository still produce exactly one watcher and one *honest* refusal.
+  This is the check that matters most, because this work makes the client stop
+  reaching the lock by accident and must not have made it stop reaching the
+  lock at all. It needs two tabs, which this session cannot produce. The
+  per-service scoping is unit-tested (`two services on one path arm twice`), so
+  the mechanism is right; the end-to-end behaviour is unconfirmed.
+* **MADR F9 remains open**: what created the second subscription in a
+  single-tab session is still unidentified. The class is closed — one session
+  cannot arm one repository twice — but the trigger was never named, so the
+  record's open question stands rather than being quietly retired.
+* **Step 3.1's hoist was not performed** — it was unnecessary (deviation (d)).
+* **Eight files report `dart format` drift** that this work never touched
+  (`undo_scripts_test.dart` among them), the same pre-existing set noted in
+  MADR 0042's execution record. Not staged, not this plan's to tidy.
