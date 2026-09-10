@@ -221,6 +221,29 @@ void main() {
     );
   });
 
+  test('teardown gives the repository lock back, token-guarded', () async {
+    // MADR 0043 F3/F4: the next arm for this path waits on the teardown, so
+    // the teardown finishing has to mean the lock is actually gone. Closing
+    // the channel usually achieves that within a second on its own; this is
+    // the part the next arm is allowed to rely on.
+    final executor = await armThenCancel();
+
+    final release = executor.commands.where((c) => c.contains('mg-watch.lock'));
+    expect(
+      release,
+      isNotEmpty,
+      reason: 'the teardown releases the lock it claimed',
+    );
+    expect(
+      release.single,
+      contains('token'),
+      reason:
+          'guarded by ownership: between deciding to tear down and this '
+          'running, another watcher may legitimately have taken the lock, and '
+          'removing it would delete a live watcher\'s exclusion',
+    );
+  });
+
   test(
     'teardown never removes the pid file, which is the watcher\'s',
     () async {

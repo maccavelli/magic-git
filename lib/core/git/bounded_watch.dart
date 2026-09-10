@@ -204,10 +204,31 @@ String _lockPrelude(WatchLock lock, {required Duration staleAfter}) {
 ///
 /// A watcher whose lock was stolen while it was dying must not delete the new
 /// owner's claim.
-String _unlockFragment(WatchLock lock) {
+String _unlockFragment(WatchLock lock) => '${watchLockReleaseScript(lock)} ';
+
+/// Releases [lock] — but only while this instance still holds it.
+///
+/// Issued two ways, and the guard is what makes both safe: by the watcher's own
+/// `cleanup()` trap as it exits, and by the CLIENT at teardown, which does not
+/// wait for the watcher to notice its channel closed. Whichever gets there
+/// first wins and the other becomes a no-op, because both check the token
+/// before removing anything.
+///
+/// The guard is not ceremony. Between deciding to tear down and the removal
+/// actually running, another watcher may legitimately have taken this lock —
+/// the steal path in [_lockPrelude] exists precisely so a crashed holder does
+/// not poison a repository forever. Removing a lock this instance no longer
+/// owns would delete a live watcher's exclusion and let a third arm in.
+///
+/// The client issues this so that the NEXT arm for this repository does not
+/// race the dying watcher's own cleanup. That race is short — the host releases
+/// in well under a second (MADR 0043 F4) — and it is exactly long enough for a
+/// re-arm to be refused by its own predecessor, which is what MADR 0043 is
+/// about.
+String watchLockReleaseScript(WatchLock lock) {
   final dir = ShellEscaper.escape(watchLockDir(lock.gitDir));
   final tok = ShellEscaper.escape(lock.token);
-  return '[ "\$(cat $dir/token 2>/dev/null)" = $tok ] && rm -rf $dir; ';
+  return '[ "\$(cat $dir/token 2>/dev/null)" = $tok ] && rm -rf $dir;';
 }
 
 /// Supervises [inner] — a watcher invocation, which must `exec` — so that it

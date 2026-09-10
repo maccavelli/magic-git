@@ -19,6 +19,12 @@ const _executed = <String>{
   'recursiveWatchScript',
   'boundedInotifyScript',
   'boundedFswatchScript',
+  // Run against a real lock directory in watch_lease_teardown_exec_test.dart,
+  // both ways round: it removes a claim this token holds, and refuses to
+  // remove one it does not (MADR 0043 phase 2). The second half is the one a
+  // string assertion could never establish — the guard is a token comparison
+  // whose whole value is in the case where it declines to act.
+  'watchLockReleaseScript',
 };
 
 /// Builders that cannot be executed on the development machine.

@@ -201,7 +201,35 @@ class _SharedWatch {
   /// Builds the watcher. Called by [_out] when the first subscriber arrives —
   /// never at construction, so a stream handed out by [RemoteWatchService.watch]
   /// and never listened to arms nothing.
+  /// A teardown still settling, if the last subscriber left recently.
+  ///
+  /// Retained so the NEXT subscriber can wait for it. The host releases its
+  /// lock in well under a second (MADR 0043 F4), and an arm that reaches the
+  /// host inside that window is refused by its own predecessor — the whole
+  /// subject of MADR 0043.
+  Future<void>? _teardown;
+
   void _attach() {
+    final pending = _teardown;
+    if (pending == null) {
+      _build();
+      return;
+    }
+    // Wait for the previous watcher to give its lock back before claiming it.
+    // Bounded: on expiry, arm anyway and take today's race rather than leave
+    // the repository permanently unwatchable.
+    unawaited(
+      pending
+          .timeout(RemoteWatchService.sharedTeardownGrace, onTimeout: () {})
+          .whenComplete(() {
+            // Everyone may have left again while we waited; if so there is
+            // nothing to build for, and _attach will run again if they return.
+            if (_out.hasListener) _build();
+          }),
+    );
+  }
+
+  void _build() {
     final Stream<RepoWatchEvent> source;
     try {
       source = build();
@@ -234,7 +262,21 @@ class _SharedWatch {
     // described a live watcher: by the time anyone attaches again, this
     // watcher is gone and its mode is meaningless.
     _last = null;
-    unawaited(source?.cancel() ?? Future<void>.value());
+    if (source == null) {
+      _teardown = null;
+      return;
+    }
+    // Cancelling reaches `watchLifecycle.stop()`, whose teardown now awaits the
+    // host giving back the lock — so this future settling is the signal the
+    // next arm needs.
+    final teardown = source.cancel();
+    _teardown = teardown;
+    unawaited(
+      teardown.whenComplete(() {
+        // Only clear it if no LATER teardown has replaced it in the meantime.
+        if (identical(_teardown, teardown)) _teardown = null;
+      }),
+    );
   }
 
   /// A stream for one subscriber: the retained event first, then the live feed.
@@ -347,6 +389,26 @@ class RemoteWatchService {
     final derived = _streamBudget() - reservedStreams;
     return derived < 1 ? 1 : derived;
   }
+
+  /// How long a new arm waits for a previous watcher of the same repository to
+  /// finish giving back its host lock, before proceeding anyway.
+  ///
+  /// Three minutes, matching `recoveryInterval` — the cadence a degraded
+  /// repository already waits on, so this gate can never make one wait longer
+  /// than the system's existing worst case.
+  ///
+  /// **It should never be reached.** The teardown it waits on is bounded by its
+  /// own 15-second command timeout (`releaseHostClaims`), so a realistic
+  /// teardown settles in seconds. This is the backstop for a future that never
+  /// completes at all, and the cost of reaching it is a repository with no
+  /// watcher AND no polling for the duration — the lifecycle has not been built
+  /// yet, so nothing emits. That is why the two bounds are coupled, and why
+  /// removing the inner one turns this into a three-minute stall (MADR 0043).
+  ///
+  /// Proceeding anyway on expiry is deliberate: it yields today's behaviour — a
+  /// possible race with a dying watcher — and never a repository that cannot be
+  /// watched again because one teardown wedged.
+  static const Duration sharedTeardownGrace = Duration(minutes: 3);
 
   /// How often the client refreshes a watcher's heartbeat while it is alive.
   static const Duration heartbeatInterval = Duration(seconds: 60);
@@ -701,24 +763,38 @@ class RemoteWatchService {
             }
           }
 
-          /// Removes this instance's lease, so the watcher stops seeing a live
-          /// client. Best-effort by construction — see the call site.
-          Future<void> releaseLease() async {
+          /// Gives back everything this arm claimed on the host: its lease,
+          /// and — while it still owns it — the repository lock.
+          ///
+          /// Best-effort by construction. The common failure is a disconnected
+          /// executor, which is also the case where the watcher has already
+          /// taken stdin EOF and released these itself; nothing to report and
+          /// nothing to retry.
+          ///
+          /// **The 15-second timeout is load-bearing and coupled to
+          /// `_SharedWatch`'s teardown gate.** That gate holds the next arm for
+          /// this path until this future settles, bounded at
+          /// [sharedTeardownGrace]. Because this call cannot take longer than
+          /// its own timeout, the gate's bound is a backstop that should never
+          /// be reached. Remove this timeout and the gate becomes a
+          /// three-minute stall on a repository with no watcher and no polling
+          /// (MADR 0043 plan, decision 3).
+          Future<void> releaseHostClaims() async {
             try {
               await _executor.execute(
                 repoPath: repoPath,
                 gitArgs: [
                   'sh',
                   '-c',
-                  'rm -f ${ShellEscaper.escape(heartbeat)}',
+                  'rm -f ${ShellEscaper.escape(heartbeat)}; '
+                      '${watchLockReleaseScript(lock)}',
                 ],
                 lane: ExecLane.isolated,
                 timeout: const Duration(seconds: 15),
               );
             } catch (_) {
-              // The common failure is a disconnected executor, which is also
-              // the case where the watcher has already taken stdin EOF and
-              // gone. Nothing to report and nothing to retry.
+              // See the doc comment: swallowing is the contract, not an
+              // oversight.
             }
           }
 
@@ -936,7 +1012,7 @@ class RemoteWatchService {
             await sub.cancel();
             await errSub.cancel();
             await handle.cancel();
-            // RELEASE THE LEASE. Closing the channel is the fast path — the
+            // RELEASE THE HOST CLAIMS. Closing the channel is the fast path — the
             // watcher's stdin reaches EOF and its trap runs within a second
             // (0041 F11) — and this is the backstop's backstop, for the case
             // where the channel died without the host noticing. Without it the
@@ -954,7 +1030,12 @@ class RemoteWatchService {
             // command client. Unawaited and swallowing, because a teardown
             // during a disconnect has no executor to talk to and must not fail
             // or stall for it.
-            unawaited(releaseLease());
+            // AWAITED, where this used to be fire-and-forget. The next arm for
+            // this repository waits on this future before it opens its own
+            // stream, so "the teardown finished" has to mean "the host lock is
+            // gone" — otherwise the gate lets the arm through into exactly the
+            // window it exists to close (MADR 0043 F3, F4).
+            await releaseHostClaims();
           });
         } catch (_) {
           // Idempotent (`armCounted`), so this is safe even on the paths that

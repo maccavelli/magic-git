@@ -444,4 +444,83 @@ void main() {
       );
     });
   });
+
+  // ---- the teardown seam (MADR 0043 phase 2) -----------------------------
+  //
+  // The host releases its lock in well under a second after a channel closes
+  // (0043 F4). Under a second is not zero, and an arm that reaches the host
+  // inside that window is refused by its OWN predecessor — a healthy
+  // repository degrading to polling because it collided with itself.
+  //
+  // These run the real generated script against real processes, because the
+  // window only exists on a real host and a fake executor cannot have one.
+
+  group('a re-arm does not collide with its own predecessor', () {
+    WatchLock lockFor(String token) =>
+        (gitDir: '${dir.path}/.git', token: token);
+
+    test(
+      'the client releases the lock without waiting for the watcher',
+      () async {
+        File('${dir.path}/.git/mg-watch.a.hb').writeAsStringSync('');
+        final first = await start(token: 'a', lock: lockFor('a'));
+        expect(await settles(() async => arms() == 1), isTrue);
+        expect(
+          Directory('${dir.path}/.git/mg-watch.lock').existsSync(),
+          isTrue,
+          reason: 'the first watcher holds the claim',
+        );
+
+        // What the client's teardown issues, verbatim from the production
+        // builder — the guarded release, run while the watcher is still alive.
+        await Process.run('sh', ['-c', watchLockReleaseScript(lockFor('a'))]);
+
+        expect(
+          Directory('${dir.path}/.git/mg-watch.lock').existsSync(),
+          isFalse,
+          reason:
+              'the client owns this claim and can give it back immediately, '
+              'rather than waiting for the watcher to notice its channel closed',
+        );
+
+        // And a fresh arm now succeeds where it would have been refused.
+        File('${dir.path}/.git/mg-watch.b.hb').writeAsStringSync('');
+        final second = await start(token: 'b', lock: lockFor('b'));
+        expect(
+          await settles(() async => arms() == 2),
+          isTrue,
+          reason:
+              'the successor arms instead of being refused by its own '
+              'predecessor',
+        );
+
+        first.kill(ProcessSignal.sigkill);
+        second.kill(ProcessSignal.sigkill);
+      },
+    );
+
+    test('the release refuses to remove a claim it no longer owns', () async {
+      File('${dir.path}/.git/mg-watch.a.hb').writeAsStringSync('');
+      final p = await start(token: 'a', lock: lockFor('a'));
+      expect(await settles(() async => arms() == 1), isTrue);
+
+      // Someone else took it over in the meantime — the steal path exists so a
+      // crashed holder cannot poison a repository, and it can land between a
+      // client deciding to tear down and its release actually running.
+      File(
+        '${dir.path}/.git/mg-watch.lock/token',
+      ).writeAsStringSync('someone-else');
+
+      await Process.run('sh', ['-c', watchLockReleaseScript(lockFor('a'))]);
+
+      expect(
+        Directory('${dir.path}/.git/mg-watch.lock').existsSync(),
+        isTrue,
+        reason:
+            'removing a claim this token no longer holds would delete a live '
+            "watcher's exclusion and let a third arm in",
+      );
+      p.kill(ProcessSignal.sigkill);
+    });
+  });
 }
