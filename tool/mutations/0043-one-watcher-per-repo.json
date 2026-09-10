@@ -1,92 +1,93 @@
 [
-  {
-    "label": "p1: sharing removed \u2014 every watch() builds its own watcher",
-    "file": "lib/core/git/remote_watch_service.dart",
-    "find": "    return shared.subscribe();",
-    "replace": "    return shared.build();",
-    "tests": [
-      "test/watch_shared_path_test.dart"
-    ]
-  },
-  {
-    "label": "p1: the watcher is built eagerly, not on the first subscriber",
-    "file": "lib/core/git/remote_watch_service.dart",
-    "find": "    return shared.subscribe();",
-    "replace": "    shared.build().listen((_) {});\n    return shared.subscribe();",
-    "tests": [
-      "test/watch_shared_path_test.dart"
-    ]
-  },
-  {
-    "label": "p1: the last event is not replayed to a late subscriber",
-    "file": "lib/core/git/remote_watch_service.dart",
-    "find": "        final last = _last;\n        if (last != null) controller.add(last);",
-    "replace": "",
-    "tests": [
-      "test/watch_shared_path_test.dart"
-    ]
-  },
-  {
-    "label": "p1: the shared map is static, so two tabs share one watcher",
-    "file": "lib/core/git/remote_watch_service.dart",
-    "find": "  final Map<String, _SharedWatch> _shared = {};",
-    "replace": "  static final Map<String, _SharedWatch> _shared = {};",
-    "tests": [
-      "test/watch_shared_path_test.dart"
-    ]
-  },
-  {
-    "label": "p1: the factory is not refreshed, so a rebuild keeps a stale closure",
-    "file": "lib/core/git/remote_watch_service.dart",
-    "find": "    shared.build = () => _createLifecycle(",
-    "replace": "    shared.buildOnce ??= () => _createLifecycle(",
-    "tests": [
-      "test/watch_shared_path_test.dart"
-    ]
-  },
-  {
-    "label": "p2: teardown does not give the lock back",
-    "file": "lib/core/git/remote_watch_service.dart",
-    "find": "            await releaseHostClaims();\n          });",
-    "replace": "          });",
-    "tests": [
-      "test/watch_lease_release_test.dart"
-    ]
-  },
-  {
-    "label": "p2: the lock release loses its ownership guard",
-    "file": "lib/core/git/bounded_watch.dart",
-    "find": "  return '[ \"\\$(cat $dir/token 2>/dev/null)\" = $tok ] && rm -rf $dir;';",
-    "replace": "  return 'rm -rf $dir;';",
-    "tests": [
-      "test/watch_lease_teardown_exec_test.dart"
-    ]
-  },
-  {
-    "label": "p2: a new arm does not wait for a pending teardown",
-    "file": "lib/core/git/remote_watch_service.dart",
-    "find": "    final pending = _teardown;\n    if (pending == null) {",
-    "replace": "    final pending = null as Future<void>?;\n    if (pending == null) {",
-    "tests": [
-      "test/watch_shared_path_test.dart"
-    ]
-  },
-  {
-    "label": "p3: a refused arm strands the lease it stamped",
-    "file": "lib/core/git/remote_watch_service.dart",
-    "find": "              final incumbent = await _incumbentToken(handle);\n              await releaseHostClaims();",
-    "replace": "              final incumbent = await _incumbentToken(handle);",
-    "tests": [
-      "test/watch_lease_release_test.dart"
-    ]
-  },
-  {
-    "label": "p4: the refusal does not name its incumbent",
-    "file": "lib/core/git/bounded_watch.dart",
-    "find": "      'then echo \"mg-watch: lock held by \\$o\" >&2; '\n      'exit $boundedWatchLockedExit; fi; '",
-    "replace": "      'then exit $boundedWatchLockedExit; fi; '",
-    "tests": [
-      "test/watch_lease_teardown_exec_test.dart"
-    ]
-  }
+ {
+  "label": "p1: sharing removed — every watch() builds its own watcher",
+  "file": "lib/core/git/remote_watch_service.dart",
+  "find": "    return shared.subscribe();",
+  "replace": "    return shared.build();",
+  "tests": [
+   "test/watch_shared_path_test.dart"
+  ]
+ },
+ {
+  "label": "p1: the watcher is built eagerly, not on the first subscriber",
+  "file": "lib/core/git/remote_watch_service.dart",
+  "find": "    return shared.subscribe();",
+  "replace": "    shared.build().listen((_) {});\n    return shared.subscribe();",
+  "tests": [
+   "test/watch_shared_path_test.dart"
+  ]
+ },
+ {
+  "label": "p1: the last event is not replayed to a late subscriber",
+  "file": "lib/core/git/remote_watch_service.dart",
+  "find": "        final last = _last;\n        if (last != null) controller.add(last);",
+  "replace": "",
+  "tests": [
+   "test/watch_shared_path_test.dart"
+  ]
+ },
+ {
+  "label": "p1: the shared map is static, so two tabs share one watcher",
+  "file": "lib/core/git/remote_watch_service.dart",
+  "find": "  final Map<String, _SharedWatch> _shared = {};",
+  "replace": "  static final Map<String, _SharedWatch> _shared = {};",
+  "tests": [
+   "test/watch_shared_path_test.dart"
+  ]
+ },
+ {
+  "label": "p1: the factory is not refreshed, so a rebuild keeps a stale closure",
+  "file": "lib/core/git/remote_watch_service.dart",
+  "find": "    shared.build = () => _createLifecycle(",
+  "replace": "    shared.buildOnce ??= () => _createLifecycle(",
+  "tests": [
+   "test/watch_shared_path_test.dart"
+  ]
+ },
+ {
+  "label": "p2: teardown does not give the lock back",
+  "file": "lib/core/git/remote_watch_service.dart",
+  "find": "            await releaseHostClaims();\n          });",
+  "replace": "          });",
+  "tests": [
+   "test/watch_lease_release_test.dart"
+  ]
+ },
+ {
+  "label": "p2: the lock release loses its ownership guard",
+  "file": "lib/core/git/bounded_watch.dart",
+  "find": "  return '[ \"\\$(cat $dir/token 2>/dev/null)\" = $tok ] && rm -rf $dir;';",
+  "replace": "  return 'rm -rf $dir;';",
+  "tests": [
+   "test/watch_lease_teardown_exec_test.dart"
+  ]
+ },
+ {
+  "label": "p2: a new arm does not wait for a pending teardown",
+  "file": "lib/core/git/remote_watch_service.dart",
+  "find": "    final pending = _teardown;\n    if (pending == null) {",
+  "replace": "    final pending = null as Future<void>?;\n    if (pending == null) {",
+  "tests": [
+   "test/watch_shared_path_test.dart"
+  ]
+ },
+ {
+  "label": "p3: a refused arm strands the lease it stamped",
+  "file": "lib/core/git/remote_watch_service.dart",
+  "find": "              await errSub.cancel();\n              await handle.cancel();\n              await releaseHostClaims();\n              // Already in hand:",
+  "replace": "              await errSub.cancel();\n              await handle.cancel();\n              // Already in hand:",
+  "tests": [
+   "test/watch_lease_release_test.dart",
+   "test/watch_arm_signal_test.dart"
+  ]
+ },
+ {
+  "label": "p4: the refusal does not name its incumbent",
+  "file": "lib/core/git/bounded_watch.dart",
+  "find": "      'then echo \"mg-watch: lock held by \\$o\" >&2; '\n      'exit $boundedWatchLockedExit; fi; '",
+  "replace": "      'then exit $boundedWatchLockedExit; fi; '",
+  "tests": [
+   "test/watch_lease_teardown_exec_test.dart"
+  ]
+ }
 ]

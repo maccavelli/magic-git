@@ -1,0 +1,93 @@
+[
+ {
+  "label": "p1: the marker is emitted before the lock prelude, so a refusal announces itself",
+  "file": "lib/core/git/bounded_watch.dart",
+  "find": "  final prelude =\n      (lock == null ? '' : _lockPrelude(lock, staleAfter: staleAfter)) +\n      _recordPid(pidFile);",
+  "replace": "  final prelude =\n      _armedMarker() +\n      (lock == null ? '' : _lockPrelude(lock, staleAfter: staleAfter)) +\n      _recordPid(pidFile);",
+  "tests": [
+   "test/watch_lease_teardown_exec_test.dart"
+  ]
+ },
+ {
+  "label": "p1: the marker is emitted before the lease-alive check",
+  "file": "lib/core/git/bounded_watch.dart",
+  "find": "      'trap cleanup TERM INT HUP; '\n      '{ $leaseAlive; } || { ${release}exit 0; }; '\n      '{ $inner; } & w=\\$!; '\n      '${_armedMarker()}'",
+  "replace": "      'trap cleanup TERM INT HUP; '\n      '${_armedMarker()}'\n      '{ $leaseAlive; } || { ${release}exit 0; }; '\n      '{ $inner; } & w=\\$!; '",
+  "tests": [
+   "test/watch_lease_teardown_exec_test.dart"
+  ]
+ },
+ {
+  "label": "p1: no arm announces anything, so every arm waits out the ceiling",
+  "file": "lib/core/git/bounded_watch.dart",
+  "find": "String _armedMarker() => 'echo ${ShellEscaper.escape(watchArmedMarker)} >&2; ';",
+  "replace": "String _armedMarker() => '';",
+  "tests": [
+   "test/watch_lease_teardown_exec_test.dart"
+  ]
+ },
+ {
+  "label": "p2: the arm waits for the exit status alone, as it did before",
+  "file": "lib/core/git/remote_watch_service.dart",
+  "find": "                await Future.any<_ArmProbe>([\n                  handle.exitCode.then((c) => (exit: c, ready: false)),\n                  ready.future.then((_) => (exit: null, ready: true)),\n                ]).timeout(",
+  "replace": "                await Future.any<_ArmProbe>([\n                  handle.exitCode.then((c) => (exit: c, ready: false)),\n                ]).timeout(",
+  "tests": [
+   "test/watch_arm_signal_test.dart"
+  ]
+ },
+ {
+  "label": "p2: the marker is treated as startup noise, so nothing settles a healthy arm",
+  "file": "lib/core/git/remote_watch_service.dart",
+  "find": "              if (line == watchArmedMarker) {",
+  "replace": "              if (_isWatcherStartupNoise(line)) {",
+  "tests": [
+   "test/watch_arm_signal_test.dart"
+  ]
+ },
+ {
+  "label": "p2: the readiness completer is completed unconditionally",
+  "file": "lib/core/git/remote_watch_service.dart",
+  "find": "                if (!ready.isCompleted) ready.complete();",
+  "replace": "                ready.complete();",
+  "tests": [
+   "test/watch_arm_signal_test.dart"
+  ]
+ },
+ {
+  "label": "p2: the incumbent is captured but never kept",
+  "file": "lib/core/git/remote_watch_service.dart",
+  "find": "                if (held != null) incumbent ??= held[1];",
+  "replace": "                if (held != null) incumbent ??= incumbent;",
+  "tests": [
+   "test/watch_arm_signal_test.dart",
+   "test/watch_lease_release_test.dart"
+  ]
+ },
+ {
+  "label": "p2: the ceiling claims a readiness it never saw",
+  "file": "lib/core/git/remote_watch_service.dart",
+  "find": "              onTimeout: () => (exit: null, ready: false),",
+  "replace": "              onTimeout: () => (exit: null, ready: true),",
+  "tests": [
+   "test/watch_arm_signal_test.dart"
+  ]
+ },
+ {
+  "label": "p2: the stderr listener is attached after the race, as it used to be",
+  "file": "lib/core/git/remote_watch_service.dart",
+  "find": "          final ready = Completer<void>();\n          String? incumbent;",
+  "replace": "          final ready = Completer<void>()..complete();\n          String? incumbent;",
+  "tests": [
+   "test/watch_arm_signal_test.dart"
+  ]
+ },
+ {
+  "label": "p2: a refused arm keeps its slot",
+  "file": "lib/core/git/remote_watch_service.dart",
+  "find": "            if (early == boundedWatchLockedExit) {\n              releaseSlot();",
+  "replace": "            if (early == boundedWatchLockedExit) {",
+  "tests": [
+   "test/watch_arm_signal_test.dart"
+  ]
+ }
+]
