@@ -19,40 +19,8 @@ import 'package:remote_magic_git/core/git/watch_event.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 
+import 'helpers/fake_watcher_handle.dart';
 import 'helpers/watch_settle.dart';
-
-/// A live stream handle whose watcher never exits on its own, so a watcher
-/// stays armed until it is torn down.
-class _Handle implements CommandStreamHandle {
-  _Handle(this._log, this._cancelDelay);
-
-  final List<String> _log;
-
-  /// How long this watcher takes to finish being torn down. Non-zero in the
-  /// test that cares about the ORDER of teardown against the next arm — the
-  /// window MADR 0043 F4 measured on a real host, made observable here.
-  final Duration _cancelDelay;
-
-  final _out = StreamController<String>.broadcast();
-  final _err = StreamController<String>.broadcast();
-  var cancelled = false;
-
-  @override
-  Stream<String> get stdout => _out.stream;
-  @override
-  Stream<String> get stderr => _err.stream;
-  @override
-  Future<int?> get exitCode => Completer<int?>().future;
-  @override
-  Future<void> cancel() async {
-    if (cancelled) return;
-    cancelled = true;
-    if (_cancelDelay > Duration.zero) await Future<void>.delayed(_cancelDelay);
-    await _out.close();
-    await _err.close();
-    _log.add('teardown');
-  }
-}
 
 /// Records every arm, so "how many watchers exist" is a number rather than an
 /// inference.
@@ -63,7 +31,7 @@ class _ArmRecorder extends SSHCommandExecutor {
   final Duration cancelDelay;
 
   final tokens = <String>[];
-  final handles = <_Handle>[];
+  final handles = <FakeWatcherHandle>[];
 
   /// 'arm' and 'teardown' in the order they happened.
   final log = <String>[];
@@ -98,7 +66,10 @@ class _ArmRecorder extends SSHCommandExecutor {
       RegExp(r'mg-watch\.(\w+)\.pid').firstMatch(gitArgs.join(' '))?[1] ?? '?',
     );
     log.add('arm');
-    final h = _Handle(log, cancelDelay);
+    final h = FakeWatcherHandle.armed(
+      cancelDelay: cancelDelay,
+      onTeardown: () => log.add('teardown'),
+    );
     handles.add(h);
     return h;
   }

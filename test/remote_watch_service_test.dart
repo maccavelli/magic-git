@@ -7,6 +7,7 @@ import 'package:remote_magic_git/core/git/remote_watch_service.dart';
 import 'package:remote_magic_git/core/git/watch_event.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
+import 'helpers/fake_watcher_handle.dart';
 import 'helpers/watch_settle.dart';
 
 class _FakeExecutor extends SSHCommandExecutor {
@@ -69,26 +70,6 @@ class _ThrowingStreamExecutor extends SSHCommandExecutor {
   }
 }
 
-/// A live-but-silent stream handle: the watcher channel opens fine and then
-/// just never emits (no file changes). Lets a test hold the service in
-/// event-driven mode.
-class _SilentStreamHandle implements SSHStreamHandle {
-  final _stdout = StreamController<String>();
-  final _stderr = StreamController<String>();
-
-  @override
-  Stream<String> get stdout => _stdout.stream;
-  @override
-  Stream<String> get stderr => _stderr.stream;
-  @override
-  Future<int?> get exitCode => Completer<int?>().future;
-  @override
-  Future<void> cancel() async {
-    if (!_stdout.isClosed) await _stdout.close();
-    if (!_stderr.isClosed) await _stderr.close();
-  }
-}
-
 /// Reports no watcher tool on the first probe (degrading the service to
 /// polling), then fswatch on every later probe with a working channel — the
 /// "recovered from polling" path.
@@ -125,41 +106,7 @@ class _RecoveringExecutor extends SSHCommandExecutor {
     OperationDescriptor? operation,
     OperationEventCallback? onOperationEvent,
   }) async {
-    return _SilentStreamHandle();
-  }
-}
-
-/// A stream handle the test drives directly — stdout and stderr both.
-class _DrivableStreamHandle implements SSHStreamHandle {
-  final _stdout = StreamController<String>();
-  final _stderr = StreamController<String>();
-
-  /// Chunks handed to the service's listener so far. Delivery is one event per
-  /// microtask and the listener body is synchronous, so once this reaches the
-  /// number pushed, the last callback has run.
-  int delivered = 0;
-
-  void emitStdout(String chunk) {
-    if (!_stdout.isClosed) _stdout.add(chunk);
-  }
-
-  void emitStderr(String chunk) {
-    if (!_stderr.isClosed) _stderr.add(chunk);
-  }
-
-  @override
-  Stream<String> get stdout => _stdout.stream.map((c) {
-    delivered++;
-    return c;
-  });
-  @override
-  Stream<String> get stderr => _stderr.stream;
-  @override
-  Future<int?> get exitCode => Completer<int?>().future;
-  @override
-  Future<void> cancel() async {
-    if (!_stdout.isClosed) await _stdout.close();
-    if (!_stderr.isClosed) await _stderr.close();
+    return FakeWatcherHandle.armed();
   }
 }
 
@@ -169,7 +116,7 @@ class _DrivableExecutor extends SSHCommandExecutor {
     : super(SSHClientManager());
 
   final String tool;
-  final _DrivableStreamHandle handle;
+  final FakeWatcherHandle handle;
   final armed = Completer<void>();
   List<String> lastStreamArgs = const [];
 
@@ -242,7 +189,7 @@ class _ProbeFailsOnceExecutor extends SSHCommandExecutor {
     Duration openTimeout = SSHCommandExecutor.defaultTimeout,
     OperationDescriptor? operation,
     OperationEventCallback? onOperationEvent,
-  }) async => _SilentStreamHandle();
+  }) async => FakeWatcherHandle.armed();
 }
 
 /// Hands out a FRESH handle per arm — the single-handle fake above cannot be
@@ -250,7 +197,7 @@ class _ProbeFailsOnceExecutor extends SSHCommandExecutor {
 class _MultiArmExecutor extends SSHCommandExecutor {
   _MultiArmExecutor() : super(SSHClientManager());
 
-  final handles = <_DrivableStreamHandle>[];
+  final handles = <FakeWatcherHandle>[];
 
   @override
   Future<SSHCommandResult> execute({
@@ -278,7 +225,7 @@ class _MultiArmExecutor extends SSHCommandExecutor {
     OperationDescriptor? operation,
     OperationEventCallback? onOperationEvent,
   }) async {
-    final h = _DrivableStreamHandle();
+    final h = FakeWatcherHandle.armed();
     handles.add(h);
     return h;
   }
@@ -444,7 +391,7 @@ void main() {
       // Well under 512 (watchLifecycle's maxPaths) so the burst stays
       // path-scoped instead of overflowing to an unscoped tick.
       final paths = [for (var i = 0; i < 60; i++) 'src/m$i/f$i.dart'];
-      final handle = _DrivableStreamHandle();
+      final handle = FakeWatcherHandle.armed();
       final executor = _DrivableExecutor(tool: 'inotifywait', handle: handle);
       final service = RemoteWatchService(executor);
 
@@ -477,7 +424,7 @@ void main() {
       ].join('\n');
       final chunks = _chunk('$blob\n', 32 * 1024);
 
-      final handle = _DrivableStreamHandle();
+      final handle = FakeWatcherHandle.armed();
       final executor = _DrivableExecutor(tool: 'inotifywait', handle: handle);
       final service = RemoteWatchService(executor);
       final sub = service.watch('/repo').listen((_) {});
@@ -509,7 +456,7 @@ void main() {
   // ---- 0024 H3: the watcher's stderr -------------------------------------
   group('watcher diagnostics', () {
     test('a diagnostic on stderr is surfaced, not discarded', () async {
-      final handle = _DrivableStreamHandle();
+      final handle = FakeWatcherHandle.armed();
       final executor = _DrivableExecutor(tool: 'inotifywait', handle: handle);
       final diagnostics = <String>[];
       final service = RemoteWatchService(
@@ -539,7 +486,7 @@ void main() {
         // lines each time, right where a real message lands — and next to them,
         // for months, sat `--exclude: only the last option will be taken into
         // consideration`, which nobody read (MADR 0041 F8).
-        final handle = _DrivableStreamHandle();
+        final handle = FakeWatcherHandle.armed();
         final executor = _DrivableExecutor(tool: 'inotifywait', handle: handle);
         final diagnostics = <String>[];
         final service = RemoteWatchService(
@@ -581,7 +528,7 @@ void main() {
     test('a flooding watcher cannot fill the log', () async {
       // inotifywait prints one failure line per directory it cannot watch, so
       // a host at its watch limit emits one per entry in the surface.
-      final handle = _DrivableStreamHandle();
+      final handle = FakeWatcherHandle.armed();
       final executor = _DrivableExecutor(tool: 'inotifywait', handle: handle);
       final diagnostics = <String>[];
       final service = RemoteWatchService(
@@ -702,7 +649,7 @@ void main() {
       // Pins the WIRING, not the builder. The builder supported a lease for a
       // while before the arm passed one — a silent no-op that every script-level
       // test still passed. This is the assertion that would have caught it.
-      final handle = _DrivableStreamHandle();
+      final handle = FakeWatcherHandle.armed();
       final executor = _DrivableExecutor(tool: 'inotifywait', handle: handle);
       final service = RemoteWatchService(executor);
       RemoteWatchService.resetWatcherCount();

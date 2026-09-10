@@ -7,30 +7,13 @@
 // processes per minute for up to three minutes after room appeared — and
 // indefinitely if the slots stayed occupied, which is the steady state.
 
-import 'dart:async';
-
 import 'package:flutter_test/flutter_test.dart';
 import 'package:remote_magic_git/core/git/remote_watch_service.dart';
 import 'package:remote_magic_git/core/git/watch_event.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
+import 'helpers/fake_watcher_handle.dart';
 import 'helpers/watch_settle.dart';
-
-class _Handle implements SSHStreamHandle {
-  final _out = StreamController<String>.broadcast();
-  final _err = StreamController<String>.broadcast();
-  @override
-  Stream<String> get stdout => _out.stream;
-  @override
-  Stream<String> get stderr => _err.stream;
-  @override
-  Future<int?> get exitCode => Completer<int?>().future;
-  @override
-  Future<void> cancel() async {
-    await _out.close();
-    await _err.close();
-  }
-}
 
 /// Reports a watcher tool and arms successfully, so every arm holds a slot.
 class _ArmsAlways extends SSHCommandExecutor {
@@ -61,7 +44,7 @@ class _ArmsAlways extends SSHCommandExecutor {
     Duration openTimeout = SSHCommandExecutor.defaultTimeout,
     OperationDescriptor? operation,
     OperationEventCallback? onOperationEvent,
-  }) async => _Handle();
+  }) async => FakeWatcherHandle.armed();
 }
 
 void main() {

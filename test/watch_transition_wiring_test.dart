@@ -13,35 +13,15 @@ import 'package:remote_magic_git/core/git/watch_event.dart';
 import 'package:remote_magic_git/core/git/watch_lifecycle.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
+import 'helpers/fake_watcher_handle.dart';
 import 'helpers/watch_settle.dart';
-
-/// A stream handle that never emits and never exits — a watcher that armed and
-/// is simply waiting, which is the healthy steady state.
-class _SilentHandle implements SSHStreamHandle {
-  final _out = StreamController<String>.broadcast();
-  final _err = StreamController<String>.broadcast();
-  var cancelled = false;
-
-  @override
-  Stream<String> get stdout => _out.stream;
-  @override
-  Stream<String> get stderr => _err.stream;
-  @override
-  Future<int?> get exitCode => Completer<int?>().future;
-  @override
-  Future<void> cancel() async {
-    cancelled = true;
-    await _out.close();
-    await _err.close();
-  }
-}
 
 /// Reports `inotifywait` available and hands out silent handles, so every arm
 /// succeeds and holds its slot.
 class _ArmsAlwaysExecutor extends SSHCommandExecutor {
   _ArmsAlwaysExecutor() : super(SSHClientManager());
 
-  final handles = <_SilentHandle>[];
+  final handles = <FakeWatcherHandle>[];
 
   @override
   Future<SSHCommandResult> execute({
@@ -69,7 +49,7 @@ class _ArmsAlwaysExecutor extends SSHCommandExecutor {
     OperationDescriptor? operation,
     OperationEventCallback? onOperationEvent,
   }) async {
-    final h = _SilentHandle();
+    final h = FakeWatcherHandle.armed();
     handles.add(h);
     return h;
   }

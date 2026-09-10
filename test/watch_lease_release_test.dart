@@ -22,56 +22,7 @@ import 'package:remote_magic_git/core/git/watch_event.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 
-/// A stream handle that stays open until it is cancelled.
-class _OpenHandle implements CommandStreamHandle {
-  final _out = StreamController<String>();
-  final _err = StreamController<String>();
-  final _exit = Completer<int?>();
-  var cancelled = false;
-
-  @override
-  Stream<String> get stdout => _out.stream;
-  @override
-  Stream<String> get stderr => _err.stream;
-  @override
-  Future<int?> get exitCode => _exit.future;
-  @override
-  Future<void> cancel() async {
-    if (cancelled) return;
-    cancelled = true;
-    if (!_exit.isCompleted) _exit.complete(null);
-    await _out.close();
-    await _err.close();
-  }
-}
-
-/// A handle whose process has already exited with [code] — what a script-level
-/// refusal looks like to the arm.
-class _ExitedHandle implements CommandStreamHandle {
-  _ExitedHandle(this.code);
-
-  final int code;
-  // BROADCAST, and that matters. `cancel()` closes these before the arm has
-  // subscribed — a refusal is read from `exitCode` and torn down before the
-  // stdout listener is set up — and closing an unsubscribed SINGLE-subscription
-  // controller returns a future that never completes, so `await handle.cancel()`
-  // hangs and the arm never returns. The real handle closes an SSH session and
-  // has no such wait; a double that does is testing its own bug.
-  final _out = StreamController<String>.broadcast();
-  final _err = StreamController<String>.broadcast();
-
-  @override
-  Stream<String> get stdout => _out.stream;
-  @override
-  Stream<String> get stderr => _err.stream;
-  @override
-  Future<int?> get exitCode async => code;
-  @override
-  Future<void> cancel() async {
-    await _out.close();
-    await _err.close();
-  }
-}
+import 'helpers/fake_watcher_handle.dart';
 
 /// Arms against a handle that exited immediately with [code].
 class _RefusingExecutor extends SSHCommandExecutor {
@@ -117,7 +68,7 @@ class _RefusingExecutor extends SSHCommandExecutor {
     OperationEventCallback? onOperationEvent,
   }) async {
     if (!armed.isCompleted) armed.complete();
-    return _ExitedHandle(code);
+    return FakeWatcherHandle.refused(code);
   }
 }
 
@@ -126,7 +77,7 @@ class _RecordingExecutor extends SSHCommandExecutor {
   _RecordingExecutor({this.throwOnRemove = false}) : super(SSHClientManager());
 
   final bool throwOnRemove;
-  final handle = _OpenHandle();
+  final handle = FakeWatcherHandle.armed();
   final armed = Completer<void>();
   final commands = <String>[];
 
@@ -183,15 +134,19 @@ String? _leaseTouched(List<String> commands) {
   return null;
 }
 
-/// Waits past the arm's early-exit read.
+/// Waits for the arm to settle.
 ///
-/// Since MADR 0041 phase 3 EVERY arm reads `handle.exitCode` with a 250 ms cap
-/// before it commits, so a script-level refusal (no watchable paths, or another
-/// watcher holding the repository) is seen as a refusal rather than as a
-/// watcher that armed and died. That is a real timer, not a microtask, so
-/// `pumpEventQueue()` alone returns before the arm has decided anything.
+/// EVERY arm races a script-level refusal (no watchable paths, or another
+/// watcher holding the repository) against the readiness marker, so a refusal
+/// is seen as a refusal rather than as a watcher that armed and died. Both
+/// signals cross a real event loop, not a microtask, so `pumpEventQueue()`
+/// alone returns before the arm has decided anything.
+///
+/// This used to wait out `RemoteWatchService.armSignalCeiling`'s predecessor —
+/// a flat 250 ms every arm paid — and now only has to outlast a signal that
+/// arrives at once (MADR 0044).
 Future<void> pastEarlyExitRead() =>
-    Future<void>.delayed(const Duration(milliseconds: 400));
+    Future<void>.delayed(const Duration(milliseconds: 50));
 
 void main() {
   setUp(RemoteWatchService.resetWatcherCount);

@@ -146,6 +146,13 @@ List<String> remoteWatcherArgs(
   }
 }
 
+/// What settled an arm: a refusal's exit status, or the readiness marker.
+///
+/// A record rather than a sentinel exit code — `null` is a legitimate status
+/// for a process killed by a signal, so any in-band marker would collide with
+/// it (MADR 0044).
+typedef _ArmProbe = ({int? exit, bool ready});
+
 /// Lines `inotifywait` prints on every arm, which say nothing about this one.
 ///
 /// The budget is [RemoteWatchService.maxDiagnosticLines] lines per arm, and
@@ -410,6 +417,21 @@ class RemoteWatchService {
   /// watched again because one teardown wedged.
   static const Duration sharedTeardownGrace = Duration(minutes: 3);
 
+  /// Upper bound on how long an arm waits for either signal before giving up
+  /// on both and treating the watcher as armed.
+  ///
+  /// **This is a backstop, not a cost.** One of the two always arrives: a
+  /// refusal completes `exitCode` in well under a round trip, and a healthy arm
+  /// writes [watchArmedMarker] to stderr as its next act. Reaching this ceiling
+  /// means a host that produced neither — the case the fixed 250 ms wait
+  /// handled by accident.
+  ///
+  /// Generous, because nothing waits it out in practice. The 250 ms it replaces
+  /// was paid by every arm that SUCCEEDED, which made it 63 % of the cost of a
+  /// tab switch (MADR 0044 F7); this is paid only by an arm that has already
+  /// gone wrong.
+  static const Duration armSignalCeiling = Duration(seconds: 2);
+
   /// How often the client refreshes a watcher's heartbeat while it is alive.
   static const Duration heartbeatInterval = Duration(seconds: 60);
 
@@ -509,27 +531,14 @@ class RemoteWatchService {
   @visibleForTesting
   static void resetWatcherCount() => _liveByHost.clear();
 
-  /// The token a refusing lock script named on stderr, if it named one.
+  /// The token a refusing lock script names on stderr.
   ///
   /// Matches what `_lockPrelude` emits before exiting with
-  /// [boundedWatchLockedExit]. Bounded: the script has already exited by the
-  /// time this runs — that exit status is how the refusal was detected — so
-  /// its stderr is complete and the stream closes at once. The timeout is for
-  /// the case where it does not.
+  /// [boundedWatchLockedExit]. Read line by line by the arm's stderr listener
+  /// as it arrives, rather than by draining the stream after the refusal is
+  /// detected — which used to cost the refusal path its own 250 ms timeout, and
+  /// meant a second subscription on a single-subscription stream (MADR 0044).
   static final RegExp _lockHeldBy = RegExp(r'mg-watch: lock held by (\S+)');
-
-  static Future<String?> _incumbentToken(CommandStreamHandle handle) async {
-    try {
-      final text = await handle.stderr.join().timeout(
-        const Duration(milliseconds: 250),
-        onTimeout: () => '',
-      );
-      return _lockHeldBy.firstMatch(text)?[1];
-    } catch (_) {
-      // Diagnostics must never be the reason an arm fails differently.
-      return null;
-    }
-  }
 
   /// Files one transition against [repoPath], stamping it with the live watcher
   /// count — the field that separates a leaked **slot** (H1: refusals persist
@@ -862,6 +871,54 @@ class RemoteWatchService {
             return const WatchAborted();
           }
 
+          // STDERR IS READ FROM HERE, NOT FROM THE ARMED PATH.
+          //
+          // It carries three things and the arm needs the first two before it
+          // can decide anything: the readiness marker that says this arm
+          // succeeded, the incumbent's token when it did not, and the
+          // watcher's own diagnostics for the rest of its life.
+          //
+          // ONE listener, on every path. It used to be two — this one, and a
+          // `stderr.join()` inside `_incumbentToken` on the refusal path — which
+          // worked only because they were mutually exclusive. dartssh2's stderr
+          // is single-subscription (so is `_OpenHandle` in the tests), so a
+          // second listener would have thrown the moment both ran.
+          //
+          // Attaching before the race also shortens the window in which
+          // `SSHSession._stderrController` queues unread output in the Dart
+          // heap (0024 H3) rather than lengthening it.
+          final ready = Completer<void>();
+          String? incumbent;
+          var diagnosticsSeen = 0;
+          var errBuffer = '';
+          final errSub = handle.stderr.listen((chunk) {
+            errBuffer += chunk;
+            var start = 0;
+            var i = errBuffer.indexOf('\n', start);
+            while (i >= 0) {
+              final line = errBuffer.substring(start, i).trim();
+              start = i + 1;
+              if (line == watchArmedMarker) {
+                // The arm succeeded. Not a diagnostic: it is addressed to this
+                // client, not to the user.
+                if (!ready.isCompleted) ready.complete();
+              } else {
+                final held = _lockHeldBy.firstMatch(line);
+                if (held != null) incumbent ??= held[1];
+                if (line.isNotEmpty &&
+                    !_isWatcherStartupNoise(line) &&
+                    diagnosticsSeen < maxDiagnosticLines) {
+                  diagnosticsSeen++;
+                  developer.log(line, name: 'RemoteWatchService');
+                  onDiagnostic?.call(line);
+                }
+              }
+              i = errBuffer.indexOf('\n', start);
+            }
+            if (start > 0) errBuffer = errBuffer.substring(start);
+            if (errBuffer.length > _maxBufferChars) errBuffer = '';
+          }, onError: (Object _) {});
+
           // A script-level refusal arrives as an exit STATUS, not an exception:
           // the arming scripts exit with a distinct code when none of their
           // paths exist yet (0022 M6) or when another live watcher already holds
@@ -870,18 +927,48 @@ class RemoteWatchService {
           // and died — which would spend the restart budget on three doomed
           // retries first.
           //
-          // EVERY arm now waits, where this used to be bounded-arms-only: the
-          // lock refusal can come from the recursive script too. A live watcher
-          // never completes exitCode, so the cost is one capped 250 ms wait on
-          // a path that already paid for an SSH round trip.
+          // EVERY arm reads this, where it used to be bounded-arms-only: the
+          // lock refusal can come from the recursive script too.
+          //
+          // SETTLED ON A SIGNAL, NOT ON A CLOCK. This was
+          // `exitCode.timeout(250ms)`, and because a live watcher never
+          // completes `exitCode`, every arm that SUCCEEDED paid the full
+          // quarter-second — 63 % of what a tab switch costs, against a median
+          // round trip of 49 ms (MADR 0044 F7). Racing the refusal against
+          // [watchArmedMarker] settles a healthy arm in one round trip instead.
+          //
+          // The race is well-ordered rather than a timing bet, and that is a
+          // property of the script: both refusals exit BEFORE the marker is
+          // emitted, so a refused arm cannot produce it and an armed one always
+          // does.
           {
-            final early = await handle.exitCode.timeout(
-              const Duration(milliseconds: 250),
-              onTimeout: () => null,
-            );
+            final probe =
+                await Future.any<_ArmProbe>([
+                  handle.exitCode.then((c) => (exit: c, ready: false)),
+                  ready.future.then((_) => (exit: null, ready: true)),
+                ]).timeout(
+                  armSignalCeiling,
+                  onTimeout: () => (exit: null, ready: false),
+                );
+            // `Future.any` guards its own completer and drops whichever loses,
+            // and `SSHSession.waitForExit` is safe to await more than once, so
+            // the loser needs no cleanup. A record rather than a sentinel exit
+            // code, because null is a legitimate status for a process killed by
+            // a signal and a sentinel would collide with it.
+            final early = probe.exit;
+            if (!probe.ready && early == null) {
+              // Neither signal inside the ceiling. Nothing on a real host is
+              // known to do this, which is exactly why it is worth saying out
+              // loud: the arm proceeds as before, but silently doing so would
+              // make a host that never announces indistinguishable from a
+              // healthy one that announces in 50 ms.
+              onDiagnostic?.call(
+                'no readiness signal from the watcher on $repoPath within '
+                '${armSignalCeiling.inMilliseconds}ms — arming anyway',
+              );
+            }
             if (early == boundedWatchLockedExit) {
               releaseSlot();
-              await handle.cancel();
               // This arm stamped its lease before opening the stream — the
               // watcher's first act is to test for that file, so the client's
               // mark has to come first (0027 deviation (b)). A refusal never
@@ -890,13 +977,17 @@ class RemoteWatchService {
               // the reporting host (MADR 0043 F6). It claimed no lock, and
               // `releaseHostClaims`'s guard declines to remove one this token
               // does not own — so the incumbent's claim is safe.
-              // Read WHO holds it before tearing the handle down. With one
-              // watcher per path per session now guaranteed (MADR 0043 phase
-              // 1), a token that is not ours means a genuinely foreign session
-              // — which is what this refusal has always claimed and could not
-              // previously show.
-              final incumbent = await _incumbentToken(handle);
+              // WHO holds it. With one watcher per path per session guaranteed
+              // (MADR 0043 phase 1), a token that is not ours means a genuinely
+              // foreign session — which is what this refusal has always claimed
+              // and could not previously show. Reading it no longer has to race
+              // the teardown: the listener has had it since the line arrived.
+              await errSub.cancel();
+              await handle.cancel();
               await releaseHostClaims();
+              // Already in hand: the listener above captured it as the line
+              // arrived. This used to be a second `stderr.join()` with its own
+              // 250 ms timeout, so the refusal path is faster too.
               final held = incumbent == null ? '' : ' (token $incumbent)';
               onDiagnostic?.call(
                 'another live watcher already holds $repoPath$held '
@@ -914,6 +1005,7 @@ class RemoteWatchService {
             }
             if (spec != null && early == boundedWatchNoPathsExit) {
               releaseSlot();
+              await errSub.cancel();
               await handle.cancel();
               // Same stranded lease, same reason — this refusal also happens
               // after the stamp and before any `WatchArmed`.
@@ -1005,43 +1097,10 @@ class RemoteWatchService {
             },
           );
 
-          // Read stderr even when no one is listening to the diagnostics.
-          //
-          // Two reasons, and both bite. `inotifywait` reports per-directory
-          // failures here — canonically "upper limit on inotify watches reached"
-          // — which is the one message that says WHY a watcher died and names
-          // the sysctl to raise; it used to be dropped, leaving a silent polling
-          // fallback. And dartssh2's `SSHSession._stderrController` is a
-          // single-subscription controller with no listener
-          // (ssh_session.dart:74), so unread stderr is queued in the Dart heap
-          // for the life of the channel — and the watcher's channel is the
-          // longest-lived one in the app (0024 H3).
           // The lease was stamped and awaited before the arm; from here it only
           // needs refreshing.
           heartbeatTimer?.cancel();
           heartbeatTimer = Timer.periodic(heartbeatInterval, (_) => beat());
-
-          var diagnosticsSeen = 0;
-          var errBuffer = '';
-          final errSub = handle.stderr.listen((chunk) {
-            errBuffer += chunk;
-            var start = 0;
-            var i = errBuffer.indexOf('\n', start);
-            while (i >= 0) {
-              final line = errBuffer.substring(start, i).trim();
-              start = i + 1;
-              if (line.isNotEmpty &&
-                  !_isWatcherStartupNoise(line) &&
-                  diagnosticsSeen < maxDiagnosticLines) {
-                diagnosticsSeen++;
-                developer.log(line, name: 'RemoteWatchService');
-                onDiagnostic?.call(line);
-              }
-              i = errBuffer.indexOf('\n', start);
-            }
-            if (start > 0) errBuffer = errBuffer.substring(start);
-            if (errBuffer.length > _maxBufferChars) errBuffer = '';
-          }, onError: (Object _) {});
 
           return WatchArmed(() async {
             releaseSlot();

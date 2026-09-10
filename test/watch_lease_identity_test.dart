@@ -2,29 +2,12 @@
 // files, so a live successor cannot hold a dead predecessor's lease open and
 // the registry does not overwrite itself.
 
-import 'dart:async';
-
 import 'package:flutter_test/flutter_test.dart';
 import 'package:remote_magic_git/core/git/remote_watch_service.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
+import 'helpers/fake_watcher_handle.dart';
 import 'helpers/watch_settle.dart';
-
-class _Handle implements SSHStreamHandle {
-  final _out = StreamController<String>.broadcast();
-  final _err = StreamController<String>.broadcast();
-  @override
-  Stream<String> get stdout => _out.stream;
-  @override
-  Stream<String> get stderr => _err.stream;
-  @override
-  Future<int?> get exitCode => Completer<int?>().future;
-  @override
-  Future<void> cancel() async {
-    await _out.close();
-    await _err.close();
-  }
-}
 
 /// Records the watcher scripts it is asked to run, so a test can read the
 /// lease-file paths the arm actually baked into them.
@@ -73,7 +56,7 @@ class _Recording extends SSHCommandExecutor {
     final joined = gitArgs.join(' ');
     scripts.add(joined);
     events.add('arm:$joined');
-    return _Handle();
+    return FakeWatcherHandle.armed();
   }
 }
 
