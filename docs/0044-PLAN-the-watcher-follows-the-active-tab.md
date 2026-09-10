@@ -376,6 +376,70 @@ measured arm time, and a dated entry for every deviation.
 **Commit** (`git commit --no-edit`, docs only — separate from every code
 commit).
 
+## Execution Record
+
+### Phase 1 — the host scripts emit a readiness marker
+
+Shipped 2026-09-10. `bounded_watch.dart` gained `watchArmedMarker`
+(`mg-watch: armed`) and `_armedMarker()`; the marker is emitted from
+`_leaseLoop` immediately after `{ $inner; } & w=$!` — which covers all three
+leased forms at once, since `recursiveWatchScript` has no unleased branch — and
+from the two `heartbeat == null` branches of the bounded builders.
+
+Four executing tests, not the three planned. The fourth (*"a stale lease exits
+before the marker"*) pins the one ordering the plan named but did not test: the
+lease-alive check sits between the claim and the marker, so a stale lease exits
+0 and emits nothing, and the client reads it exactly as it does today — a
+watcher that armed and died.
+
+```
+flutter test test/watch_lease_teardown_exec_test.dart
+00:10 +18: All tests passed!
+flutter analyze
+No issues found! (ran in 4.9s)
+```
+
+#### Deviation (a) — a pre-existing assertion matched the marker by prefix (2026-09-10)
+
+`test/bounded_watch_test.dart:182` asserted
+`expect(boundedInotifyScript(['/r/.git']), isNot(contains('mg-watch')))`. Step
+1.3 adds the marker to that exact branch, so the script now contains
+`echo 'mg-watch: armed' >&2` and the substring matched:
+
+```
+Expected: not contains 'mg-watch'
+  Actual: 'set -- '/r/.git'; … || exit 97; echo 'mg-watch: armed' >&2; …'
+```
+
+Caused by this work, not pre-existing. The test's intent was "an unleased arm
+references no lease-registry file"; `mg-watch` was standing in for the registry
+filenames `mg-watch.<token>.pid` / `.hb`, and the marker shares the prefix
+without sharing the meaning. Every other assertion in the suite uses
+`mg-watch.` **with the dot** and was unaffected
+(`bounded_watch_test.dart:164,175,189,235`, `remote_watch_service_test.dart:427`,
+`watch_lease_release_test.dart:241,434`).
+
+**Decision: option 1 — tighten the assertion to what it means.** It now names
+the registry directly (`mg-watch.`, `.pid`, `.hb`) and is renamed *"no pid file
+means no registry file is referenced"*. The rejected alternative was moving the
+marker out of the two unleased branches, which would have kept the test file
+untouched at the cost of making the marker a property of one call path rather
+than of the script builders — production never takes those branches, but a
+future caller of the unleased form would silently pay the full ceiling on every
+arm with no test to say so. Deleting or loosening the assertion was not offered.
+
+**Scope added to phase 1:** `test/bounded_watch_test.dart`.
+
+#### Correction during phase 1
+
+The plan's test 1.7 was written to assert `arms() == 1` outright once the marker
+appeared. It read `0`. The marker is emitted after the watcher process is
+**started**, not after it has run — which is precisely what the constant's
+documentation claims and what makes the marker free (it never waits for the
+inotify walk). The assertion became `settles(() => arms() == 1)` and the reason
+is recorded in the test, because a reader would otherwise reasonably assume the
+stronger guarantee.
+
 ## Verification
 
 Gate for the whole plan:
