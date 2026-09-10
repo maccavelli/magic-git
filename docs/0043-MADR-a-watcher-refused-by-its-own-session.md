@@ -1,6 +1,6 @@
 ---
 status: "accepted"
-date: 2026-09-09
+date: 2026-09-10
 decision-makers: [Maintainer]
 consulted: []
 informed: [Magic Git contributors]
@@ -371,7 +371,9 @@ So the fix has two halves, and each covers a case the other cannot:
   sub-second window).
 
 Together: **this process arms at most one watcher per repository path, and never
-begins an arm while a previous arm for that path still holds its lock.**
+begins an arm while a previous arm for that path still holds its lock.** *(As
+shipped, this held for every interleaving the tests exercised and not for one
+they did not — see amendment 0043.1.)*
 
 Sketch, to be settled in the plan:
 
@@ -383,10 +385,13 @@ Sketch, to be settled in the plan:
 2. A late subscriber receives the current `RepoWatchEvent` immediately, so its
    mode indicator is correct without waiting for the next tick — the shared
    watch retains the last event for replay.
-3. The teardown future is retained; a `watch()` arriving for that path while it
-   is pending awaits it before creating a new lifecycle. Bounded, so a teardown
+3. ~~The teardown future is retained; a `watch()` arriving for that path while it
+   is pending awaits it before creating a new lifecycle.~~ Bounded, so a teardown
    that never completes degrades to today's behaviour rather than hanging a
    repository forever — a timeout yields the current race, not a worse state.
+   **Superseded by amendment 0043.1:** a retained teardown plus a deferred build
+   could interleave to orphan a watcher. Attach and detach are serialized onto
+   one chain instead; the bound is kept.
 4. The `WatchArmed` teardown releases the lock explicitly and **awaited**,
    guarded by token ownership exactly as the host-side `cleanup()` trap is:
    remove the lock directory only while it still names this token. The client
@@ -497,6 +502,81 @@ The honest limit: **the trigger in the reported session is not identified**
 some other route. What the checks establish is that the *class* is closed — one
 session cannot arm one repository twice — which is strictly stronger than
 closing the one path that happened to be taken.
+
+## Amendments
+
+### 0043.1 — sharing could orphan a watcher; attach and detach are now serialized (2026-09-10)
+
+Found on a live host during MADR 0044's phase 4 verification, and fixed under that
+plan (`0044-PLAN-the-watcher-follows-the-active-tab.md`, deviation (c)), because
+that is the plan whose verification found it.
+
+**What was observed.** A remote tab's watcher kept its host lock and kept renewing
+its lease for more than thirty minutes after its tab went to the background, while
+another remote tab was active. The app had exactly one content window, so no
+pop-out subscription held it. A scratch reproduction of the tab host's in-place
+container swap showed widget unmount disposing the provider correctly in both
+directions, so disposal was not what failed.
+
+**The mechanism.** Two pieces of `_SharedWatch`
+(`lib/core/git/remote_watch_service.dart`, as shipped in `edc06b3` and
+`2cb8f9b`):
+
+* `_detach`, when a subscriber leaves while a build is still deferred — so there
+  is no `_source` yet — set `_teardown = null`, discarding the teardown that was
+  still in flight.
+* `_attach`'s deferred callback built `if (_out.hasListener)`, without checking
+  whether a newer build had already run, and `_build()` overwrote `_source`.
+
+So **leave → arrive → leave → arrive inside one teardown** built twice and kept a
+handle to only the second watcher. The first was reachable from nothing: no
+subscriber, no teardown, still holding its slot, its lock and its lease.
+
+**Reproduced against the committed tree**, with the real `RemoteWatchService` and a
+400 ms teardown, and a control run through the same harness:
+
+```text
+RACE    leave, arrive, leave, arrive inside one teardown; then all leave:  live=1  liveWatchers=1
+CONTROL one clean leave and arrive; then all leave:                        live=0  liveWatchers=0
+```
+
+None of the ten tests in `watch_shared_path_test.dart` has a subscriber leave while
+a build is deferred, which is why this record's sabotage round had nothing to kill.
+
+**The trigger is inferred, not observed.** A full reconnect calls
+`_invalidateRepoState()`, which invalidates the whole `repoWatchProvider` family,
+while the dying watcher's `releaseHostClaims()` runs against a transport that is
+redialing, on a 15-second timeout — the widest window this race could ask for. The
+orphan on the host was born three seconds after its tab's connection was
+established. No sampler was running at that moment, so the exact sequence was not
+captured.
+
+**What it contradicts.** The guarantee in the Decision Outcome above, and sketch
+step 3, which were annotated rather than rewritten.
+
+**The decision, changed.** Every `onListen` and every `onCancel` on the shared
+controller enqueues one reconcile step onto a single chain for that path. Each step
+compares what is wanted (`_out.hasListener`) with what exists (`_source != null`)
+*at the moment it runs*, and either builds, or tears down and awaits the teardown
+before the next step may run. There is no deferred callback and no separately held
+teardown for an interleaving to clobber: whatever order subscribers arrive and
+leave in, the steps run one at a time against the state as it then is. It is
+`watchLifecycle`'s `startChain` (MADR 0026 H1) applied one level up — the idea this
+record's More Information already pointed at. **The bound is kept:** an awaited
+teardown is capped at `sharedTeardownGrace`, so a teardown that never completes
+still degrades to the old race rather than wedging the path's chain.
+
+The rejected alternative was keeping both fields and adding the two missing
+guards — smaller, and it closes this interleaving while leaving the class open to
+the next piece of state added to `_SharedWatch`. The maintainer chose
+serialization.
+
+**What the defect cost while it stood.** An orphan holds its repository's lock and
+lease until its tab's SSH connection dies. It occupies a host-wide watcher slot
+(`_liveByHost` is static), pressing other repositories toward `ceiling` polling.
+And returning to its repository gets that repository's own new arm refused as
+`heldByAnother`, naming its own orphan, and polling at ~48 git processes a minute —
+this record's reported symptom, arriving by a different route.
 
 ## More Information
 

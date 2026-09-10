@@ -427,6 +427,8 @@ timestamp; time from `watch()` to that record across five tab switches and
 report the median. Acceptance: **median under 250 ms**, against the ~400 ms
 0044 F7 measured. Report the actual number even if it misses — a measured miss
 is a finding, not a failure to hide.
+**Blocked on 4.7 (deviation (c)):** a tab switch that leaves an orphaned watcher
+behind would be measuring the defect, not the arm.
 
 4.4 **Confirm the refusal still refuses**, which is the check that matters most:
 this change must not be able to be described as having disabled the exclusion it
@@ -440,6 +442,30 @@ each phase did, the verification output rather than a summary of it, the
 measured arm time, and a dated entry for every deviation.
 
 4.6 Update the `docs/README.md` row.
+
+4.7 **Serialize `_SharedWatch`** *(added by deviation (c), 2026-09-10).*
+
+* `lib/core/git/remote_watch_service.dart`: replace `_SharedWatch`'s retained
+  `_teardown` and deferred build with one reconcile chain. Every `onListen` and
+  `onCancel` enqueues a step; each step builds if a listener exists and no source
+  does, or cancels the source and awaits its teardown — capped at
+  `sharedTeardownGrace` — if no listener exists and a source does. Rewrite the doc
+  comments on `sharedTeardownGrace` and `releaseHostClaims` that describe the old
+  gate.
+* `test/watch_shared_path_test.dart`: the reproduction as a regression test —
+  leave, arrive, leave, arrive inside one slow teardown, then everyone leaves, and
+  **no handle is left uncancelled and `liveWatchers` is 0** — run against the
+  pre-fix tree first and seen to fail; arrive/leave/arrive during a pending
+  teardown arms exactly once, after it; and the grace bound, if it can be driven
+  deterministically.
+* `tool/mutations/0043-one-watcher-per-repo.json`: re-anchor `p2: a new arm does
+  not wait for a pending teardown` onto the chain, and add a mutation per
+  guarantee the chain provides. Run the 0041, 0043 and 0044 catalogues one at a
+  time.
+
+Verify: `flutter analyze`, `dart format --output=none --set-exit-if-changed` on
+the staged files, the watcher test files, the full suite. Commit code and docs
+separately. Then rebuild, install, and repeat 4.2 before 4.3.
 
 **Commit** (`git commit --no-edit`, docs only — separate from every code
 commit).
@@ -847,7 +873,44 @@ fixed here either, because it is outside the approved scope. Note that
 "never a spinner, never an error" for it — so the fix is the right accessor at
 this one call site, not a blanket rule.
 
-#### Still owed
+#### Deviation (c) — verification found MADR 0043's sharing layer orphaning a watcher (2026-09-10)
+
+**Found.** With two remote tabs open and one of them active, the host showed the
+*other* tab's watcher still holding its lock and renewing its lease — at 12:33 its
+lease was renewed more than thirty minutes after its tab left the foreground. It
+was not a held subscription: the app had exactly one content window, and a
+scratch reproduction of the tab host's in-place container swap disposed the
+background container's provider every time, in both directions. It was not a timing
+artefact: renewals continued for the whole observation. Process ancestry put each
+watcher on its own tab's SSH connection, and the leaking one was born three seconds
+after that connection came up.
+
+**Cause.** `_SharedWatch` in `lib/core/git/remote_watch_service.dart`: `_detach`
+cleared the pending teardown when a subscriber left while a build was still
+deferred (lines 272–273), and `_attach`'s deferred callback then built on top of a
+newer build (line 234), overwriting `_source`. Reproduced with the real service and
+a 400 ms teardown — `live=1 liveWatchers=1` after every subscriber had left,
+against `live=0 liveWatchers=0` for a single clean leave and arrive through the
+same harness. **Pre-existing:** `git blame` attributes every one of those lines to
+`edc06b3` and `2cb8f9b`, MADR 0043's phases 1 and 2; this plan never touched them.
+Full evidence, and the reconnect trigger — inferred, not observed — are in MADR
+0043 amendment 0043.1.
+
+**Decision: serialize attach and detach onto one chain**, keeping the
+`sharedTeardownGrace` bound. The alternative offered was two targeted guards
+(about fifteen lines); the maintainer chose the change that closes the class of
+interleavings rather than the one found. Workarounds were not offered — in
+particular, not invalidating `repoWatchProvider` on reconnect, which would hide
+today's trigger and leave the defect reachable from `setRepoPath`, opening a
+repository, or fast tab switching.
+
+**Scope added to phase 4** (step 4.7): `lib/core/git/remote_watch_service.dart`,
+`test/watch_shared_path_test.dart`, `tool/mutations/0043-one-watcher-per-repo.json`,
+and the docs — MADR 0043 amendment 0043.1, 0043 PLAN deviation (g), MADR 0044
+amendment 0044.3, and both README rows.
+
+**Consequence for this plan:** 4.3 is blocked until 4.7 is built, installed and 4.2
+repeated, because a tab switch that leaves an orphan behind measures the defect.
 
 #### Still owed — 4.3
 

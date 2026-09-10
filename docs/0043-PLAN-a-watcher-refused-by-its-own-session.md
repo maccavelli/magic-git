@@ -482,6 +482,24 @@ Third time in this session that running the *whole* catalogue at a boundary
 caught anchors a later phase had quietly invalidated (MADR 0039 D9; 0041's own
 execution had two). It is the rule earning its keep, repeatedly.
 
+### (g) 2026-09-10, found during MADR 0044's phase 4 — the sharing layer could orphan a watcher
+
+Phases 1 and 2 of this plan shipped a `_SharedWatch` whose deferred build and
+retained teardown could interleave — a subscriber leaving while a build was still
+deferred cleared the pending teardown, and the deferred build then ran on top of a
+newer one — leaving a watcher that nothing held. It was found on a live host and
+reproduced against this plan's code; the full evidence is in MADR 0043 amendment
+0043.1.
+
+**Decision:** serialize attach and detach onto one chain per path, keeping the
+`sharedTeardownGrace` bound (the maintainer's choice over adding two guards).
+
+Recorded here so that this plan's `complete` status is not read as a clean bill of
+health; executed under `0044-PLAN-the-watcher-follows-the-active-tab.md`,
+deviation (c), because that is the plan whose verification found it. This plan's
+status stays `complete`: its phases shipped, and the fix to them ships under the
+plan that found the defect.
+
 ## Execution record
 
 Executed 2026-09-09, four phases, one commit each, in plan order. `master` is

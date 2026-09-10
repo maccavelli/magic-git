@@ -523,6 +523,24 @@ rather than deferred, because the alternative was seven more copies of the
 one-line change, leaving the next protocol change to rediscover the same
 eleven files from its own failures.
 
+### 0044.3 — F2's teardown holds for every watcher except an orphaned one (2026-09-10)
+
+F2 reasons that no mounted shell means no listener, which means the provider
+disposes, which means the watcher is torn down, and F1 observed exactly that.
+**Phase 4 found a live exception.** A watcher orphaned inside MADR 0043's sharing
+layer is not reachable from its provider at all, so disposing the provider cannot
+tear it down: on the reporting host one kept its lock and renewed its lease for
+more than thirty minutes after its tab went to the background.
+
+F1–F3's measurements stand as taken. They were made on `890bca1`, which predates
+MADR 0043, so the sharing layer that orphans watchers did not exist in that build.
+The defect and its fix — attach and detach serialized onto one chain — are MADR
+0043 amendment 0043.1, executed under this record's plan as deviation (c).
+
+The consequence here is sequencing: phase 4.3's tab-switch measurement waits for
+that fix to be built, because a switch that leaves an orphan behind would be
+measuring the defect rather than the arm.
+
 ## More Information
 
 * `lib/features/tabs/tabs_host.dart` — `KeyedSubtree` on `activeId`; the
