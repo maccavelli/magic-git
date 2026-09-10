@@ -194,7 +194,12 @@ String _lockPrelude(WatchLock lock, {required Duration staleAfter}) {
       'h=$hbPrefix"\$o"$hbSuffix; '
       'if [ -n "\$o" ] && [ -f "\$h" ] && '
       '[ -n "\$(find "\$h" -mmin -$mins 2>/dev/null)" ]; '
-      'then exit $boundedWatchLockedExit; fi; '
+      // Say WHO holds it. Establishing that the "other" watcher was this same
+      // session took a host census, an SSH session audit and a question to the
+      // maintainer (MADR 0043) — the script knew the answer the whole time and
+      // was throwing it away. stderr, because stdout is the event channel.
+      'then echo "mg-watch: lock held by \$o" >&2; '
+      'exit $boundedWatchLockedExit; fi; '
       'rm -rf "\$L"; mkdir "\$L" 2>/dev/null || exit $boundedWatchLockedExit; '
       'printf %s $tok > "\$L/token"; '
       'fi; ';

@@ -56,8 +56,8 @@
   {
     "label": "p2: teardown does not release the lease",
     "file": "lib/core/git/remote_watch_service.dart",
-    "find": "            unawaited(releaseLease());",
-    "replace": "",
+    "find": "            await releaseHostClaims();\n          });",
+    "replace": "          });",
     "tests": [
       "test/watch_lease_release_test.dart"
     ]
@@ -65,8 +65,8 @@
   {
     "label": "p2: a failing lease removal escapes the teardown",
     "file": "lib/core/git/remote_watch_service.dart",
-    "find": "            } catch (_) {\n              // The common failure is a disconnected executor, which is also\n              // the case where the watcher has already taken stdin EOF and\n              // gone. Nothing to report and nothing to retry.",
-    "replace": "            } on _NeverThrown catch (_) {",
+    "find": "            } catch (_) {\n              // See the doc comment: swallowing is the contract, not an\n              // oversight.\n            }",
+    "replace": "            } on _NeverThrown catch (_) {\n            }",
     "tests": [
       "test/watch_lease_release_test.dart"
     ]
@@ -74,8 +74,8 @@
   {
     "label": "p2: teardown removes the pid file, which is not the client's",
     "file": "lib/core/git/remote_watch_service.dart",
-    "find": "                  'rm -f ${ShellEscaper.escape(heartbeat)}',",
-    "replace": "                  'rm -f ${ShellEscaper.escape(watchPidFile(spec?.gitDir ?? '$repoPath/.git', token))}',",
+    "find": "                  'rm -f ${ShellEscaper.escape(heartbeat)}; '\n                      '${watchLockReleaseScript(lock)}',",
+    "replace": "                  'rm -f ${ShellEscaper.escape(watchPidFile(gitDir, token))}; '\n                      '${watchLockReleaseScript(lock)}',",
     "tests": [
       "test/watch_lease_release_test.dart"
     ]
@@ -92,7 +92,7 @@
   {
     "label": "p3: a fresh claim is stolen instead of respected",
     "file": "lib/core/git/bounded_watch.dart",
-    "find": "      'then exit $boundedWatchLockedExit; fi; '",
+    "find": "      'then echo \"mg-watch: lock held by \\$o\" >&2; '\n      'exit $boundedWatchLockedExit; fi; '",
     "replace": "      'then :; fi; '",
     "tests": [
       "test/watch_lease_teardown_exec_test.dart"
@@ -101,8 +101,8 @@
   {
     "label": "p3: the claim is released without checking who holds it",
     "file": "lib/core/git/bounded_watch.dart",
-    "find": "  return '[ \"\\$(cat $dir/token 2>/dev/null)\" = $tok ] && rm -rf $dir; ';",
-    "replace": "  return 'rm -rf $dir; ';",
+    "find": "  return '[ \"\\$(cat $dir/token 2>/dev/null)\" = $tok ] && rm -rf $dir;';",
+    "replace": "  return 'rm -rf $dir;';",
     "tests": [
       "test/watch_lease_teardown_exec_test.dart"
     ]

@@ -509,6 +509,28 @@ class RemoteWatchService {
   @visibleForTesting
   static void resetWatcherCount() => _liveByHost.clear();
 
+  /// The token a refusing lock script named on stderr, if it named one.
+  ///
+  /// Matches what `_lockPrelude` emits before exiting with
+  /// [boundedWatchLockedExit]. Bounded: the script has already exited by the
+  /// time this runs — that exit status is how the refusal was detected — so
+  /// its stderr is complete and the stream closes at once. The timeout is for
+  /// the case where it does not.
+  static final RegExp _lockHeldBy = RegExp(r'mg-watch: lock held by (\S+)');
+
+  static Future<String?> _incumbentToken(CommandStreamHandle handle) async {
+    try {
+      final text = await handle.stderr.join().timeout(
+        const Duration(milliseconds: 250),
+        onTimeout: () => '',
+      );
+      return _lockHeldBy.firstMatch(text)?[1];
+    } catch (_) {
+      // Diagnostics must never be the reason an arm fails differently.
+      return null;
+    }
+  }
+
   /// Files one transition against [repoPath], stamping it with the live watcher
   /// count — the field that separates a leaked **slot** (H1: refusals persist
   /// with no watcher process alive) from a leaked **process** (H3). MADR 0026.
@@ -868,14 +890,22 @@ class RemoteWatchService {
               // the reporting host (MADR 0043 F6). It claimed no lock, and
               // `releaseHostClaims`'s guard declines to remove one this token
               // does not own — so the incumbent's claim is safe.
+              // Read WHO holds it before tearing the handle down. With one
+              // watcher per path per session now guaranteed (MADR 0043 phase
+              // 1), a token that is not ours means a genuinely foreign session
+              // — which is what this refusal has always claimed and could not
+              // previously show.
+              final incumbent = await _incumbentToken(handle);
               await releaseHostClaims();
+              final held = incumbent == null ? '' : ' (token $incumbent)';
               onDiagnostic?.call(
-                'another live watcher already holds $repoPath — polling here',
+                'another live watcher already holds $repoPath$held '
+                '— polling here',
               );
               _record(
                 repoPath,
                 WatchTransition.armFailed,
-                'held by another watcher',
+                'held by another watcher$held',
                 0,
               );
               return const WatchUnavailable(

@@ -291,6 +291,31 @@ void main() {
     WatchLock lockFor(String token) =>
         (gitDir: '${dir.path}/.git', token: token);
 
+    test('a refusal names the token that holds the lock', () async {
+      // MADR 0043 phase 4. The script always knew which token held the lock —
+      // it reads it to decide whether to steal — and used to discard it. With
+      // one watcher per path per session guaranteed, a token that is not ours
+      // is proof of a genuinely foreign session, which is what this refusal
+      // has always asserted and could not show.
+      File('${dir.path}/.git/mg-watch.a.hb').writeAsStringSync('');
+      final first = await start(token: 'a', lock: lockFor('a'));
+      expect(await settles(() async => arms() == 1), isTrue);
+
+      File('${dir.path}/.git/mg-watch.b.hb').writeAsStringSync('');
+      final second = await start(token: 'b', lock: lockFor('b'));
+      final err = await second.stderr
+          .transform(const SystemEncoding().decoder)
+          .join();
+      await second.exitCode.timeout(const Duration(seconds: 10));
+
+      expect(
+        err,
+        contains('lock held by a'),
+        reason: 'the refusal must name the incumbent, not merely assert one',
+      );
+      first.kill(ProcessSignal.sigkill);
+    });
+
     test(
       'a second arm is refused while the first holds a fresh lease',
       () async {

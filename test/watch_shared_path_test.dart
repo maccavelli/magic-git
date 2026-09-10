@@ -24,11 +24,18 @@ import 'helpers/watch_settle.dart';
 /// A live stream handle whose watcher never exits on its own, so a watcher
 /// stays armed until it is torn down.
 class _Handle implements CommandStreamHandle {
+  _Handle(this._log, this._cancelDelay);
+
+  final List<String> _log;
+
+  /// How long this watcher takes to finish being torn down. Non-zero in the
+  /// test that cares about the ORDER of teardown against the next arm — the
+  /// window MADR 0043 F4 measured on a real host, made observable here.
+  final Duration _cancelDelay;
+
   final _out = StreamController<String>.broadcast();
   final _err = StreamController<String>.broadcast();
   var cancelled = false;
-
-  void emit(String s) => _out.add(s);
 
   @override
   Stream<String> get stdout => _out.stream;
@@ -40,18 +47,26 @@ class _Handle implements CommandStreamHandle {
   Future<void> cancel() async {
     if (cancelled) return;
     cancelled = true;
+    if (_cancelDelay > Duration.zero) await Future<void>.delayed(_cancelDelay);
     await _out.close();
     await _err.close();
+    _log.add('teardown');
   }
 }
 
 /// Records every arm, so "how many watchers exist" is a number rather than an
 /// inference.
 class _ArmRecorder extends SSHCommandExecutor {
-  _ArmRecorder() : super(SSHClientManager());
+  _ArmRecorder({this.cancelDelay = Duration.zero}) : super(SSHClientManager());
+
+  /// Applied to every handle this executor hands out.
+  final Duration cancelDelay;
 
   final tokens = <String>[];
   final handles = <_Handle>[];
+
+  /// 'arm' and 'teardown' in the order they happened.
+  final log = <String>[];
 
   @override
   Future<SSHCommandResult> execute({
@@ -82,7 +97,8 @@ class _ArmRecorder extends SSHCommandExecutor {
     tokens.add(
       RegExp(r'mg-watch\.(\w+)\.pid').firstMatch(gitArgs.join(' '))?[1] ?? '?',
     );
-    final h = _Handle();
+    log.add('arm');
+    final h = _Handle(log, cancelDelay);
     handles.add(h);
     return h;
   }
@@ -305,6 +321,37 @@ void main() {
       reason: 'each watcher owns its own lease, per 0027',
     );
     expect(RemoteWatchService.liveWatchersFor('host'), 1);
+
+    await b.cancel();
+  });
+
+  test('a new subscriber waits for a pending teardown before arming', () async {
+    // MADR 0043 F3/F4, and the gap a sabotage run found: the earlier re-arm
+    // test settles between cancelling and re-subscribing, so the teardown has
+    // already finished and the gate is never exercised. Here the teardown is
+    // deliberately slow and the next subscriber arrives DURING it — which on a
+    // real host is the arm that gets refused by its own predecessor.
+    final exec = _ArmRecorder(cancelDelay: const Duration(milliseconds: 400));
+    final service = serviceOn(exec);
+
+    final a = service.watch('/repo').listen((_) {});
+    await settleArm();
+    expect(exec.log, ['arm']);
+
+    // Cancel and immediately re-subscribe — no settle, so the teardown is
+    // still in flight.
+    unawaited(a.cancel());
+    final b = service.watch('/repo').listen((_) {});
+    await Future<void>.delayed(const Duration(seconds: 2));
+
+    expect(
+      exec.log,
+      ['arm', 'teardown', 'arm'],
+      reason:
+          'the second watcher must not be built until the first has finished '
+          'giving its host lock back — arming into that window is exactly the '
+          'refusal MADR 0043 is about',
+    );
 
     await b.cancel();
   });
