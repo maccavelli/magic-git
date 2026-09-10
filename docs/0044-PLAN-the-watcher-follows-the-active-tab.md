@@ -40,7 +40,10 @@ restarts before polling (0022 M6).
 * `lib/core/git/bounded_watch.dart` — emit the readiness marker.
 * `lib/core/git/remote_watch_service.dart` — race it; move the stderr listener
   above the race; delete `_incumbentToken`.
-* The four test doubles that stand in for a live watcher, plus new tests.
+* **All eleven** test doubles that stand in for a live watcher, consolidated
+  into one `test/helpers/fake_watcher_handle.dart` — see deviation (b) and MADR
+  amendment 0044.2. The plan originally said "four", which was wrong by seven.
+* New tests for the race itself (`test/watch_arm_signal_test.dart`).
 * `tool/mutations/0044-arm-readiness.json`, and re-anchoring of
   `0041-watcher-teardown.json` / `0043-one-watcher-per-repo.json` where this
   work moves their anchors.
@@ -304,6 +307,71 @@ flutter test test/watch_shared_path_test.dart test/watch_lease_release_test.dart
 flutter test
 ```
 
+
+#### Step 2.7 — one double for the watcher channel (added by deviation (b))
+
+`test/helpers/fake_watcher_handle.dart`, a single `FakeWatcherHandle`
+implementing `CommandStreamHandle`, with **named constructors for the three
+scenarios that actually differ** rather than a widening set of flags:
+
+| Constructor | Models | Marker | `exitCode` |
+| --- | --- | --- | --- |
+| `FakeWatcherHandle.armed()` | a watcher that armed and is waiting — the healthy steady state | yes | never completes |
+| `FakeWatcherHandle.refused(code, {stderrLine})` | a script-level refusal | **no** | completes with `code` |
+| `FakeWatcherHandle.silentHost()` | a host that emits neither signal — the ceiling's reason to exist | no | never completes |
+
+Everything the eleven doubles vary on becomes an option on `armed()`, because
+each is something a test asserts about rather than a different kind of channel:
+
+* `cancelDelay` — the teardown window MADR 0043 F4 measured on a real host,
+  which `watch_shared_path_test.dart` needs to observe ordering;
+* `onTeardown` — a callback, replacing the `_log.add('teardown')` and the bare
+  `cancelled` flag with one seam (`cancelled` stays, as a field);
+* `emitStdout` / `emitStderr` / `delivered` — from `_DrivableStreamHandle`,
+  whose `delivered` counter is how a test knows the service's listener body has
+  actually run.
+
+Two properties the consolidated double must keep, both learned the hard way and
+currently visible in only one copy each:
+
+* **`cancel()` must not await the close of an unsubscribed controller.**
+  `_ExitedHandle` carries the finding: a refusal is torn down before the stdout
+  listener is attached, and closing an unsubscribed single-subscription
+  controller returns a future that never completes — `await handle.cancel()`
+  hangs and the arm never returns. The real handle closes an SSH session and has
+  no such wait.
+* **The readiness marker is emitted on first listen, never from the
+  constructor.** A broadcast controller drops what is added before a listener
+  attaches, where the real SSH stream queues it. A double that announced early
+  would settle the arm before the race began and prove nothing about the
+  ordering it exists to pin.
+
+And one property added rather than preserved: the double **counts
+subscriptions** (`stdoutListens`, `stderrListens`), so acceptance criterion 4 —
+exactly one stderr listener, on every path — becomes an assertion instead of a
+claim. That invariant was the whole reason `_incumbentToken` could be deleted,
+and nothing currently enforces it.
+
+Migration is mechanical per file: delete the local double, import the helper,
+construct the scenario. `_ExitedHandle` becomes `.refused(...)`,
+`_SilentStreamHandle` / `_SilentHandle` / the five identical `_Handle`s become
+`.armed()`, and `_DrivableStreamHandle` becomes `.armed()` driven through
+`emitStdout` / `emitStderr`.
+
+**Verify** — the whole watcher suite, since the point is that these files share
+one definition now:
+
+```sh
+flutter analyze
+flutter test test/watch_arm_signal_test.dart test/watch_shared_path_test.dart \
+             test/watch_lease_release_test.dart test/watch_ceiling_derived_test.dart \
+             test/watch_ceiling_per_host_test.dart test/watch_ceiling_recovery_test.dart \
+             test/watch_diagnostics_both_backends_test.dart test/watch_lease_identity_test.dart \
+             test/watch_transition_wiring_test.dart test/remote_watch_service_test.dart \
+             test/watch_lease_teardown_exec_test.dart
+flutter test
+```
+
 **Commit** (`git commit --no-edit`, code only).
 
 ### Phase 3 — prove the new checks can fail
@@ -440,6 +508,50 @@ inotify walk). The assertion became `settles(() => arms() == 1)` and the reason
 is recorded in the test, because a reader would otherwise reasonably assume the
 stronger guarantee.
 
+### Phase 2 — the client races the marker against the exit status
+
+In progress.
+
+#### Deviation (b) — the plan undercounted the test doubles by seven, and the count was the symptom (2026-09-10)
+
+Phase 2's client change landed analyzer-clean, and the three doubles the plan
+named were updated to announce readiness. Their two files passed. Every
+remaining failure was in a file whose double had not been touched:
+
+```text
+test/watch_shared_path_test.dart      PASS   (double updated)
+test/watch_lease_release_test.dart    PASS   (double updated)
+test/remote_watch_service_test.dart   6 failures
+test/watch_ceiling_derived_test.dart  1 failure
+```
+
+Two failure shapes, one cause. Under `fake_async`, arms that used to settle
+after 250 ms no longer settled at all, because the tests do not elapse as far as
+`armSignalCeiling` (`Expected: eventDriven, Actual: polling`). In real time,
+tests that push events after arming hung for the full 30 s test timeout, because
+the stdout listener is attached only once the arm has committed.
+
+**There are eleven doubles across ten files, not four**, and five of them are
+byte-identical. The full census, the reason this is a finding rather than a
+miscount, and the decision are recorded as **MADR amendment 0044.2**.
+
+**Decision: option 2 — extract one shared double.** The rejected alternative was
+option 1, the same one-line change applied to the seven remaining copies: it
+would have gone green today and left eleven definitions of the arm protocol for
+the next change to rediscover from its own failures — which is exactly how this
+deviation was found. A third possibility, shortening `armSignalCeiling` so the
+silent doubles pass unchanged, was not offered: it tunes a production constant to
+accommodate fakes that misdescribe the host, and suppresses the signal that found
+this.
+
+**Scope added to phase 2** (new step 2.7, below): a new
+`test/helpers/fake_watcher_handle.dart`, and migration of
+`remote_watch_service_test.dart`, `watch_ceiling_derived_test.dart`,
+`watch_ceiling_per_host_test.dart`, `watch_ceiling_recovery_test.dart`,
+`watch_diagnostics_both_backends_test.dart`, `watch_lease_identity_test.dart`,
+`watch_transition_wiring_test.dart`, `watch_shared_path_test.dart`,
+`watch_lease_release_test.dart` and `test/helpers/mock_executor.dart`.
+
 ## Verification
 
 Gate for the whole plan:
@@ -468,12 +580,17 @@ commit, and the gate's exit status is captured rather than piped into a filter.
 3. `boundedWatchNoPathsExit` still yields `WatchUnavailableReason.noWatchedPaths`
    with the same guarantees.
 4. Exactly one stderr listener exists on the watcher handle, for the life of the
-   arm, on every path.
+   arm, on every path — **asserted**, via the shared double's subscription
+   counters, not claimed.
 5. `_incumbentToken` and both 250 ms timeouts are gone from the arm path.
 6. Measured on the host: median arm under 250 ms across five tab switches.
 7. Three mutation catalogues green, with no `DID NOT APPLY`.
-8. The MADR carries amendment 0044.1; this plan carries an execution record and
-   a dated entry for every deviation.
+8. Exactly one definition of the watcher-channel double exists in `test/`.
+   `grep -c 'implements CommandStreamHandle\|implements SSHStreamHandle'` over
+   the watcher tests returns 1, and the three scenarios are named rather than
+   configured.
+9. The MADR carries amendments 0044.1 and 0044.2; this plan carries an execution
+   record and a dated entry for every deviation.
 
 ## Rollout and Rollback
 
@@ -486,6 +603,9 @@ would wait out `armSignalCeiling` on every arm — 2 s instead of 250 ms, eight
 times worse than what this replaces. There is no version skew in practice, since
 the client generates the script it runs, but the coupling is the reason the two
 phases revert as a pair.
+
+The shared double added by deviation (b) is test-only: it ships in no build,
+and it reverts with phase 2 because it encodes phase 2's arm protocol.
 
 **No host state changes shape.** The registry files, the lock directory, the
 lease semantics and the exit codes are all untouched; the marker is a line on a

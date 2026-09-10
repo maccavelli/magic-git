@@ -469,6 +469,60 @@ own 250 ms timeout. The incumbent's token is already in hand when the refusal is
 detected, so **the refusal path gets faster too**, and one timeout is deleted
 rather than added.
 
+### 0044.2 — the arm protocol had eleven test doubles and no single place to change (2026-09-10)
+
+Found during phase 2, when the client started settling an arm on the readiness
+marker. Seven test files went red at once, and the reason was not the change: it
+was that **eleven hand-rolled doubles stand in for the SSH channel a watcher arm
+opens**, across ten files, each re-implementing `CommandStreamHandle` from
+scratch.
+
+```text
+remote_watch_service_test.dart            _SilentStreamHandle, _DrivableStreamHandle
+watch_ceiling_derived_test.dart           _Handle
+watch_ceiling_per_host_test.dart          _Handle
+watch_ceiling_recovery_test.dart          _Handle
+watch_diagnostics_both_backends_test.dart _Handle
+watch_lease_identity_test.dart            _Handle
+watch_transition_wiring_test.dart         _SilentHandle
+watch_shared_path_test.dart               _Handle
+watch_lease_release_test.dart             _OpenHandle, _ExitedHandle
+helpers/mock_executor.dart                MockStreamHandle
+```
+
+Five of them — the `_Handle` in `watch_ceiling_derived`, `watch_ceiling_per_host`,
+`watch_ceiling_recovery`, `watch_diagnostics_both_backends` and
+`watch_lease_identity` — are **byte-identical**: fifteen lines, same SHA. A sixth
+(`_SilentHandle`) differs by one boolean field.
+
+**Why this is a finding and not housekeeping.** These doubles encode the arm
+protocol — what a live watcher's channel does, and when. When the protocol
+changed, nothing failed at the seam; seven files failed in their own terms, and
+the plan that made the change undercounted the doubles by seven, because there
+was no one place to look. A double that never writes to stderr modelled a host
+that cannot exist: the arming script emits `mg-watch: armed` before the watcher
+ever looks at the filesystem, so *"silent"* was only ever true of events, never
+of the channel. The fakes did not go stale — they were describing something
+false, and passing.
+
+They also carry knowledge that has been paid for once and would be paid for
+again by anyone writing the twelfth copy. `_ExitedHandle` records that closing an
+unsubscribed **single-subscription** controller returns a future that never
+completes, so `await handle.cancel()` hangs and the arm never returns — a real
+debugging session, preserved in a comment that five other doubles cannot see.
+
+**Decision: consolidate them into one double in `test/helpers/`**, with named
+constructors for the three scenarios that actually differ (armed, refused,
+silent host) rather than a widening set of flags. The variation is
+configuration, not type: what the doubles disagree on is whether the process
+exits and with what, whether teardown is observable, and whether the test drives
+output — not what a channel *is*.
+
+This is scope this record did not originally carry. It is taken deliberately
+rather than deferred, because the alternative was seven more copies of the
+one-line change, leaving the next protocol change to rediscover the same
+eleven files from its own failures.
+
 ## More Information
 
 * `lib/features/tabs/tabs_host.dart` — `KeyedSubtree` on `activeId`; the
