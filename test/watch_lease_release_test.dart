@@ -80,6 +80,10 @@ class _RefusingExecutor extends SSHCommandExecutor {
   final int code;
   final armed = Completer<void>();
 
+  /// Every one-shot command, so a refusal's cleanup is a fact rather than an
+  /// assumption.
+  final commands = <String>[];
+
   @override
   Future<SSHCommandResult> execute({
     required String repoPath,
@@ -94,8 +98,14 @@ class _RefusingExecutor extends SSHCommandExecutor {
     OperationDescriptor? operation,
     OperationEventCallback? onOperationEvent,
     CommandOutputCallback? onOutput,
-  }) async =>
-      const SSHCommandResult(exitCode: 0, stdout: 'inotifywait\n', stderr: '');
+  }) async {
+    commands.add(gitArgs.join(' '));
+    return const SSHCommandResult(
+      exitCode: 0,
+      stdout: 'inotifywait\n',
+      stderr: '',
+    );
+  }
 
   @override
   Future<SSHStreamHandle> executeStream({
@@ -379,5 +389,56 @@ void main() {
           .where((r) => r.cause == 'no watched paths'),
       isEmpty,
     );
+  });
+
+  // MADR 0043 F6. The arm stamps its lease BEFORE opening the stream, because
+  // the watcher's first act is to test for that file (0027 deviation (b)). A
+  // refusal returns before any `WatchArmed` exists, so the teardown that would
+  // give the lease back is unreachable — and every refused arm used to strand
+  // one. Four were found on the reporting host.
+
+  test('a refused arm gives back the lease it stamped', () async {
+    watchDiagnostics.clear();
+    final executor = _RefusingExecutor(boundedWatchLockedExit);
+    final service = RemoteWatchService(executor, hostKey: () => 'host');
+    final sub = service.watch('/repo').listen((_) {});
+    await executor.armed.future;
+    await pastEarlyExitRead();
+    await pumpEventQueue();
+    addTearDown(sub.cancel);
+
+    expect(
+      executor.commands.where((c) => c.contains('rm -f') && c.contains('.hb')),
+      isNotEmpty,
+      reason:
+          'the refusal stamped a heartbeat and must not leave it behind for '
+          'the connect sweep to find five minutes later',
+    );
+  });
+
+  test('a refused arm does not disturb the incumbent\'s claim', () async {
+    // The release is token-guarded, and this arm never owned the lock. Issuing
+    // an unguarded removal here would delete the claim of the watcher that
+    // just refused it — turning a harmless refusal into a way to evict a live
+    // watcher.
+    watchDiagnostics.clear();
+    final executor = _RefusingExecutor(boundedWatchLockedExit);
+    final service = RemoteWatchService(executor, hostKey: () => 'host');
+    final sub = service.watch('/repo').listen((_) {});
+    await executor.armed.future;
+    await pastEarlyExitRead();
+    await pumpEventQueue();
+    addTearDown(sub.cancel);
+
+    final lockCommands = executor.commands.where(
+      (c) => c.contains('mg-watch.lock'),
+    );
+    for (final c in lockCommands) {
+      expect(
+        c,
+        contains('token'),
+        reason: 'every lock removal this app issues is guarded by ownership',
+      );
+    }
   });
 }

@@ -860,6 +860,15 @@ class RemoteWatchService {
             if (early == boundedWatchLockedExit) {
               releaseSlot();
               await handle.cancel();
+              // This arm stamped its lease before opening the stream — the
+              // watcher's first act is to test for that file, so the client's
+              // mark has to come first (0027 deviation (b)). A refusal never
+              // reaches the `WatchArmed` teardown that would give it back, so
+              // without this every refused arm strands one; four were found on
+              // the reporting host (MADR 0043 F6). It claimed no lock, and
+              // `releaseHostClaims`'s guard declines to remove one this token
+              // does not own — so the incumbent's claim is safe.
+              await releaseHostClaims();
               onDiagnostic?.call(
                 'another live watcher already holds $repoPath — polling here',
               );
@@ -876,6 +885,9 @@ class RemoteWatchService {
             if (spec != null && early == boundedWatchNoPathsExit) {
               releaseSlot();
               await handle.cancel();
+              // Same stranded lease, same reason — this refusal also happens
+              // after the stamp and before any `WatchArmed`.
+              await releaseHostClaims();
               _record(
                 repoPath,
                 WatchTransition.armFailed,
