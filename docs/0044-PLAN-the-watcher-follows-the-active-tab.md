@@ -510,7 +510,59 @@ stronger guarantee.
 
 ### Phase 2 — the client races the marker against the exit status
 
-In progress.
+Shipped 2026-09-10, in one commit with the doubles work deviation (b) added.
+
+`remote_watch_service.dart`: `armSignalCeiling` (2 s) replaces the flat 250 ms;
+the stderr listener moved above the race and took on the readiness marker and
+the incumbent token alongside its existing diagnostics; the race is a
+`Future.any` over `(exit, ready)`; `_incumbentToken` and its own 250 ms
+`stderr.join()` are gone, `_lockHeldBy` stays. Both refusal branches cancel the
+stderr subscription before the handle.
+
+`test/helpers/fake_watcher_handle.dart` is new — one `FakeWatcherHandle` with
+`armed()` / `refused()` / `silentHost()` — and eleven doubles across nine files
+were deleted in its favour. `test/watch_arm_signal_test.dart` is new: nine
+tests over the race, the ceiling, the refusals, and the one-listener invariant.
+
+```
+flutter analyze
+No issues found!
+
+flutter test <the ten watcher files>
+00:14 +70: All tests passed!
+```
+
+#### Corrections during phase 2
+
+**`MockStreamHandle` was wrongly in scope, and was reverted.** The plan listed
+`test/helpers/mock_executor.dart` among the doubles to update, and it was —
+until a check of its callers showed it is used by `glab_service_test.dart` and
+`activity_command_executor_test.dart` and by **no watcher test at all**. Making
+every mock stream announce a watcher readiness marker would have put a line on
+`glab ci trace`'s stderr for no reason. It is out of scope; the plan's file list
+was wrong a second time, in the opposite direction.
+
+**The new test's settle signal was wrong, and every timing assertion passed for
+the wrong reason.** The helper first waited on
+`RemoteWatchService.liveWatchers` to become non-zero. A slot is reserved
+**before** the stream is opened and given back if the arm fails, so that counter
+reads 1 while the arm is still undecided: the headline assertion — a healthy arm
+settles in under 250 ms — was satisfied in **0.3 ms**, having measured nothing.
+Caught because the sibling assertions in the same helper (`stderrListens`, the
+incumbent, the ceiling) failed loudly at the same time. The helper now waits on
+the transition log for an `armed` or `armFailed` record, which is the arm's own
+definition of settled. Worth recording as the instrument-verification rule
+biting on the instrument itself: an assertion that cannot fail is not a check,
+and a green one that runs in 0.3 ms is the shape that gives it away.
+
+**`probe.ready` was dead, and is now the ceiling's only observability.** The
+race returned a record whose `ready` field nothing read — a mutation aimed at it
+would have survived by being a no-op. Rather than delete the field, the arm now
+says so when it reaches the ceiling with neither signal:
+`no readiness signal from the watcher on <repo> within 2000ms — arming anyway`.
+That case was previously invisible: a host that never announces was
+indistinguishable from a healthy one that announces in 50 ms, since both end up
+armed. It is asserted in the silent-host test.
 
 #### Deviation (b) — the plan undercounted the test doubles by seven, and the count was the symptom (2026-09-10)
 
@@ -552,6 +604,81 @@ this.
 `watch_transition_wiring_test.dart`, `watch_shared_path_test.dart`,
 `watch_lease_release_test.dart` and `test/helpers/mock_executor.dart`.
 
+### Phase 3 — prove the new checks can fail
+
+`tool/mutations/0044-arm-readiness.json`, ten entries: three against the
+script's ordering, seven against the client's race.
+
+```
+tool/mutate.py tool/mutations/0044-arm-readiness.json
+10 killed, 0 survived, 0 did not apply
+
+tool/mutate.py tool/mutations/0043-one-watcher-per-repo.json
+10 killed, 0 survived, 0 did not apply
+
+tool/mutate.py tool/mutations/0041-watcher-teardown.json
+27 killed, 0 survived, 0 did not apply
+```
+
+The kills that matter most are the two that would have shipped a working suite
+over a broken feature: *"the marker is emitted before the lock prelude"* (a
+refusal would announce itself, and the exclusion would silently stop working)
+and *"the marker is treated as startup noise"* (nothing settles a healthy arm,
+so every arm waits out the ceiling — a 2 s regression against the 250 ms this
+work removes). Both are caught, the first by an executing test against a real
+`sh`, the second by the timing bound.
+
+#### Broken anchor (a) — `0043 p3` pointed at deleted code
+
+`p3: a refused arm strands the lease it stamped` anchored on
+`final incumbent = await _incumbentToken(handle);`, which phase 2 deleted. It
+reported **0 matches**, i.e. it had silently stopped testing anything.
+Re-anchored to the new refusal path (`errSub.cancel` / `handle.cancel` /
+`releaseHostClaims`), and its `tests` list extended to
+`watch_arm_signal_test.dart`, which now asserts the same release. **Fourth time
+in this subsystem that running the catalogue at a boundary caught an inert
+mutation** — 0043 deviations (c) and (f) are the others.
+
+#### Broken anchor (b) — my own anchors, broken by `dart format`
+
+`p2: the arm waits for the exit status alone` reported 0 matches on its first
+run: the anchors were captured before the pre-commit `dart format`, which
+rewrapped the `Future.any` expression across different lines. Re-anchored
+against the formatted source, and every entry re-verified to match exactly once
+before re-running. **Build the catalogue after formatting, not before.**
+
+#### A false survivor, and what caused it (2026-09-10)
+
+The first combined run reported **2 survived** in the 0043 catalogue — *"the
+watcher is built eagerly"* and *"a new arm does not wait for a pending
+teardown"*. Both were treated as real gaps and investigated rather than
+retried.
+
+The first was reproduced by hand: a scratch `git worktree` at the committed
+tree, the mutation applied to the copy, one test run.
+
+```
+Expected: empty
+  Actual: ['hm5xykj9hd0']
+building on first listen, not on the call, is what keeps an unused stream free
+```
+
+The mutation **is** caught. Re-running the whole 0043 catalogue on an idle
+machine gave `10 killed, 0 survived, 0 did not apply`.
+
+The cause is worth recording, because it is a property of this suite rather
+than of this change: both suspect tests assert on **real-time** delays —
+`settleArm()`'s 500 ms, and a 400 ms teardown observed inside a 2 s window —
+and three catalogues had been run back to back, each running test files of its
+own. Under that load the windows shift and the assertions flip.
+
+**A false survivor is more dangerous than a false kill.** A false kill looks
+like a pass and is invisible; a false survivor sends the next person hunting a
+gap that does not exist, and the honest response to it — write the missing test
+— would have added a test for behaviour that was already covered. **Run the
+catalogues one at a time, with nothing else running**, and reproduce any
+survivor by hand in a scratch worktree before believing it.
+
 ## Verification
 
 Gate for the whole plan:
@@ -585,10 +712,12 @@ commit, and the gate's exit status is captured rather than piped into a filter.
 5. `_incumbentToken` and both 250 ms timeouts are gone from the arm path.
 6. Measured on the host: median arm under 250 ms across five tab switches.
 7. Three mutation catalogues green, with no `DID NOT APPLY`.
-8. Exactly one definition of the watcher-channel double exists in `test/`.
-   `grep -c 'implements CommandStreamHandle\|implements SSHStreamHandle'` over
-   the watcher tests returns 1, and the three scenarios are named rather than
-   configured.
+8. Exactly one watcher-channel double exists.
+   `grep -rn 'implements SSHStreamHandle\|implements CommandStreamHandle' test/`
+   names `FakeWatcherHandle` and nothing else under `test/watch*`. The other
+   doubles it lists belong to other subsystems — clone, CI trace, and the
+   general-purpose `MockStreamHandle` — and are out of scope; the criterion is
+   one double for the ARM PROTOCOL, not one for every stream in the suite.
 9. The MADR carries amendments 0044.1 and 0044.2; this plan carries an execution
    record and a dated entry for every deviation.
 
