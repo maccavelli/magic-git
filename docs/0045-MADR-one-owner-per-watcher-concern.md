@@ -4,7 +4,7 @@ date: 2026-09-10
 decision-makers: [Maintainer]
 consulted: []
 informed: [Magic Git contributors]
-verified: 2026-09-10
+verified: 2026-09-11
 ---
 
 # One owner per watcher concern: demand in Riverpod, exclusion in admission, sequencing in one engine
@@ -627,7 +627,8 @@ arming. The plan's deviation (t) holds the evidence and the execution.
   chain are superseded here, by amendment 0043.2.
   [0044-PLAN-the-watcher-follows-the-active-tab.md](0044-PLAN-the-watcher-follows-the-active-tab.md)
   — step 4.7 is superseded, and deviation (c) records the revised resolution; phase 4.3
-  waits on this record's plan.
+  waits on this record's plan. *(Measured under this plan's step 7.6, 2026-09-11: a median arm
+  of 228 ms across ten tab switches, against 0044's 250 ms.)*
 * **The history this record draws on.** MADR 0026 H1 (the first sequencer, and the seam
   it closed); MADR 0028 H2 (the ceiling wake that admission keeps); MADR 0039 F4 and D9
   (the host-keyed ceiling as a static, and catalogues armed at every boundary); MADR

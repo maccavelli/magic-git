@@ -4,7 +4,7 @@ date: 2026-09-10
 decision-makers: [Maintainer]
 consulted: []
 informed: [Magic Git contributors]
-verified: 2026-09-10
+verified: 2026-09-11
 ---
 
 # The watcher follows the active tab, and the reason to change that is not the one it looks like: the switch costs 400 ms, 250 of which is a timeout we chose
@@ -546,6 +546,12 @@ parameters on rebuilds, and the maintainer directed an architectural review of t
 whole watcher stack instead of a further patch. That review is
 [0045-MADR-one-owner-per-watcher-concern.md](0045-MADR-one-owner-per-watcher-concern.md)
 (proposed), and 4.3 now waits on its plan.
+
+*Closed 2026-09-11.* MADR 0045 was accepted and its plan executed: admission and one engine replace
+the sharing layer outright, so the orphan this amendment describes has no mechanism left to occur in.
+4.3 was measured under that plan's step 7.6 on a live host — ten tab switches, heartbeat-to-lock
+median **228 ms** against the 250 ms this record set, every teardown complete and one watcher armed at
+a time. This plan's acceptance criterion 6 is met and its status is `complete`.
 
 ## More Information
 

@@ -1,6 +1,6 @@
 ---
-status: "in-progress"
-date: 2026-09-10
+status: "complete"
+date: 2026-09-11
 associated-madr: "0044-MADR-the-watcher-follows-the-active-tab.md"
 ---
 # Implement option E: settle an arm on a signal instead of a timeout
@@ -943,7 +943,7 @@ a generation counter would add a fourth sequencer to a layer the decision remove
 `remote_watch_service.dart` to `0d31f51`; a reference patch was kept outside the
 repository. The three tests written for it remain uncommitted — two of them fail
 against the restored code, by design, until MADR 0045's plan delivers. The tests carry over to MADR 0045's plan as
-acceptance tests. **4.3 stays blocked** until that plan delivers.
+acceptance tests. ~~**4.3 stays blocked** until that plan delivers.~~ Delivered and measured 2026-09-11; see below.
 
 #### Still owed — 4.3
 
@@ -958,6 +958,25 @@ remains:
   transition itself — one repository's watcher torn down, the next armed — is
   still unobserved, which MADR 0044 already names as a limit of its own
   measurements.
+
+**Measured 2026-09-11**, under MADR 0045's plan step 7.6, on build `1.7.0.3` with a read-only
+5 ms registry sampler running on the host. Ten switches between two remote tabs of one host,
+heartbeat-to-lock per arm:
+
+```text
+234 672 331 219 212 236 223 223 208 261 ms      median 228 ms (min 208, max 672)
+```
+
+**Median 228 ms against acceptance criterion 6's 250 ms — criterion 6 is met.** The slowest arm
+(672 ms) was the first return to the repository that had just been torn down.
+
+The end-to-end transition was also measured, previous watcher's teardown to the new lock: median
+850 ms (min 815, max 1519), of which about 600 ms precedes the new lease stamp. That part is the
+tab switch's own cost — rebuilding the shell and reaching the arm — not the arm, which this record
+set out to shorten. Every teardown released pid file, lock and heartbeat, and exactly one watcher
+was armed at a time.
+
+Nothing is owed: this plan is complete.
 
 ## Verification
 

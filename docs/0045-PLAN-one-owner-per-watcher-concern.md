@@ -1,5 +1,5 @@
 ---
-status: "in-progress"
+status: "complete"
 date: 2026-09-11
 associated-madr: "0045-MADR-one-owner-per-watcher-concern.md"
 ---
@@ -2465,7 +2465,14 @@ grace`.
 
 ### Phase 7 — host verification with the maintainer, then close the records
 
-In progress.
+~~In progress.~~ **Complete, 2026-09-11.** 7.1–7.6 ran twice. The first 7.3 failed — a disconnect
+stranded every armed watcher's heartbeat — and became deviation (t); with (t) and (u) built and
+committed (`4ef6d73`), 7.1–7.6 were re-run on a rebuild, and 7.2, 7.3, 7.4 and 7.5's watcher checks
+pass with 7.6's median at 228 ms against MADR 0044's 250 ms. Three findings came out of the re-run and
+the closure: deviation (v), a detached window on a linked worktree runs no command — window routing,
+not the watcher stack, so it goes to its own record; deviation (w), a guard one name short of the
+criterion it enforces; and deviation (x), a 7.2 clause that had never been checked. (w) and (x) are
+closed below, and 7.7 closes the records.
 
 **7.1.** The maintainer rebuilt and relaunched before the steps began: the installed bundle reads
 `1.7.0.1`, `git describe --tags` at `HEAD` reads `v1.7.0-1-gc89891d`, and the binary was written 98 s
@@ -2869,7 +2876,7 @@ the first in the pre-phase-6 base36 token form, the second at 14:38:05 by the `1
 maintainer had just replaced — so neither is a quit of the fixed build, and the
 one-heartbeat-per-armed-repository clause holds for every watcher this build armed.
 
-#### Deviation (x) — one 7.2 condition was never checked (2026-09-11, open)
+#### Deviation (x) — one 7.2 condition was never checked (2026-09-11)
 
 **Found** while checking criterion 10 at closure. Step 7.2 requires "exactly one watcher, one lock,
 one pid file and one heartbeat per armed repository, **and no `mg-watch: armed` in any file**". The
@@ -2895,6 +2902,67 @@ median is reported, and the stranded heartbeats belonged to older builds, as rec
 
 **The consequence of doing nothing:** the plan would close claiming 7.2 "passes as specified" when one
 clause of it was never read — the unchecked claim this plan's rule 1 exists to prevent.
+
+**Decision: resolution 1** (maintainer: "Check it live"). The clause is checked on the current build,
+with the app open and a remote tab active, by a read-only census that reads the contents of every
+`mg-watch*` file in each repository's git dir and reports any carrying the marker. 7.7 closes on its
+result.
+
+#### Deviation (x), executed — the marker clause checked live (2026-09-11, 17:15 host time)
+
+With the app open on `1.7.0.3` and one remote tab active, a read-only census read the *contents* of
+every `mg-watch*` file in each of the three hosts' 29 repositories:
+
+```text
+host A   one repository armed:  mg-watch.<token>.hb    0 bytes, 35 s old
+                                mg-watch.lock/token   16 bytes
+                                mg-watch.<token>.pid   7 bytes
+         registry files checked: 3; carrying the marker: 0
+host B   registry files checked: 0; carrying the marker: 0
+host C   registry files checked: 0; carrying the marker: 0
+```
+
+No registry file carries `mg-watch: armed`. Each file holds exactly what it is for: the lease empty,
+the lock only its token, the pid file only a pid. One watcher, one lock, one pid file, one heartbeat,
+nothing stranded — **7.2's whole condition, on the build carrying every fix this plan made.**
+
+#### 7.7 — the records closed (2026-09-11)
+
+* MADR 0045 → `verified: 2026-09-11`; its status was already `accepted`.
+* This plan → `status: complete`, with the execution record above.
+* MADR 0044's plan → 4.3's result recorded, `status: complete`; MADR 0044 → amendment 0044.3 given a
+  closing paragraph, `verified: 2026-09-11`.
+* README rows for 0043, 0044 and 0045.
+
+**Acceptance criteria.**
+
+| # | Result |
+| --- | --- |
+| 1 | **Met.** None of the seven retired names appears in `lib` or `test`; all seven are in the guard since deviation (w), which was seen to fail on `_slotReleases` |
+| 2 | **Met.** The guard's mutable-static check, seen to fail in phase 6 on an injected `static int injectedCounter = 0;` |
+| 3 | **Met.** Deviation (c)'s tests A, B and C in `watch_shared_path_test.dart` and `a rebuild with new parameters arms the new surface` pass in the full suite |
+| 4 | **Met.** `worktree_lock_key_exec_test.dart` passes: the resolved key arms, the conventional key exits 98 |
+| 5 | **Met.** `invalidating the facade keeps an unchanged target's watcher` passes (phase 5, deviation (m)) |
+| 6 | **Met, and checked rather than assumed** — the nine ported tests' assertions are identical to the deleted file's, by the parity check above, and the stale-attempt tests pass |
+| 7 | **Met.** The sleep guard, seen to fail in phase 6; the allow-list carries a reason per entry and is checked against `test/` |
+| 8 | **Met.** At `4ef6d73`: `--check` 132 sound, and 0039/0040/0041/0043/0044/0045 report 47/2/27/7/10/39 killed, 0 survived, 0 did not apply. Retirements are exactly phase 2's three 0043 entries. Deviation (n) re-anchored one entry *this plan had added*, inside this plan's own catalogue — a re-anchor, not a retirement. The catalogues were not re-run for `9216938`, which adds one name to a structure test's retired list and so can only make a test stricter |
+| 9 | **Met.** Full suite `03:34 +4058 ~3`, `flutter analyze` clean, and every staged Dart file formatted at each commit's gate |
+| 10 | **Met.** 7.2 in full (the marker clause live, above), 7.3, 7.4 and 7.5's watcher checks pass; 7.6's median is 228 ms against 0044's 250 ms. 7.5's detached window runs no command — deviation (v), outside the watcher stack |
+| 11 | **Met.** This section |
+
+**Follow-ups, none of which blocks this record.**
+
+* **Deviation (v)** — a detached window on a linked worktree gets `RELAY_DOWN` for every command.
+  Pre-existing, window routing rather than watching; its own record, 0047, `proposed`.
+* **Deviation (u), resolution 2** — delivering a chunk's paths as one signal instead of one per
+  record, to win back the per-record cost phases 3 and 4 added. It changes `SourceSignal`'s shape
+  across both sources and the engine, so it is a record of its own. The linear-time test now measures
+  growth rather than a clock, so nothing is flaky in the meantime.
+* **The 15 stale 0032 and 0036 catalogue entries** from deviation (c), covered by
+  [0046-PLAN-restore-stale-workspace-mutation-entries.md](0046-PLAN-restore-stale-workspace-mutation-entries.md).
+
+**Commit (docs).** Gated by `flutter analyze`, the four tests that read `docs/` — including
+`no_real_identifiers_scan_test.dart` — and a grep for internal identifiers. Nothing is pushed.
 
 ## Verification
 
