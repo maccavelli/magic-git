@@ -699,12 +699,16 @@ and B pass and ends the two-failure state on `master`.
   * `a scoped repository is locked by its spec's git dir`;
   * `a lease that cannot be stamped fails the arm without opening a stream`.
 * `test/directory_watch_source_test.dart` — the three tests from
-  `local_watch_worktree_test.dart`, run against the source.
+  `local_watch_worktree_test.dart`, run against the source. *(Deviation (g), 2026-09-10:
+  that file has five tests, and had five at `6c25baa`; all five are ported.)*
 * **`test/worktree_lock_key_exec_test.dart`, tagged `integration`.** Using real `git` and
   `sh`, it makes a temporary repository and a linked worktree, and gets the expected git
   dir with `git -C <wt> rev-parse --absolute-git-dir`. It builds `recursiveWatchScript` with
   that git dir, stamps the heartbeat, and runs `sh -c` with a shim `inotifywait`
-  (following the pattern in `watch_lease_teardown_exec_test.dart`). Two tests:
+  (following the pattern in `watch_lease_teardown_exec_test.dart`). *(Deviation (f),
+  2026-09-10: that pattern called `pkill`; it is replaced first, and this test uses the
+  replacement — the shim records its own PID, and only recorded PIDs are killed.)* Two
+  tests:
   * `a worktree armed with its resolved git dir holds a live watcher` — the marker is on
     stderr, the process is alive, and the lock dir exists under the resolved git dir;
   * `a worktree armed with the conventional key is refused` — exit 98, no marker.
@@ -1681,6 +1685,190 @@ flutter test                             03:50 +4009 ~3: All tests passed!   (ph
 
 The other five catalogues were run before deviation (e), whose change is one test in a file
 none of them names.
+
+### Phase 3 — the source seam and lock-key resolution
+
+**Complete — code committed as `d77e34a`** (39 files: 12 in `lib`, 23 tests, 4 catalogues). Gate
+at commit: `dart format --output=none --set-exit-if-changed` on the 35 staged Dart files, 0
+changed; `flutter analyze`, no issues; the full suite and catalogues as recorded below. The
+generated commit message describes the source seam and `resolveRepoLayout`; the `pkill` removal
+(deviation (f)), the synchronous signals and the executing lease test are recorded here.
+
+#### Deviation (f) — a committed test calls `pkill` (2026-09-10)
+
+**Found** while reading the pattern this phase's worktree test is told to follow.
+`test/watch_lease_teardown_exec_test.dart` calls `Process.run('pkill', ['-f', marker])`
+twice, with `marker = 'mg-lease-exec-probe'`:
+
+* line 86, in `tearDown` — a backstop so no shim watcher outlives a test;
+* line 359, in `a lock whose holder is gone is stolen, not respected` — after SIGKILLing
+  the first watcher's `sh`, to take its orphaned shim payload down too, simulating a holder
+  that crashed.
+
+A repository-wide search (excluding the vendored SDK, `build/` and `.dart_tool/`) finds no
+other call; the only other mentions are rule 5 and this phase's own "No `pkill`". The calls
+arrived in `cb18fc1` and `96bdab1` (2026-09-09, MADR 0041) and are on `origin/master`.
+`pkill` is forbidden in any form by the maintainer and by rule 5.
+
+**It ran during this work.** Every full-suite run in phases 0–2 and every run of the 0041
+and 0043 catalogues — which name this file for many of their mutations — executed those
+calls. It was not noticed until this phase's pattern pointed at the file.
+
+**Decision: resolution 1.** Kill only exact PIDs the test itself recorded. The shim writes
+its own PID to a file in the test's temporary directory before `exec` — which keeps the PID —
+so every recorded PID is a payload that test started. Before a recorded PID is killed, its
+argv must still start with that test's own temporary directory, because a payload that exited
+on its own may have had its PID reused. `tearDown` kills those, then runs the existing process
+census and **fails** if any marker process is still alive, rather than killing whatever
+matches. Line 359 kills the first watcher's recorded payload. This phase's worktree test uses
+the same pattern.
+
+**Rejected.** Killing by the PID the product script writes to its own pid file is also exact,
+but ties cleanup to the behaviour under test: a regression in that pid recording would leak
+processes silently instead of failing.
+
+**Scope added to phase 3:** `test/watch_lease_teardown_exec_test.dart`.
+
+**Executed.** The shim appends its own `$$` to `payload.pids` in the test's temporary
+directory before `exec`. `recordedPayloads()` reads them; `killOwnPayload(pid)` sends SIGKILL
+only when `ps -o args= -p <pid>` still starts with `<shimDir>/mg-lease-exec-probe`.
+`tearDown` kills the recorded payloads, waits for the existing census (`liveWatchers()`, moved
+above `setUp` so `tearDown` may call it) to read zero, deletes the directory, and fails with
+`a shim watcher outlived its test` if it did not. The stolen-lock test kills the crashed
+holder's recorded payload and waits for it to die. `flutter analyze`: no issues (one
+`use_null_aware_elements` info fixed on the way). `flutter test
+test/watch_lease_teardown_exec_test.dart`: `00:11 +18: All tests passed!`.
+`grep -rn pkill test lib tool`: no output (exit 1). No marker process alive afterwards.
+
+**The census seen to fail.** In a scratch worktree, a copy of the test with the tearDown's
+kill loop removed, running only `a refusal names the token that holds the lock` — which
+SIGKILLs its first watcher's shell and leaves the payload:
+
+```text
+00:09 +0 -1: one watcher per repository a refusal names the token that holds the lock [E]
+  Expected: true
+    Actual: <false>
+  a shim watcher outlived its test
+```
+
+The one payload that run leaked was then killed by its exact PID, identified by its argv under
+that run's own `mg-lease-teardown-` directory; zero marker processes remained.
+
+#### Deviation (g) — the plan counts three worktree watch tests; there are five (2026-09-10)
+
+**Found.** Step "`test/directory_watch_source_test.dart` — the three tests from
+`local_watch_worktree_test.dart`" is wrong as written: `grep -c '^  test('` on that file reports
+5 at `6c25baa`, when this plan was written, and 5 at `HEAD`. The five are a commit made in the
+linked worktree is seen as git state; a branch moved in the main repository is seen from the
+worktree; an ordinary edit is not git state; a bare repository's worktree sees git state; an
+ordinary repository watches one root.
+
+**Decision** (maintainer: "all 5"): all five are ported, run against `DirectoryWatchSource`.
+
+**Rejected.** Porting three would have left two behaviours of the roots that moved guarded only
+through `LocalWatchService`.
+
+**Scope added to phase 3:** none beyond the file the plan names.
+
+#### Phase 3, executed
+
+**Created.** `lib/core/git/watch/source/watch_source.dart` (`ArmRequest`, `SourceArm`,
+`ArmedSource`, `SourceSignal`, `WatchSource`); `source/lifecycle_adapter.dart`
+(`armFromSource`, temporary until phase 4); under `source/remote/`: `git_dir_resolver.dart`,
+`watcher_tool_probe.dart`, `watch_lease.dart` (`stamp()` throws `WatchLeaseException`),
+`watcher_process.dart` (`WatcherOpened`/`WatcherRefused`/`WatcherCancelled`/
+`WatcherBudgetSpent`), `remote_watch_source.dart`; `source/local/directory_watch_source.dart`;
+`test/helpers/conventional_git_dir.dart`. `resolveRepoLayout` is top-level in
+`git_service.dart`, with `repoLayout` and `scopedRepoLayout` delegating and the legacy script
+asserted byte-identical.
+
+**Modified.** `RemoteWatchService` takes `required GitDirResolver gitDirOf`, builds a
+`RemoteWatchSource` per stream and arms through `armFromSource`; `_detectWatcher`, the arm
+closure and `_ArmProbe` are gone from it (the typedef and its doc moved to
+`watcher_process.dart`), and it gains `resolveSweepTargets`, which the connect-time sweep in
+`app_providers.dart` now calls — the plan put that loop in `_sweepStaleWatchers`; it lives on the
+service so `connect_paths_test.dart` can drive it, and the provider only calls it (with an
+attempt/`mounted` check after the awaits). `LocalWatchService` arms through
+`DirectoryWatchSource`. Every `RemoteWatchService(` in 13 test files — 48 constructions — and
+the scripted subclass in `repo_watch_ignore_filter_test.dart` pass
+`gitDirOf: conventionalGitDir`; the plan's "12 test files" predates phase 2's additions.
+
+**Implementation notes.** A `WatcherRefused` carries the incumbent as a getter, read after the
+channel is discarded and the host claims released — as the arm read it — because the `lock held
+by` line can arrive just after the exit status. An armed source's `close()` does not await its
+signal controller's close: an unlistened single-subscription stream never finishes closing.
+Cancellation reaches a source as `ArmRequest.cancelled`, a future, rather than the engine's
+synchronous flag, so a source observes it one microtask later than the arm did; admission and
+the engine's own `if (cancelled)` after `WatchArmed` still close anything armed in that window.
+
+**Two fixes the gate forced.**
+
+* *A burst's paths were queued, not delivered.* The first full suite failed
+  `record splitting a large burst costs linear time, not a copy per record`:
+  `Expected: a value less than <50>, Actual: <164>`; run alone three times, 142, 141 and 141 ms.
+  Each path crossed the new seam as an asynchronously delivered `PathChanged`. Both sources'
+  signal controllers are now `sync: true` — still single-subscription, so nothing before listen is
+  lost — and the same test passed three times alone.
+* *A new test asserted script text without executing it.* `assertion_strength_scan_test.dart`
+  enumerated `watch_lease_test.dart`, which matched `watchLockReleaseScript(...)` in the issued
+  command. Rather than list it as composition-only, `releasing is token-guarded and best-effort`
+  now runs the exact command the lease issues with a real `sh` against a real lock: owned by the
+  token, lease and lock removed with exit 0; owned by someone else, the lease removed and the lock
+  kept. Its first form expected exit 0 in both cases, and failed — the guard `[ token = ours ] &&
+  rm` is false for a stolen lock, which the lease ignores by design — so the stolen case asserts
+  effects only.
+
+**Verification, so far.**
+
+```text
+flutter analyze                                   No issues found!
+flutter test <the five new unit tests + connect_paths_test>
+                                                  00:00 +21: All tests passed!
+flutter test test/worktree_lock_key_exec_test.dart
+                                                  00:00 +2: All tests passed!   (both tests seen)
+flutter test test/watch_lease_test.dart test/assertion_strength_scan_test.dart
+                                                  00:00 +6: All tests passed!
+flutter test                                      03:40 +4034 ~3: All tests passed!   (phase 2: +4009 ~3)
+grep -nE '_detectWatcher|beat\(|releaseHostClaims\(' lib/core/git/remote_watch_service.dart
+                                                  exit 1, no output
+```
+
+**Catalogue changes.** 17 entries re-anchored onto the units the behaviour moved to — 0041's
+three `p2` entries (teardown tail → `remote_watch_source.dart`; the release catch and the pid-file
+entry → `watch_lease.dart`) and three `p3` entries (→ `watcher_process.dart`); 0043's teardown and
+stranded-lease entries (→ `remote_watch_source.dart`); 0044's five race and stderr entries
+(→ `watcher_process.dart`) and its refused-slot entry (→ `remote_watch_source.dart`); 0045's
+three `p2` entries (→ `remote_watch_source.dart`). Where a new unit test also guards an entry,
+that file joined the entry's tests. Four entries added to 0045: `p3: the lock key ignores the
+resolver`, `p3: a failed stamp is swallowed`, `p3: the probe cache survives recovery`, `p3: the
+sweep keys by the conventional path`.
+
+**Catalogue runs.** `--check` first, then each catalogue, one at a time with no other test run in
+progress; each mirrored 41 paths, passed its baseline and recognised the compile canary:
+
+```text
+tool/mutate.py --check 0041 0043 0044 0045   61 entries in 4 catalogue(s): 61 sound, 0 did not apply, 0 do not compile (4m 03s)
+tool/mutate.py 0041-watcher-teardown         27 killed, 0 survived, 0 did not apply, 0 did not compile, 0 observed by no test
+tool/mutate.py 0043-one-watcher-per-repo      7 killed, 0 survived, 0 did not apply, 0 did not compile, 0 observed by no test
+tool/mutate.py 0044-arm-readiness            10 killed, 0 survived, 0 did not apply, 0 did not compile, 0 observed by no test
+tool/mutate.py 0045-watch-stack              17 killed, 0 survived, 0 did not apply, 0 did not compile, 0 observed by no test
+```
+
+The four new entries were killed by: `p3: the lock key ignores the resolver` → `a linked worktree
+is locked by its resolved git dir`; `p3: a failed stamp is swallowed` → `a failed stamp throws with
+the host's reason`, `a lease that cannot be stamped fails the arm without opening a stream`;
+`p3: the sweep keys by the conventional path` → `the connect-time sweep keys a worktree by its
+resolved git dir`; `p3: the probe cache survives recovery` → `invalidate probes again` and
+`recovering from polling back to event-driven stops the poll ticks` — the plan's named killer,
+`a failed watcher probe retries instead of caching "none"`, is not among them, since a failed
+probe caches nothing to invalidate.
+
+**Observed, and left open.** In that last mutated run `record splitting a large burst costs linear
+time, not a copy per record` also failed, although a no-op `invalidate()` does not touch record
+splitting. The test measures wall-clock time against 50 ms; it passed three times alone after the
+synchronous-signal fix, and once in the full suite. It is likely load-sensitive near its bound when
+two test files run together. The entry's kill does not depend on it; the test's margin is named
+here rather than widened.
 
 ## Verification
 
