@@ -15,8 +15,33 @@ import 'dart:async';
 final class RepoExclusion {
   final Map<String, ExclusionHold> _holds = {};
 
+  /// Completed, and dropped, when the last hold is released.
+  Completer<void>? _idle;
+
   /// Whether a hold is installed for [lockKey].
   bool isHeld(String lockKey) => _holds.containsKey(lockKey);
+
+  /// Whether this session holds no repository lock at all.
+  bool get isIdle => _holds.isEmpty;
+
+  /// Completes once this session holds no repository lock — at once if it
+  /// holds none.
+  ///
+  /// A watcher releases its exclusion last, only after the host has given its
+  /// lock back, so this is the moment every watcher of the session has released
+  /// its host claims: what a caller about to close the transport those claims
+  /// travel over waits for (MADR amendment 0045.4).
+  Future<void> whenIdle() {
+    if (isIdle) return Future<void>.value();
+    return (_idle ??= Completer<void>()).future;
+  }
+
+  void _settleIfIdle() {
+    if (_holds.isNotEmpty) return;
+    final idle = _idle;
+    _idle = null;
+    idle?.complete();
+  }
 
   /// Waits until no other hold exists for [lockKey], then installs one.
   ///
@@ -100,7 +125,10 @@ final class ExclusionHold {
   /// wedged predecessor must not open the door beside it.
   void release() {
     if (_released.isCompleted) return;
-    if (identical(_owner._holds[lockKey], this)) _owner._holds.remove(lockKey);
+    if (identical(_owner._holds[lockKey], this)) {
+      _owner._holds.remove(lockKey);
+      _owner._settleIfIdle();
+    }
     _released.complete();
   }
 }

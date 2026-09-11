@@ -171,4 +171,41 @@ void main() {
       expect(other, isNotNull, reason: 'different repositories are unrelated');
     });
   });
+  test('whenIdle is immediate when nothing is held', () {
+    fakeAsync((async) {
+      var idle = false;
+      unawaited(RepoExclusion().whenIdle().then((_) => idle = true));
+      async.flushMicrotasks();
+
+      expect(idle, isTrue, reason: 'nothing to give back, nothing to wait for');
+    });
+  });
+
+  test('whenIdle waits until every hold is released', () {
+    fakeAsync((async) {
+      // MADR amendment 0045.4: what a transport close waits for, so a watcher's
+      // host claims travel before the transport does.
+      final exclusion = RepoExclusion();
+      final holds = <ExclusionHold>[];
+      for (final key in ['/a/.git', '/b/.git']) {
+        unawaited(
+          exclusion
+              .acquire(key, grace: _grace, cancelled: _never())
+              .then((h) => holds.add(h!)),
+        );
+      }
+      async.flushMicrotasks();
+      expect(holds, hasLength(2));
+
+      var idle = false;
+      unawaited(exclusion.whenIdle().then((_) => idle = true));
+      holds.first.release();
+      async.flushMicrotasks();
+      expect(idle, isFalse, reason: 'one repository still holds its lock');
+
+      holds.last.release();
+      async.flushMicrotasks();
+      expect(idle, isTrue, reason: 'the last release is what makes it idle');
+    });
+  });
 }

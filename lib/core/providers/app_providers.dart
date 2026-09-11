@@ -36,6 +36,7 @@ import '../git/watch/admission/watch_admission.dart';
 import '../git/watch/source/remote/git_dir_resolver.dart';
 import '../git/watch/watch_runtime.dart';
 import '../git/watch/watch_target.dart';
+import '../git/watch/watch_timings.dart';
 import '../git/watch_event.dart';
 import '../github/gh_service.dart';
 import '../github/models.dart';
@@ -1344,6 +1345,9 @@ class ConnectionController extends Notifier<ConnectionState> {
       _hostKeyDecision!.complete(false);
     }
     _hostKeyDecision = null;
+    // The previous session's watchers start giving their host claims back now;
+    // the transport is not replaced until they have (MADR amendment 0045.4).
+    final releasing = _releaseWatchersBeforeTransportCloses();
     // Switching straight from a bookmark-backed local repo to an SSH host (the
     // switcher stays reachable, so no explicit disconnect is required) — release
     // the local folder's security-scoped access, which neither disconnect() nor
@@ -1422,6 +1426,13 @@ class ConnectionController extends Notifier<ConnectionState> {
     // remotely), and the repo check have very different failure/latency modes.
     final timings = Stopwatch()..start();
     try {
+      // Inside the try, so a superseded attempt still completes its forge gate
+      // in the finally.
+      if (releasing != null) {
+        await releasing;
+        if (attempt != _attempt || !ref.mounted) return;
+      }
+      ref.read(watchSuspensionProvider.notifier).resume();
       await ref
           .read(sshClientManagerProvider)
           .connect(
@@ -1912,6 +1923,13 @@ class ConnectionController extends Notifier<ConnectionState> {
     // No tokens → no background logins to wait for: gate opens immediately,
     // and forge panels rely on this machine's own gh/glab auth.
     _forgeAuthGate = Completer<void>()..complete();
+    // The previous session's watchers give their host claims back while its
+    // transport can still carry them (MADR amendment 0045.4).
+    final releasing = _releaseWatchersBeforeTransportCloses();
+    if (releasing != null) {
+      await releasing;
+      if (attempt != _attempt || !ref.mounted) return;
+    }
     // Release the *previous* session's transport before starting the new one —
     // the switcher lets the user jump straight here with no explicit disconnect.
     //
@@ -1960,6 +1978,7 @@ class ConnectionController extends Notifier<ConnectionState> {
       connectionLabel: label,
       sessionEpoch: _attempt,
     );
+    ref.read(watchSuspensionProvider.notifier).resume();
     try {
       // Resolve the environment FIRST so the augmented PATH / absolute git path
       // is in place before any git runs. A Finder-launched app inherits a bare
@@ -2936,8 +2955,32 @@ class ConnectionController extends Notifier<ConnectionState> {
     await disconnect();
   }
 
+  /// Suspends this session's watchers and waits, bounded, for them to give
+  /// their host claims back — before a caller closes, replaces or tears down
+  /// the transport those claims are released over (MADR amendment 0045.4).
+  ///
+  /// A watcher's script removes its own pid file and lock when its channel
+  /// closes; the heartbeat is the client's to remove, and a removal issued once
+  /// the transport had gone went nowhere, leaving the heartbeat for a connect
+  /// sweep to find stale five minutes later.
+  ///
+  /// Suspends at once, and returns null when there is nothing to wait for — the
+  /// session is not connected (a lost transport carries nothing, a session still
+  /// connecting has armed nothing), or no watcher holds a lock — so a caller
+  /// yields only while a release is actually in flight, and every other connect
+  /// and disconnect keeps its synchronous state changes.
+  Future<void>? _releaseWatchersBeforeTransportCloses() {
+    ref.read(watchSuspensionProvider.notifier).suspend();
+    final exclusion = ref.read(watchAdmissionProvider).exclusion;
+    if (!state.isConnected || exclusion.isIdle) return null;
+    return exclusion.whenIdle().timeout(
+      WatchTimings.defaultReleaseTimeout,
+      onTimeout: () {},
+    );
+  }
+
   Future<void> disconnect() async {
-    ++_attempt; // supersede any in-flight connect
+    final attempt = ++_attempt; // supersede any in-flight connect
     _lastProfile = null; // an explicit disconnect is not reconnectable
     _lastScopedGitDirs = const {};
     // GitService is an app-lifetime singleton; drop this connection's scopes so
@@ -2952,6 +2995,11 @@ class ConnectionController extends Notifier<ConnectionState> {
       _hostKeyDecision!.complete(false);
     }
     _hostKeyDecision = null;
+    final releasing = _releaseWatchersBeforeTransportCloses();
+    if (releasing != null) {
+      await releasing;
+      if (attempt != _attempt || !ref.mounted) return;
+    }
     if (state.isLocal) {
       // No SSH client to tear down — a local session never established one.
       ref.read(localExecutorProvider).resetEnvironment();
@@ -3756,6 +3804,26 @@ final repoFootprintProvider = FutureProvider.autoDispose
       return ref.watch(gitServiceProvider).repoFootprint(repoPath);
     }, retry: noProviderRetry);
 
+/// Whether this container's watchers are suspended while its transport is torn
+/// down (MADR amendment 0045.4).
+///
+/// While it is, the facade listens to no watcher, so each watcher's provider
+/// disposes and its engine gives its host claims back — over a transport that
+/// is still there to carry them. The connection controller suspends before it
+/// closes, replaces or tears down a transport, and the next session resumes.
+final watchSuspensionProvider = NotifierProvider<WatchSuspension, bool>(
+  WatchSuspension.new,
+);
+
+class WatchSuspension extends Notifier<bool> {
+  @override
+  bool build() => false;
+
+  void suspend() => state = true;
+
+  void resume() => state = false;
+}
+
 /// What [repoWatchProvider] watches for a repository: its backend and surface,
 /// as a value (MADR 0045 section 1).
 ///
@@ -3832,18 +3900,23 @@ final repoWatchProvider = StreamProvider.autoDispose
       // ignore: close_sinks
       final controller = StreamController<RepoWatchEvent>.broadcast();
       ref.onDispose(controller.close);
-      // Listened, not watched: rebuilding this facade re-attaches to the
-      // watcher rather than rebuilding it.
-      final watching = ref.listen(watcherProvider(target), (_, next) {
-        final event = next.value;
-        if (event != null && !controller.isClosed) controller.add(event);
-      }, fireImmediately: true);
-      // Closed here, at the rebuild. Riverpod keeps a rebuilt provider's old
-      // subscriptions, paused, until its new stream is done, and a watcher's
-      // never is: the old watcher would outlive a changed target, running
-      // beside its replacement (MADR amendment 0045.3). An unchanged target
-      // regains its listener in the same rebuild, before the dispose pass.
-      ref.onDispose(watching.close);
+      // While this session's transport is torn down no watcher is listened to,
+      // so each disposes and gives its host claims back first (MADR amendment
+      // 0045.4).
+      if (!ref.watch(watchSuspensionProvider)) {
+        // Listened, not watched: rebuilding this facade re-attaches to the
+        // watcher rather than rebuilding it.
+        final watching = ref.listen(watcherProvider(target), (_, next) {
+          final event = next.value;
+          if (event != null && !controller.isClosed) controller.add(event);
+        }, fireImmediately: true);
+        // Closed here, at the rebuild. Riverpod keeps a rebuilt provider's old
+        // subscriptions, paused, until its new stream is done, and a watcher's
+        // never is: the old watcher would outlive a changed target, running
+        // beside its replacement (MADR amendment 0045.3). An unchanged target
+        // regains its listener in the same rebuild, before the dispose pass.
+        ref.onDispose(watching.close);
+      }
       final oracle = ref.watch(ignoreOracleProvider);
       return _withoutIgnoredPaths(oracle, repoPath, controller.stream);
     }, retry: noProviderRetry);

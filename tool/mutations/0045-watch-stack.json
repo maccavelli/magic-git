@@ -278,5 +278,88 @@
       "test/watch_lease_release_test.dart",
       "test/watcher_process_test.dart"
     ]
+  },
+  {
+    "label": "p7: disconnect closes the transport before its watchers release",
+    "file": "lib/core/providers/app_providers.dart",
+    "find": "    _hostKeyDecision = null;\n    final releasing = _releaseWatchersBeforeTransportCloses();\n",
+    "replace": "    _hostKeyDecision = null;\n    const Future<void>? releasing = null;\n",
+    "tests": [
+      "test/watch_transport_release_test.dart"
+    ]
+  },
+  {
+    "label": "p7: a host switch replaces the transport before the release",
+    "file": "lib/core/providers/app_providers.dart",
+    "find": "      if (releasing != null) {\n        await releasing;\n        if (attempt != _attempt || !ref.mounted) return;\n      }\n      ref.read(watchSuspensionProvider.notifier).resume();\n",
+    "replace": "      ref.read(watchSuspensionProvider.notifier).resume();\n",
+    "tests": [
+      "test/watch_transport_release_test.dart"
+    ]
+  },
+  {
+    "label": "p7: the next session never resumes watching",
+    "file": "lib/core/providers/app_providers.dart",
+    "find": "      ref.read(watchSuspensionProvider.notifier).resume();\n      await ref\n",
+    "replace": "      await ref\n",
+    "tests": [
+      "test/watch_transport_release_test.dart"
+    ]
+  },
+  {
+    "label": "p7: leaving SSH for a local repository closes the transport first",
+    "file": "lib/core/providers/app_providers.dart",
+    "find": "    // transport can still carry them (MADR amendment 0045.4).\n    final releasing = _releaseWatchersBeforeTransportCloses();\n    if (releasing != null) {\n      await releasing;\n      if (attempt != _attempt || !ref.mounted) return;\n    }\n",
+    "replace": "    // transport can still carry them (MADR amendment 0045.4).\n",
+    "tests": [
+      "test/watch_transport_release_test.dart"
+    ]
+  },
+  {
+    "label": "p7: a lost connection still waits for a release",
+    "file": "lib/core/providers/app_providers.dart",
+    "find": "    if (!state.isConnected || exclusion.isIdle) return null;\n",
+    "replace": "    if (exclusion.isIdle) return null;\n",
+    "tests": [
+      "test/watch_transport_release_test.dart"
+    ]
+  },
+  {
+    "label": "p7: the release wait is unbounded",
+    "file": "lib/core/providers/app_providers.dart",
+    "find": "    return exclusion.whenIdle().timeout(\n      WatchTimings.defaultReleaseTimeout,\n      onTimeout: () {},\n    );\n",
+    "replace": "    return exclusion.whenIdle();\n",
+    "tests": [
+      "test/watch_transport_release_test.dart"
+    ]
+  },
+  {
+    "label": "p7: a suspended facade still listens",
+    "file": "lib/core/providers/app_providers.dart",
+    "find": "      if (!ref.watch(watchSuspensionProvider)) {\n",
+    "replace": "      if (identical(ref, ref)) {\n",
+    "tests": [
+      "test/watch_transport_release_test.dart"
+    ]
+  },
+  {
+    "label": "p7: the exclusion reports idle while a hold remains",
+    "file": "lib/core/git/watch/admission/repo_exclusion.dart",
+    "find": "  bool get isIdle => _holds.isEmpty;\n",
+    "replace": "  bool get isIdle => true;\n",
+    "tests": [
+      "test/repo_exclusion_test.dart",
+      "test/watch_transport_release_test.dart"
+    ]
+  },
+  {
+    "label": "p7: the last release never reports idle",
+    "file": "lib/core/git/watch/admission/repo_exclusion.dart",
+    "find": "      _owner._settleIfIdle();\n",
+    "replace": "",
+    "tests": [
+      "test/repo_exclusion_test.dart",
+      "test/watch_transport_release_test.dart"
+    ]
   }
 ]

@@ -449,49 +449,75 @@ void main() {
 
     test('a large burst costs linear time, not a copy per record', () {
       fakeAsync((async) {
+        // Splitting must not copy the remaining buffer per record (0024 A1).
+        // Measured as a GROWTH, not against a fixed bound: the same 20,000
+        // records split in 4 KiB chunks and in 128 KiB chunks. A cursor's cost
+        // does not depend on the chunk size; re-slicing per record copies the
+        // rest of the chunk each time, so its cost grows with the chunk. Every
+        // other cost on the path is per record and common to both runs, so it
+        // cancels — which a fixed bound could not do: the path grew from ~23 ms
+        // to ~43 ms across MADR 0045's phases 3 and 4, against a bound of 50
+        // (MADR 0045 plan, deviation (u)).
+        //
+        // Measured, fastest of three after a warm-up: a cursor 0.85-0.92x,
+        // re-slicing per record 15.6-15.8x. 3x sits well clear of both.
         const records = 20000;
-        final blob = [
-          for (var i = 0; i < records; i++) 'src/m$i/f$i.dart',
-        ].join('\n');
-        final chunks = _chunk('$blob\n', 32 * 1024);
+        final blob =
+            '${[for (var i = 0; i < records; i++) 'src/m$i/f$i.dart'].join('\n')}\n';
 
-        final handle = FakeWatcherHandle.armed();
-        final executor = _DrivableExecutor(tool: 'inotifywait', handle: handle);
-        final service = RemoteWatchService(
-          executor,
-          gitDirOf: conventionalGitDir,
-        );
-        final sub = service.watch('/repo').listen((_) {});
-        _untilStreamOpened(async, executor);
-        async.letArmsSettle();
+        // Real time to split and deliver [blob] in [chunkSize] chunks. The
+        // stopwatch runs on REAL time, which fake time does not drive: the
+        // split happens inside the flushes, so it times that work alone.
+        Duration burst(int chunkSize) {
+          final handle = FakeWatcherHandle.armed();
+          final executor = _DrivableExecutor(
+            tool: 'inotifywait',
+            handle: handle,
+          );
+          final service = RemoteWatchService(
+            executor,
+            gitDirOf: conventionalGitDir,
+          );
+          final sub = service.watch('/repo').listen((_) {});
+          _untilStreamOpened(async, executor);
+          async.letArmsSettle();
+          final chunks = _chunk(blob, chunkSize);
 
-        // The stopwatch runs on REAL time, which fake time does not drive: the
-        // split happens inside the flushes below, so it times that work alone,
-        // without the event-loop turns the real-time version also counted.
-        final sw = Stopwatch()..start();
-        for (final c in chunks) {
-          handle.emitStdout(c);
-        }
-        for (
-          var i = 0;
-          i < chunks.length && handle.delivered < chunks.length;
-          i++
-        ) {
+          final sw = Stopwatch()..start();
+          for (final c in chunks) {
+            handle.emitStdout(c);
+          }
+          for (
+            var i = 0;
+            i < chunks.length && handle.delivered < chunks.length;
+            i++
+          ) {
+            async.flushMicrotasks();
+          }
+          sw.stop();
+
+          sub.cancel();
           async.flushMicrotasks();
+          return sw.elapsed;
         }
-        sw.stop();
 
-        // Measured: re-slicing the buffer per record costs ~134 ms here; a
-        // cursor costs ~1 ms. 50 ms sits ~2.7x under the quadratic cost and
-        // ~50x over the linear one, so it cannot flake on a slow machine and
-        // cannot pass on the old implementation.
+        Duration fastestOfThree(int chunkSize) => [
+          for (var i = 0; i < 3; i++) burst(chunkSize),
+        ].reduce((a, b) => a < b ? a : b);
+
+        // The first burst also pays for compiling the path it runs.
+        burst(32 * 1024);
+        final small = fastestOfThree(4 * 1024);
+        final large = fastestOfThree(128 * 1024);
+
         expect(
-          sw.elapsedMilliseconds,
-          lessThan(50),
-          reason: 'splitting must not copy the remaining buffer per record',
+          large.inMicroseconds / small.inMicroseconds,
+          lessThan(3),
+          reason:
+              'splitting must not copy the remaining buffer per record: '
+              '4 KiB chunks took ${small.inMicroseconds} us, 128 KiB chunks '
+              '${large.inMicroseconds} us',
         );
-        sub.cancel();
-        async.flushMicrotasks();
       });
     });
   });
