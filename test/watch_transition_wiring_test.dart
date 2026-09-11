@@ -10,13 +10,15 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:remote_magic_git/core/git/remote_watch_service.dart';
 import 'package:remote_magic_git/core/git/watch/admission/host_watcher_budget.dart';
 import 'package:remote_magic_git/core/git/watch/admission/watch_admission.dart';
+import 'package:remote_magic_git/core/git/watch/engine/watch_engine.dart';
+import 'package:remote_magic_git/core/git/watch/source/watch_source.dart';
 import 'package:remote_magic_git/core/git/watch_diagnostics.dart';
 import 'package:remote_magic_git/core/git/watch_event.dart';
-import 'package:remote_magic_git/core/git/watch_lifecycle.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 import 'helpers/conventional_git_dir.dart';
 import 'helpers/fake_watcher_handle.dart';
+import 'helpers/function_watch_source.dart';
 import 'helpers/watch_settle.dart';
 
 /// Reports `inotifywait` available and hands out silent handles, so every arm
@@ -240,18 +242,18 @@ void main() {
     var armCalls = 0;
     var teardowns = 0;
     final gate = Completer<void>();
-    WatchHooks? captured;
+    FakeArmedSource? captured;
 
-    final stream = watchLifecycle(
-      arm: (hooks) async {
+    final stream = WatchEngine(
+      source: FunctionWatchSource((_) async {
         armCalls++;
-        captured = hooks;
+        final armed = FakeArmedSource(onClose: () => teardowns++);
+        captured = armed;
         if (armCalls == 1) await gate.future;
-        return WatchArmed(() async {
-          teardowns++;
-        });
-      },
-    );
+        return SourceArmed(armed);
+      }),
+      repoPath: '/repo',
+    ).events;
     final sub = stream.listen((_) {});
     await settleArm();
     expect(armCalls, 1, reason: 'the first arm is in flight, holding the gate');
@@ -303,16 +305,18 @@ void main() {
       // reached. At most one follow-up is kept.
       var armCalls = 0;
       final gate = Completer<void>();
-      WatchHooks? captured;
+      FakeArmedSource? captured;
 
-      final stream = watchLifecycle(
-        arm: (hooks) async {
+      final stream = WatchEngine(
+        source: FunctionWatchSource((_) async {
           armCalls++;
-          captured = hooks;
+          final armed = FakeArmedSource();
+          captured = armed;
           if (armCalls == 1) await gate.future;
-          return WatchArmed(() async {});
-        },
-      );
+          return SourceArmed(armed);
+        }),
+        repoPath: '/repo',
+      ).events;
       final sub = stream.listen((_) {});
       await settleArm();
       expect(armCalls, 1);

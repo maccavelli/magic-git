@@ -156,5 +156,61 @@
     "tests": [
       "test/connect_paths_test.dart"
     ]
+  },
+  {
+    "label": "p4: a stale arm result is adopted",
+    "file": "lib/core/git/watch/engine/watch_engine.dart",
+    "find": "    if (attempt != _attempt) {\n      if (outcome case SourceArmed(source: final superseded)) {\n        unawaited(superseded.close());\n      }\n      return;\n    }\n",
+    "replace": "",
+    "tests": [
+      "test/watch_engine_test.dart"
+    ]
+  },
+  {
+    "label": "p4: a source arriving after cancel is left open",
+    "file": "lib/core/git/watch/engine/watch_engine.dart",
+    "find": "        // Armed for nobody: nothing else will ever close it.\n        unawaited(orphan.close());\n",
+    "replace": "        // Armed for nobody: nothing else will ever close it.\n        identical(orphan, orphan);\n",
+    "tests": [
+      "test/watch_engine_test.dart"
+    ]
+  },
+  {
+    "label": "p4: a refusal after cancel starts polling",
+    "file": "lib/core/git/watch/engine/watch_engine.dart",
+    "find": "      case SourceUnavailable():\n        // Neither recorded nor polled. The lifecycle function did both, and\n        // its poll and recovery timers then ran for a stream that was gone.\n        break;\n",
+    "replace": "      case SourceUnavailable(:final reason):\n        _degradedReason = reason;\n        _startPolling('arm unavailable: ${reason.name}');\n",
+    "tests": [
+      "test/watch_engine_test.dart"
+    ]
+  },
+  {
+    "label": "p4: a re-arm spends the restart budget",
+    "file": "lib/core/git/watch/engine/watch_engine.dart",
+    "find": "        // repository for the rest of the session (0022 H5).\n        _arm();\n",
+    "replace": "        // repository for the rest of the session (0022 H5).\n        _restarts++;\n        _arm();\n",
+    "tests": [
+      "test/watch_engine_test.dart",
+      "test/surface_rearm_policy_test.dart"
+    ]
+  },
+  {
+    "label": "p4: a budget release wakes every refusal",
+    "file": "lib/core/git/watch/engine/watch_engine.dart",
+    "find": "    if (_state case Polling(\n      reason: WatchUnavailableReason.ceiling,\n    ) when _mode == WatchMode.polling) {\n",
+    "replace": "    if (_state case Polling() when _mode == WatchMode.polling) {\n",
+    "tests": [
+      "test/watch_engine_test.dart",
+      "test/watch_ceiling_recovery_test.dart"
+    ]
+  },
+  {
+    "label": "p4: path overflow is ignored",
+    "file": "lib/core/git/watch/engine/watch_engine.dart",
+    "find": "          _overflowed = true;\n          _pending.clear();\n",
+    "replace": "          _pending.clear();\n",
+    "tests": [
+      "test/watch_engine_test.dart"
+    ]
   }
 ]

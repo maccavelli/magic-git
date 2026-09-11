@@ -1,11 +1,10 @@
 import 'dart:async';
 import 'bounded_watch.dart';
-import 'watch/source/lifecycle_adapter.dart';
+import 'watch/engine/watch_engine.dart';
 import 'watch/source/local/directory_watch_source.dart';
 import 'watch/watch_timings.dart';
 import 'watch_diagnostics.dart';
 import 'watch_event.dart';
-import 'watch_lifecycle.dart';
 import 'watch_path_filter.dart';
 
 /// Native-filesystem-event equivalent of [RemoteWatchService] for a repo on
@@ -41,7 +40,7 @@ class LocalWatchService {
   /// Where this service's own failures go — the local twin of
   /// [RemoteWatchService.onDiagnostic].
   ///
-  /// Without it a local repo was silent: it drives the same `watchLifecycle`,
+  /// Without it a local repo was silent: it drives the same `WatchEngine`,
   /// with the same restart budget and the same degrade-to-polling, but nothing
   /// reached the output log, so "why is this repo polling" was unanswerable for
   /// exactly half the backends (0026 deviation (c)).
@@ -97,23 +96,19 @@ class LocalWatchService {
   }) {
     // The roots, the listener and the re-arm policy are the source's (MADR 0045
     // section 4); this service is the per-backend engine factory.
-    final source = DirectoryWatchSource(onDiagnostic: onDiagnostic);
-    var attempts = 0;
-
-    return watchLifecycle(
-      trailing: trailing,
-      maxWait: maxWait,
-      minInterval: minInterval,
-      pollInterval: pollInterval,
-      recoveryInterval: recoveryInterval,
+    return WatchEngine(
+      source: DirectoryWatchSource(onDiagnostic: onDiagnostic),
+      repoPath: repoPath,
+      bounded: bounded,
+      timings: WatchTimings(
+        trailing: trailing,
+        maxWait: maxWait,
+        minInterval: minInterval,
+        pollInterval: pollInterval,
+        recoveryInterval: recoveryInterval,
+      ),
       onTransition: (kind, cause, restarts) =>
           _record(repoPath, kind, cause, restarts),
-      arm: armFromSource(
-        source,
-        repoPath: repoPath,
-        bounded: bounded,
-        attempt: () => ++attempts,
-      ),
-    );
+    ).events;
   }
 }

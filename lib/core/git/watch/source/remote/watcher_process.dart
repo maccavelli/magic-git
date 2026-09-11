@@ -4,9 +4,9 @@ import 'dart:developer' as developer;
 import '../../../../ssh/ssh_command_executor.dart';
 import '../../../bounded_watch.dart';
 import '../../../remote_watch_service.dart' show RemoteWatcherTool;
-import '../../../watch_lifecycle.dart' show WatchUnavailableReason;
 import '../../../watch_path_filter.dart';
 import '../../watch_timings.dart';
+import '../watch_source.dart' show WatchUnavailableReason;
 import 'record_splitter.dart';
 import 'stderr_line_reader.dart';
 

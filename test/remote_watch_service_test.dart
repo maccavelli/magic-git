@@ -400,7 +400,7 @@ void main() {
   // that is the arrival shape these drive.
   group('record splitting', () {
     test('records straddling chunk boundaries survive intact', () async {
-      // Well under 512 (watchLifecycle's maxPaths) so the burst stays
+      // Well under 512 (the engine's maxPathsPerTick) so the burst stays
       // path-scoped instead of overflowing to an unscoped tick.
       final paths = [for (var i = 0; i < 60; i++) 'src/m$i/f$i.dart'];
       final handle = FakeWatcherHandle.armed();

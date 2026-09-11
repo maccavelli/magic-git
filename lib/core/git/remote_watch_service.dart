@@ -4,14 +4,13 @@ import '../ssh/ssh_command_executor.dart';
 import 'bounded_watch.dart';
 import 'watch/admission/host_watcher_budget.dart';
 import 'watch/admission/watch_admission.dart';
-import 'watch/source/lifecycle_adapter.dart';
+import 'watch/engine/watch_engine.dart';
 import 'watch/source/remote/git_dir_resolver.dart';
 import 'watch/source/remote/remote_watch_source.dart';
 import 'watch/source/remote/watcher_tool_probe.dart';
 import 'watch/watch_timings.dart';
 import 'watch_diagnostics.dart';
 import 'watch_event.dart';
-import 'watch_lifecycle.dart';
 
 enum RemoteWatcherTool { fswatch, inotifywait, none }
 
@@ -158,9 +157,9 @@ List<String> remoteWatcherArgs(
 /// a dedicated SSH channel. If neither fswatch nor inotifywait is available, it
 /// falls back to periodic polling so the UI still refreshes.
 ///
-/// The restart/polling/recovery lifecycle lives in [watchLifecycle], shared
-/// with `LocalWatchService`; this class owns only the remote-specific arming:
-/// tool detection, the SSH stream, and delimiter parsing.
+/// The restart/polling/recovery sequencing lives in [WatchEngine], shared with
+/// `LocalWatchService`; this class builds one per watcher over a
+/// [RemoteWatchSource], which owns the remote-specific arming.
 class RemoteWatchService {
   final CommandExecutor _executor;
 
@@ -461,18 +460,22 @@ class RemoteWatchService {
       record: (kind, cause) => _record(repoPath, kind, cause, 0),
       onDiagnostic: onDiagnostic,
     );
-    var attempts = 0;
 
-    return watchLifecycle(
-      trailing: trailing,
-      maxWait: maxWait,
-      minInterval: minInterval,
-      pollInterval: pollInterval,
-      recoveryInterval: recoveryInterval,
+    return WatchEngine(
+      source: source,
+      repoPath: repoPath,
+      bounded: bounded,
+      timings: WatchTimings(
+        trailing: trailing,
+        maxWait: maxWait,
+        minInterval: minInterval,
+        pollInterval: pollInterval,
+        recoveryInterval: recoveryInterval,
+      ),
       // Enough time has passed while polling that the host is worth asking
       // again — about its tool, and about where the repository's git dir is.
       onPollingRecoveryAttempt: source.invalidateCaches,
-      slotReleased: admission.budget.releases(_hostKey()),
+      budgetReleased: admission.budget.releases(_hostKey()),
       onTransition: (kind, cause, restarts) {
         _record(repoPath, kind, cause, restarts);
         // Degradation is the expensive state and the one a maintainer needs
@@ -484,15 +487,6 @@ class RemoteWatchService {
           if (summary != null) onDiagnostic?.call(summary);
         }
       },
-      // Everything an arm does lives in the source's units (MADR 0045 section
-      // 4). This translates its signals into the engine's hooks until phase 4
-      // replaces the engine.
-      arm: armFromSource(
-        source,
-        repoPath: repoPath,
-        bounded: bounded,
-        attempt: () => ++attempts,
-      ),
-    );
+    ).events;
   }
 }

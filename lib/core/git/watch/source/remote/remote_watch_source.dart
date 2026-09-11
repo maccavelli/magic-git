@@ -4,7 +4,6 @@ import '../../../../ssh/ssh_command_executor.dart';
 import '../../../remote_watch_service.dart'
     show RemoteWatchService, RemoteWatcherTool, remoteWatcherArgs;
 import '../../../watch_diagnostics.dart' show WatchTransition;
-import '../../../watch_lifecycle.dart' show WatchUnavailableReason;
 import '../../admission/watch_admission.dart';
 import '../../watch_timings.dart';
 import '../surface_rearm_policy.dart';

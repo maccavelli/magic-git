@@ -1,4 +1,4 @@
-/// A bounded, in-memory record of every mode transition `watchLifecycle`
+/// A bounded, in-memory record of every mode transition `WatchEngine`
 /// performs, so "why is this repo polling?" is answerable from inside the app.
 ///
 /// MADR 0026. A live measurement found the degraded-poll path issuing **48 git

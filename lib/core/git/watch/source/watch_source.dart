@@ -1,5 +1,4 @@
 import '../../bounded_watch.dart';
-import '../../watch_lifecycle.dart' show WatchUnavailableReason;
 
 /// The seam between "watch this repository" and how a backend does it.
 ///
@@ -11,6 +10,38 @@ import '../../watch_lifecycle.dart' show WatchUnavailableReason;
 abstract interface class WatchSource {
   /// Arms one watcher for [request], or says why it could not.
   Future<SourceArm> arm(ArmRequest request);
+}
+
+/// Why an arm could not produce a live source.
+///
+/// The engine used to see one undifferentiated `WatchUnavailable` and answer
+/// every cause with the same 3-minute recovery. They are not the same kind of
+/// condition: [ceiling] is transient and resolves the instant another watcher
+/// stops — it is a property of this process, not of the host — where [noTool]
+/// persists until the host itself changes. 0028 H2.
+enum WatchUnavailableReason {
+  /// No `inotifywait`/`fswatch` on the host. Persists until the host changes.
+  noTool,
+
+  /// This process already holds its maximum concurrent watchers. Transient,
+  /// and resolves the moment any watcher is released.
+  ceiling,
+
+  /// The SSH stream budget is exhausted (0024 M2). Semi-persistent.
+  streamBudget,
+
+  /// A bounded spec matched no existing paths yet. Transient — resolves as
+  /// tracked files appear.
+  noWatchedPaths,
+
+  /// Another live watcher already holds this repository on the host — a second
+  /// session, a second tab reaching the same path by a different saved
+  /// connection, or a second copy of the app (MADR 0041 F12).
+  ///
+  /// Deliberately NOT woken by a released watcher slot: a slot freeing up in
+  /// this process says nothing about a lock held in another. This one waits for
+  /// the recovery timer, as every refusal but [ceiling] does.
+  heldByAnother,
 }
 
 /// What a source is asked to arm.

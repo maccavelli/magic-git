@@ -5,8 +5,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:remote_magic_git/core/git/bounded_watch.dart';
 import 'package:remote_magic_git/core/git/remote_watch_service.dart';
 import 'package:remote_magic_git/core/git/watch/source/remote/watcher_process.dart';
+import 'package:remote_magic_git/core/git/watch/source/watch_source.dart';
 import 'package:remote_magic_git/core/git/watch/watch_timings.dart';
-import 'package:remote_magic_git/core/git/watch_lifecycle.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 
