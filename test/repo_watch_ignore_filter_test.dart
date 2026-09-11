@@ -21,11 +21,17 @@ import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 
+import 'helpers/conventional_git_dir.dart';
+
 const _repo = '/repo';
 
 /// A watch service whose events the test writes, and whose cancel it can see.
 class _ScriptedService extends RemoteWatchService {
-  _ScriptedService() : super(SSHCommandExecutor(SSHClientManager()));
+  _ScriptedService()
+    : super(
+        SSHCommandExecutor(SSHClientManager()),
+        gitDirOf: conventionalGitDir,
+      );
 
   var cancelled = false;
   // Closed in the test file's tearDown, which the lint cannot see.

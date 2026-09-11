@@ -15,6 +15,7 @@ import 'package:remote_magic_git/core/git/watch_event.dart';
 import 'package:remote_magic_git/core/git/watch_lifecycle.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
+import 'helpers/conventional_git_dir.dart';
 import 'helpers/fake_watcher_handle.dart';
 import 'helpers/watch_settle.dart';
 
@@ -86,6 +87,7 @@ void main() {
         executor,
         streamBudget: () => 4,
         admission: WatchAdmission(budget: hostBudget),
+        gitDirOf: conventionalGitDir,
       );
       final subs = <StreamSubscription<RepoWatchEvent>>[];
 
@@ -137,6 +139,7 @@ void main() {
     final service = RemoteWatchService(
       executor,
       admission: WatchAdmission(budget: hostBudget),
+      gitDirOf: conventionalGitDir,
     );
     final subs = <StreamSubscription<RepoWatchEvent>>[];
     for (final repo in ['/a', '/b']) {
@@ -167,6 +170,7 @@ void main() {
     final service = RemoteWatchService(
       _ArmsAlwaysExecutor(),
       admission: WatchAdmission(budget: hostBudget),
+      gitDirOf: conventionalGitDir,
     );
     final sub = service.watch('/ok').listen((_) {});
     await settleArm();
@@ -188,6 +192,7 @@ void main() {
       // the "watchers held 2" line below is about.
       streamBudget: () => 4,
       admission: WatchAdmission(budget: hostBudget),
+      gitDirOf: conventionalGitDir,
     );
     final subs = <StreamSubscription<RepoWatchEvent>>[];
     for (final repo in ['/a', '/b']) {

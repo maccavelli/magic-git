@@ -8,6 +8,7 @@ import 'package:remote_magic_git/core/git/watch/admission/host_watcher_budget.da
 import 'package:remote_magic_git/core/git/watch/admission/watch_admission.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
+import 'helpers/conventional_git_dir.dart';
 import 'helpers/fake_watcher_handle.dart';
 import 'helpers/watch_settle.dart';
 
@@ -83,6 +84,7 @@ void main() {
     final service = RemoteWatchService(
       exec,
       admission: WatchAdmission(budget: hostBudget),
+      gitDirOf: conventionalGitDir,
     );
 
     // Two instances for the SAME repo — the production case, where one is a
@@ -140,6 +142,7 @@ void main() {
     final service = RemoteWatchService(
       exec,
       admission: WatchAdmission(budget: hostBudget),
+      gitDirOf: conventionalGitDir,
     );
     final sub = service.watch('/repo').listen((_) {});
     await settleArm();

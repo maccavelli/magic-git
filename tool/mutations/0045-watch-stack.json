@@ -75,27 +75,27 @@
   },
   {
     "label": "p2: exclusion is released before the host claims",
-    "file": "lib/core/git/remote_watch_service.dart",
-    "find": "            await releaseHostClaims();\n            // LAST. Only now may this session's next watcher of the repository\n            // ask the host for the lock this one has just given back.\n            ticket.releaseExclusion();\n          });",
-    "replace": "            ticket.releaseExclusion();\n            await releaseHostClaims();\n          });",
+    "file": "lib/core/git/watch/source/remote/remote_watch_source.dart",
+    "find": "              await lease.releaseHostClaims();\n              // LAST. Only now may this session's next watcher of the\n              // repository ask the host for the lock this one gave back.\n              ticket.releaseExclusion();\n",
+    "replace": "              ticket.releaseExclusion();\n              await lease.releaseHostClaims();\n              // LAST. Only now may this session's next watcher of the\n              // repository ask the host for the lock this one gave back.\n",
     "tests": [
       "test/watch_shared_path_test.dart"
     ]
   },
   {
     "label": "p2: the stream-budget path strands its lease",
-    "file": "lib/core/git/remote_watch_service.dart",
-    "find": "            // Give it back here, or it is stranded until a sweep reclaims it.\n            await releaseHostClaims();\n",
-    "replace": "            // Give it back here, or it is stranded until a sweep reclaims it.\n",
+    "file": "lib/core/git/watch/source/remote/remote_watch_source.dart",
+    "find": "          // The lease was stamped above and no watcher will ever read it.\n          await lease.releaseHostClaims();\n",
+    "replace": "          // The lease was stamped above and no watcher will ever read it.\n",
     "tests": [
       "test/watch_lease_release_test.dart"
     ]
   },
   {
     "label": "p2: the admission grace is unbounded",
-    "file": "lib/core/git/remote_watch_service.dart",
-    "find": "          grace: WatchTimings.defaultAdmissionGrace,\n          cancelled: hooks.cancelled,",
-    "replace": "          grace: const Duration(days: 365),\n          cancelled: hooks.cancelled,",
+    "file": "lib/core/git/watch/source/remote/remote_watch_source.dart",
+    "find": "      grace: timings.admissionGrace,",
+    "replace": "      grace: const Duration(days: 365),",
     "tests": [
       "test/watch_shared_path_test.dart"
     ]
@@ -117,6 +117,44 @@
     "tests": [
       "test/repo_watch_ignore_filter_test.dart",
       "test/repo_watch_provider_sharing_test.dart"
+    ]
+  },
+  {
+    "label": "p3: the lock key ignores the resolver",
+    "file": "lib/core/git/watch/source/remote/remote_watch_source.dart",
+    "find": "    final lockKey = spec?.gitDir ?? (_gitDir ??= await gitDirOf(repoPath));",
+    "replace": "    final lockKey = spec?.gitDir ?? '$repoPath/.git';",
+    "tests": [
+      "test/remote_watch_source_test.dart"
+    ]
+  },
+  {
+    "label": "p3: a failed stamp is swallowed",
+    "file": "lib/core/git/watch/source/remote/watch_lease.dart",
+    "find": "    if (!result.isSuccess) {\n      throw WatchLeaseException(",
+    "replace": "    if (!result.isSuccess && identical(result, null)) {\n      throw WatchLeaseException(",
+    "tests": [
+      "test/watch_lease_test.dart",
+      "test/remote_watch_source_test.dart"
+    ]
+  },
+  {
+    "label": "p3: the probe cache survives recovery",
+    "file": "lib/core/git/watch/source/remote/watcher_tool_probe.dart",
+    "find": "  void invalidate() => _cached = null;",
+    "replace": "  void invalidate() {}",
+    "tests": [
+      "test/remote_watch_service_test.dart",
+      "test/watcher_tool_probe_test.dart"
+    ]
+  },
+  {
+    "label": "p3: the sweep keys by the conventional path",
+    "file": "lib/core/git/remote_watch_service.dart",
+    "find": "        targets[repoPath] = await gitDirOf(repoPath);",
+    "replace": "        targets[repoPath] = '$repoPath/.git';",
+    "tests": [
+      "test/connect_paths_test.dart"
     ]
   }
 ]

@@ -15,6 +15,7 @@ import 'package:remote_magic_git/core/git/watch/admission/watch_admission.dart';
 import 'package:remote_magic_git/core/git/watch_event.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
+import 'helpers/conventional_git_dir.dart';
 import 'helpers/fake_watcher_handle.dart';
 import 'helpers/watch_settle.dart';
 
@@ -71,6 +72,7 @@ void main() {
       _ArmsAlways(),
       streamBudget: () => 4,
       admission: WatchAdmission(budget: hostBudget),
+      gitDirOf: conventionalGitDir,
     );
     final events = <RepoWatchEvent>[];
 
@@ -128,11 +130,13 @@ void main() {
         _ArmsAlways(),
         streamBudget: () => 4,
         admission: WatchAdmission(budget: hostBudget),
+        gitDirOf: conventionalGitDir,
       );
       final second = RemoteWatchService(
         _ArmsAlways(),
         streamBudget: () => 4,
         admission: WatchAdmission(budget: hostBudget),
+        gitDirOf: conventionalGitDir,
       );
 
       final a = first.watch('/a').listen((_) {});
@@ -169,12 +173,14 @@ void main() {
         _ArmsAlways(tool: ''),
         streamBudget: () => 4,
         admission: WatchAdmission(budget: hostBudget),
+        gitDirOf: conventionalGitDir,
       );
       final events = <RepoWatchEvent>[];
       final held = RemoteWatchService(
         _ArmsAlways(),
         streamBudget: () => 4,
         admission: WatchAdmission(budget: hostBudget),
+        gitDirOf: conventionalGitDir,
       );
 
       final x = held.watch('/x').listen((_) {});

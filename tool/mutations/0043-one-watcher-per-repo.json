@@ -19,9 +19,9 @@
  },
  {
   "label": "p2: teardown does not give the lock back",
-  "file": "lib/core/git/remote_watch_service.dart",
-  "find": "            await releaseHostClaims();\n            // LAST. Only now may this session's next watcher of the repository\n            // ask the host for the lock this one has just given back.\n            ticket.releaseExclusion();\n          });",
-  "replace": "            // LAST. Only now may this session's next watcher of the repository\n            // ask the host for the lock this one has just given back.\n            ticket.releaseExclusion();\n          });",
+  "file": "lib/core/git/watch/source/remote/remote_watch_source.dart",
+  "find": "              await lease.releaseHostClaims();\n              // LAST. Only now may this session's next watcher of the\n              // repository ask the host for the lock this one gave back.\n              ticket.releaseExclusion();\n",
+  "replace": "              // LAST. Only now may this session's next watcher of the\n              // repository ask the host for the lock this one gave back.\n              ticket.releaseExclusion();\n",
   "tests": [
    "test/watch_lease_release_test.dart"
   ]
@@ -46,9 +46,9 @@
  },
  {
   "label": "p3: a refused arm strands the lease it stamped",
-  "file": "lib/core/git/remote_watch_service.dart",
-  "find": "              await errSub.cancel();\n              await handle.cancel();\n              await releaseHostClaims();\n              // Already in hand:",
-  "replace": "              await errSub.cancel();\n              await handle.cancel();\n              // Already in hand:",
+  "file": "lib/core/git/watch/source/remote/remote_watch_source.dart",
+  "find": "          await discard();\n          // A refusal never reaches a teardown, so without this every refused\n          // arm strands its lease (MADR 0043 F6). It claimed no lock, and the\n          // release declines to remove one this token does not own.\n          await lease.releaseHostClaims();\n",
+  "replace": "          await discard();\n          // A refusal never reaches a teardown, so without this every refused\n          // arm strands its lease (MADR 0043 F6). It claimed no lock, and the\n          // release declines to remove one this token does not own.\n",
   "tests": [
    "test/watch_lease_release_test.dart",
    "test/watch_arm_signal_test.dart"

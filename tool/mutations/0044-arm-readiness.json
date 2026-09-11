@@ -28,11 +28,12 @@
  },
  {
   "label": "p2: the arm waits for the exit status alone, as it did before",
-  "file": "lib/core/git/remote_watch_service.dart",
-  "find": "                await Future.any<_ArmProbe>([\n                  handle.exitCode.then((c) => (exit: c, ready: false)),\n                  ready.future.then((_) => (exit: null, ready: true)),\n                ]).timeout(",
-  "replace": "                await Future.any<_ArmProbe>([\n                  handle.exitCode.then((c) => (exit: c, ready: false)),\n                ]).timeout(",
+  "file": "lib/core/git/watch/source/remote/watcher_process.dart",
+  "find": "        await Future.any<_ArmProbe>([\n          handle.exitCode.then((c) => (exit: c, ready: false)),\n          ready.future.then((_) => (exit: null, ready: true)),\n        ]).timeout(",
+  "replace": "        await Future.any<_ArmProbe>([\n          handle.exitCode.then((c) => (exit: c, ready: false)),\n        ]).timeout(",
   "tests": [
-   "test/watch_arm_signal_test.dart"
+   "test/watch_arm_signal_test.dart",
+   "test/watcher_process_test.dart"
   ]
  },
  {
@@ -46,46 +47,47 @@
  },
  {
   "label": "p2: the readiness completer is completed unconditionally",
-  "file": "lib/core/git/remote_watch_service.dart",
-  "find": "                if (!ready.isCompleted) ready.complete();",
-  "replace": "                ready.complete();",
+  "file": "lib/core/git/watch/source/remote/watcher_process.dart",
+  "find": "            if (!ready.isCompleted) ready.complete();",
+  "replace": "            ready.complete();",
   "tests": [
    "test/watch_arm_signal_test.dart"
   ]
  },
  {
   "label": "p2: the incumbent is captured but never kept",
-  "file": "lib/core/git/remote_watch_service.dart",
-  "find": "                  incumbent ??= token;",
-  "replace": "                  incumbent ??= incumbent;",
+  "file": "lib/core/git/watch/source/remote/watcher_process.dart",
+  "find": "            incumbent ??= token;",
+  "replace": "            incumbent ??= incumbent;",
   "tests": [
    "test/watch_arm_signal_test.dart",
-   "test/watch_lease_release_test.dart"
+   "test/watch_lease_release_test.dart",
+   "test/watcher_process_test.dart"
   ]
  },
  {
   "label": "p2: the ceiling claims a readiness it never saw",
-  "file": "lib/core/git/remote_watch_service.dart",
-  "find": "              onTimeout: () => (exit: null, ready: false),",
-  "replace": "              onTimeout: () => (exit: null, ready: true),",
+  "file": "lib/core/git/watch/source/remote/watcher_process.dart",
+  "find": "          onTimeout: () => (exit: null, ready: false),",
+  "replace": "          onTimeout: () => (exit: null, ready: true),",
   "tests": [
    "test/watch_arm_signal_test.dart"
   ]
  },
  {
   "label": "p2: the stderr listener is attached after the race, as it used to be",
-  "file": "lib/core/git/remote_watch_service.dart",
-  "find": "          final ready = Completer<void>();\n          String? incumbent;",
-  "replace": "          final ready = Completer<void>()..complete();\n          String? incumbent;",
+  "file": "lib/core/git/watch/source/remote/watcher_process.dart",
+  "find": "    final ready = Completer<void>();\n    String? incumbent;",
+  "replace": "    final ready = Completer<void>()..complete();\n    String? incumbent;",
   "tests": [
    "test/watch_arm_signal_test.dart"
   ]
  },
  {
   "label": "p2: a refused arm keeps its slot",
-  "file": "lib/core/git/remote_watch_service.dart",
-  "find": "            if (early == boundedWatchLockedExit) {\n              ticket.releaseBudget();",
-  "replace": "            if (early == boundedWatchLockedExit) {",
+  "file": "lib/core/git/watch/source/remote/remote_watch_source.dart",
+  "find": "        case WatcherRefused(:final reason, :final incumbent, :final discard):\n          ticket.releaseBudget();",
+  "replace": "        case WatcherRefused(:final reason, :final incumbent, :final discard):",
   "tests": [
    "test/watch_arm_signal_test.dart"
   ]

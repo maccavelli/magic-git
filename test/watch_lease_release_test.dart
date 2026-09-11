@@ -24,6 +24,7 @@ import 'package:remote_magic_git/core/git/watch_event.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 
+import 'helpers/conventional_git_dir.dart';
 import 'helpers/fake_watcher_handle.dart';
 
 /// Arms against a handle that exited immediately with [code].
@@ -206,6 +207,7 @@ void main() {
       executor,
       hostKey: () => 'host',
       admission: WatchAdmission(budget: hostBudget),
+      gitDirOf: conventionalGitDir,
     );
     final events = <RepoWatchEvent>[];
     final sub = service.watch('/repo').listen(events.add);
@@ -310,6 +312,7 @@ void main() {
         executor,
         hostKey: () => 'host',
         admission: WatchAdmission(budget: hostBudget),
+        gitDirOf: conventionalGitDir,
       );
       final events = <RepoWatchEvent>[];
       final sub = service.watch('/repo').listen(events.add);
@@ -358,6 +361,7 @@ void main() {
       executor,
       hostKey: () => 'host',
       admission: WatchAdmission(budget: hostBudget),
+      gitDirOf: conventionalGitDir,
     );
     final sub = service
         .watch(
@@ -394,6 +398,7 @@ void main() {
       executor,
       hostKey: () => 'host',
       admission: WatchAdmission(budget: hostBudget),
+      gitDirOf: conventionalGitDir,
     );
     final sub = service.watch('/repo').listen((_) {});
     await executor.armed.future;
@@ -423,6 +428,7 @@ void main() {
       executor,
       hostKey: () => 'host',
       admission: WatchAdmission(budget: hostBudget),
+      gitDirOf: conventionalGitDir,
     );
     final sub = service.watch('/repo').listen((_) {});
     await executor.armed.future;
@@ -450,6 +456,7 @@ void main() {
       executor,
       hostKey: () => 'host',
       admission: WatchAdmission(budget: hostBudget),
+      gitDirOf: conventionalGitDir,
     );
     final sub = service.watch('/repo').listen((_) {});
     await executor.armed.future;
@@ -481,6 +488,7 @@ void main() {
       executor,
       hostKey: () => 'host',
       admission: WatchAdmission(budget: hostBudget),
+      gitDirOf: conventionalGitDir,
     );
     final events = <RepoWatchEvent>[];
     final sub = service.watch('/repo').listen(events.add);

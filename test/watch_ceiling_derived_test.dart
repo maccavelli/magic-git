@@ -19,6 +19,7 @@ import 'package:remote_magic_git/core/git/watch_event.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 
+import 'helpers/conventional_git_dir.dart';
 import 'helpers/fake_watcher_handle.dart';
 import 'helpers/watch_settle.dart';
 
@@ -68,6 +69,7 @@ void main() {
         hostKey: () => host,
         streamBudget: () => budget,
         admission: WatchAdmission(budget: hostBudget),
+        gitDirOf: conventionalGitDir,
       );
 
   test('the cap is the stream budget less the reserved channels', () {
@@ -98,6 +100,7 @@ void main() {
       hostKey: () => 'h',
       streamBudget: () => budget,
       admission: WatchAdmission(budget: hostBudget),
+      gitDirOf: conventionalGitDir,
     );
     expect(service.maxConcurrentWatchers, 6);
 
@@ -183,6 +186,7 @@ void main() {
       RemoteWatchService(
         _ArmsAlways(),
         admission: WatchAdmission(budget: hostBudget),
+        gitDirOf: conventionalGitDir,
       ).maxConcurrentWatchers,
       1,
       reason: 'the default assumes the degraded single-client budget',

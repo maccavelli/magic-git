@@ -55,29 +55,31 @@
   },
   {
     "label": "p2: teardown does not release the lease",
-    "file": "lib/core/git/remote_watch_service.dart",
-    "find": "            await releaseHostClaims();\n            // LAST. Only now may this session's next watcher of the repository\n            // ask the host for the lock this one has just given back.\n            ticket.releaseExclusion();\n          });",
-    "replace": "            // LAST. Only now may this session's next watcher of the repository\n            // ask the host for the lock this one has just given back.\n            ticket.releaseExclusion();\n          });",
+    "file": "lib/core/git/watch/source/remote/remote_watch_source.dart",
+    "find": "              await lease.releaseHostClaims();\n              // LAST. Only now may this session's next watcher of the\n              // repository ask the host for the lock this one gave back.\n              ticket.releaseExclusion();\n",
+    "replace": "              // LAST. Only now may this session's next watcher of the\n              // repository ask the host for the lock this one gave back.\n              ticket.releaseExclusion();\n",
     "tests": [
       "test/watch_lease_release_test.dart"
     ]
   },
   {
     "label": "p2: a failing lease removal escapes the teardown",
-    "file": "lib/core/git/remote_watch_service.dart",
-    "find": "          } catch (_) {\n            // See the doc comment: swallowing is the contract, not an\n            // oversight.\n          }",
-    "replace": "          } on FormatException catch (_) {\n          }",
+    "file": "lib/core/git/watch/source/remote/watch_lease.dart",
+    "find": "    } catch (_) {\n      // See the doc comment: swallowing is the contract, not an oversight.\n    }",
+    "replace": "    } on FormatException catch (_) {\n    }",
     "tests": [
-      "test/watch_lease_release_test.dart"
+      "test/watch_lease_release_test.dart",
+      "test/watch_lease_test.dart"
     ]
   },
   {
     "label": "p2: teardown removes the pid file, which is not the client's",
-    "file": "lib/core/git/remote_watch_service.dart",
-    "find": "                'rm -f ${ShellEscaper.escape(heartbeat)}; '\n                    '${watchLockReleaseScript(lock)}',",
-    "replace": "                'rm -f ${ShellEscaper.escape(watchPidFile(gitDir, token))}; '\n                    '${watchLockReleaseScript(lock)}',",
+    "file": "lib/core/git/watch/source/remote/watch_lease.dart",
+    "find": "          'rm -f ${ShellEscaper.escape(heartbeatFile)}; '\n              '${watchLockReleaseScript(lock)}',",
+    "replace": "          'rm -f ${ShellEscaper.escape(pidFile)}; '\n              '${watchLockReleaseScript(lock)}',",
     "tests": [
-      "test/watch_lease_release_test.dart"
+      "test/watch_lease_release_test.dart",
+      "test/watch_lease_test.dart"
     ]
   },
   {
@@ -118,29 +120,32 @@
   },
   {
     "label": "p3: the arm no longer reads a lock refusal",
-    "file": "lib/core/git/remote_watch_service.dart",
-    "find": "            if (early == boundedWatchLockedExit) {",
-    "replace": "            if (false && early == boundedWatchLockedExit) {",
+    "file": "lib/core/git/watch/source/remote/watcher_process.dart",
+    "find": "    if (early == boundedWatchLockedExit) {",
+    "replace": "    if (false && early == boundedWatchLockedExit) {",
     "tests": [
-      "test/watch_lease_release_test.dart"
+      "test/watch_lease_release_test.dart",
+      "test/watcher_process_test.dart"
     ]
   },
   {
     "label": "p3: the early-exit read is bounded-only again",
-    "file": "lib/core/git/remote_watch_service.dart",
-    "find": "            if (early == boundedWatchLockedExit) {",
-    "replace": "            if (spec != null && early == boundedWatchLockedExit) {",
+    "file": "lib/core/git/watch/source/remote/watcher_process.dart",
+    "find": "    if (early == boundedWatchLockedExit) {",
+    "replace": "    if (spec != null && early == boundedWatchLockedExit) {",
     "tests": [
-      "test/watch_lease_release_test.dart"
+      "test/watch_lease_release_test.dart",
+      "test/watcher_process_test.dart"
     ]
   },
   {
     "label": "p3: a recursive arm reads 97 as a refusal",
-    "file": "lib/core/git/remote_watch_service.dart",
-    "find": "            if (spec != null && early == boundedWatchNoPathsExit) {",
-    "replace": "            if (early == boundedWatchNoPathsExit) {",
+    "file": "lib/core/git/watch/source/remote/watcher_process.dart",
+    "find": "    if (spec != null && early == boundedWatchNoPathsExit) {",
+    "replace": "    if (early == boundedWatchNoPathsExit) {",
     "tests": [
-      "test/watch_lease_release_test.dart"
+      "test/watch_lease_release_test.dart",
+      "test/watcher_process_test.dart"
     ]
   },
   {

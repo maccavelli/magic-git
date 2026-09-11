@@ -15,6 +15,8 @@ import 'package:remote_magic_git/core/git/remote_watch_service.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 
+import 'helpers/conventional_git_dir.dart';
+
 /// Fails every command, the way a host that has gone away does.
 class _FailingExecutor extends SSHCommandExecutor {
   _FailingExecutor() : super(SSHClientManager());
@@ -70,6 +72,7 @@ void main() {
     final exec = _RecordingExecutor();
     await RemoteWatchService(
       exec,
+      gitDirOf: conventionalGitDir,
     ).sweepStaleWatchers({'/srv/a': '/srv/a/.git', '/srv/b': '/srv/b/.git'});
     expect(exec.swept, containsAll(<String>['/srv/a', '/srv/b']));
   });
@@ -87,6 +90,7 @@ void main() {
       RemoteWatchService(
         exec,
         onDiagnostic: lines.add,
+        gitDirOf: conventionalGitDir,
       ).sweepStaleWatchers({'/srv/a': '/srv/a/.git'}),
       completes,
     );
@@ -101,9 +105,45 @@ void main() {
 
   test('an empty repo set is a no-op, not an error', () async {
     final exec = _RecordingExecutor();
-    await RemoteWatchService(exec).sweepStaleWatchers({});
+    await RemoteWatchService(
+      exec,
+      gitDirOf: conventionalGitDir,
+    ).sweepStaleWatchers({});
     expect(exec.swept, isEmpty);
   });
+
+  test(
+    'the connect-time sweep keys a worktree by its resolved git dir',
+    () async {
+      // MADR 0045 F10. The sweep reclaims orphans where their watcher kept its
+      // lease and lock — under the git dir it locked. `<repo>/.git` is a file
+      // in a linked worktree, so keying by it looked in a place that cannot
+      // hold anything. A scoped repository names its own git dir; a path that
+      // cannot be resolved is left out and reported, never guessed.
+      final lines = <String>[];
+      final service = RemoteWatchService(
+        _RecordingExecutor(),
+        onDiagnostic: lines.add,
+        gitDirOf: (repoPath) async => switch (repoPath) {
+          '/srv/feature' => '/srv/main/.git/worktrees/feature',
+          '/srv/gone' => throw StateError('no such repository'),
+          _ => '$repoPath/.git',
+        },
+      );
+
+      final targets = await service.resolveSweepTargets(
+        ['/srv/feature', '/srv/main', '/srv/dotfiles', '/srv/gone'],
+        {'/srv/dotfiles': '/srv/home.git'},
+      );
+
+      expect(targets, {
+        '/srv/feature': '/srv/main/.git/worktrees/feature',
+        '/srv/main': '/srv/main/.git',
+        '/srv/dotfiles': '/srv/home.git',
+      });
+      expect(lines.single, contains('/srv/gone'));
+    },
+  );
 
   // ---- what this file does NOT cover, and why ---------------------------
   //

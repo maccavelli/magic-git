@@ -9,6 +9,7 @@ import 'package:remote_magic_git/core/git/watch/admission/watch_admission.dart';
 import 'package:remote_magic_git/core/git/watch_event.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
+import 'helpers/conventional_git_dir.dart';
 import 'helpers/fake_watcher_handle.dart';
 import 'helpers/watch_settle.dart';
 
@@ -244,7 +245,10 @@ List<String> _chunk(String blob, int bytes) {
 void main() {
   test('falls back to polling when no watcher tool is available', () {
     fakeAsync((async) {
-      final service = RemoteWatchService(_FakeExecutor());
+      final service = RemoteWatchService(
+        _FakeExecutor(),
+        gitDirOf: conventionalGitDir,
+      );
       final events = <RepoWatchEvent>[];
       final sub = service
           .watch('/repo', pollInterval: const Duration(seconds: 5))
@@ -264,7 +268,10 @@ void main() {
   test('recovering from polling back to event-driven stops the poll ticks '
       '(regression: the poll timer used to leak and fire forever)', () {
     fakeAsync((async) {
-      final service = RemoteWatchService(_RecoveringExecutor());
+      final service = RemoteWatchService(
+        _RecoveringExecutor(),
+        gitDirOf: conventionalGitDir,
+      );
       final events = <RepoWatchEvent>[];
       final sub = service
           .watch(
@@ -301,7 +308,10 @@ void main() {
   test('a failed watcher start surfaces `stopped` immediately, not silently '
       'through the whole restart backoff window', () {
     fakeAsync((async) {
-      final service = RemoteWatchService(_ThrowingStreamExecutor());
+      final service = RemoteWatchService(
+        _ThrowingStreamExecutor(),
+        gitDirOf: conventionalGitDir,
+      );
       final events = <RepoWatchEvent>[];
       final sub = service.watch('/repo').listen(events.add);
 
@@ -395,7 +405,10 @@ void main() {
       final paths = [for (var i = 0; i < 60; i++) 'src/m$i/f$i.dart'];
       final handle = FakeWatcherHandle.armed();
       final executor = _DrivableExecutor(tool: 'inotifywait', handle: handle);
-      final service = RemoteWatchService(executor);
+      final service = RemoteWatchService(
+        executor,
+        gitDirOf: conventionalGitDir,
+      );
 
       final seen = <String>{};
       final sub = service.watch('/repo').listen((e) => seen.addAll(e.paths));
@@ -428,7 +441,10 @@ void main() {
 
       final handle = FakeWatcherHandle.armed();
       final executor = _DrivableExecutor(tool: 'inotifywait', handle: handle);
-      final service = RemoteWatchService(executor);
+      final service = RemoteWatchService(
+        executor,
+        gitDirOf: conventionalGitDir,
+      );
       final sub = service.watch('/repo').listen((_) {});
       await executor.armed.future;
       await settleArm();
@@ -464,6 +480,7 @@ void main() {
       final service = RemoteWatchService(
         executor,
         onDiagnostic: diagnostics.add,
+        gitDirOf: conventionalGitDir,
       );
 
       final sub = service.watch('/repo').listen((_) {});
@@ -494,6 +511,7 @@ void main() {
         final service = RemoteWatchService(
           executor,
           onDiagnostic: diagnostics.add,
+          gitDirOf: conventionalGitDir,
         );
 
         final sub = service.watch('/repo').listen((_) {});
@@ -536,6 +554,7 @@ void main() {
       final service = RemoteWatchService(
         executor,
         onDiagnostic: diagnostics.add,
+        gitDirOf: conventionalGitDir,
       );
 
       final sub = service.watch('/repo').listen((_) {});
@@ -555,7 +574,10 @@ void main() {
   // ---- 0024 M3: a failed probe is not "no watcher" ------------------------
   test('a failed watcher probe retries instead of caching "none"', () {
     fakeAsync((async) {
-      final service = RemoteWatchService(_ProbeFailsOnceExecutor());
+      final service = RemoteWatchService(
+        _ProbeFailsOnceExecutor(),
+        gitDirOf: conventionalGitDir,
+      );
       final events = <RepoWatchEvent>[];
       final sub = service
           .watch(
@@ -590,6 +612,7 @@ void main() {
         RemoteWatchService(
           _FakeExecutor(),
           streamBudget: () => 8,
+          gitDirOf: conventionalGitDir,
         ).maxConcurrentWatchers,
         8 - RemoteWatchService.reservedStreams,
       );
@@ -597,6 +620,7 @@ void main() {
         RemoteWatchService(
           _FakeExecutor(),
           streamBudget: () => 2,
+          gitDirOf: conventionalGitDir,
         ).maxConcurrentWatchers,
         1,
         reason: 'a degraded session still watches the repo in front of you',
@@ -612,6 +636,7 @@ void main() {
           exec,
           onDiagnostic: diagnostics.add,
           admission: WatchAdmission(budget: HostWatcherBudget()),
+          gitDirOf: conventionalGitDir,
         );
         // The cap is derived per service since MADR 0041 phase 4, so read it
         // from the service under test rather than from a static.
@@ -658,6 +683,7 @@ void main() {
       final service = RemoteWatchService(
         executor,
         admission: WatchAdmission(budget: HostWatcherBudget()),
+        gitDirOf: conventionalGitDir,
       );
 
       final sub = service.watch('/repo').listen((_) {});

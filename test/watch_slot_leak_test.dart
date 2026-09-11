@@ -27,6 +27,8 @@ import 'package:remote_magic_git/core/git/watch_event.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 
+import 'helpers/conventional_git_dir.dart';
+
 /// Stands in for dartssh2's `SSHChannelOpenError`, which cannot be constructed
 /// here without a live channel. The arm must not care what type it is — that is
 /// the whole point of catching structurally rather than per-exception.
@@ -75,6 +77,7 @@ Future<void> _armAndFail(HostWatcherBudget budget, Object error) async {
     _StreamFails(error),
     hostKey: () => 'bastion',
     admission: WatchAdmission(budget: budget),
+    gitDirOf: conventionalGitDir,
   );
   final events = <RepoWatchEvent>[];
   final sub = service.watch('/repo').listen(events.add);
@@ -122,6 +125,7 @@ void main() {
       _StreamFails(const SSHCommandSuperseded('watch')),
       hostKey: () => 'bastion',
       admission: WatchAdmission(budget: hostBudget),
+      gitDirOf: conventionalGitDir,
     ).maxConcurrentWatchers;
     for (var i = 0; i < cap; i++) {
       await _armAndFail(hostBudget, const SSHCommandSuperseded('watch'));
@@ -135,6 +139,7 @@ void main() {
       _StreamFails(const SSHCommandSuperseded('watch')),
       hostKey: () => 'bastion',
       admission: WatchAdmission(budget: hostBudget),
+      gitDirOf: conventionalGitDir,
     );
     final sub = service.watch('/later').listen(events.add);
     await pumpEventQueue();

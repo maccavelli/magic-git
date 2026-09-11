@@ -18,6 +18,7 @@ import 'package:remote_magic_git/core/git/watch_diagnostics.dart';
 import 'package:remote_magic_git/core/git/watch_event.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
+import 'helpers/conventional_git_dir.dart';
 import 'helpers/fake_watcher_handle.dart';
 import 'helpers/watch_settle.dart';
 
@@ -66,6 +67,7 @@ RemoteWatchService _serviceOn(String host, HostWatcherBudget budget) =>
       hostKey: () => host,
       streamBudget: () => 4,
       admission: WatchAdmission(budget: budget),
+      gitDirOf: conventionalGitDir,
     );
 
 /// Refused arms this repo has recorded. Every ceiling refusal files an
@@ -261,6 +263,7 @@ void main() {
       hostKey: () => host,
       streamBudget: () => 4,
       admission: WatchAdmission(budget: hostBudget),
+      gitDirOf: conventionalGitDir,
     );
 
     final sub = service.watch('/one').listen((_) {});

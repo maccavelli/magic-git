@@ -17,6 +17,7 @@ import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 
+import 'helpers/conventional_git_dir.dart';
 import 'helpers/fake_watcher_handle.dart';
 import 'helpers/watch_settle.dart';
 
@@ -84,6 +85,7 @@ void main() {
             hostKey: () => 'host',
             streamBudget: () => 8,
             admission: WatchAdmission(budget: budget),
+            gitDirOf: conventionalGitDir,
           ),
         ),
       ],

@@ -55,6 +55,38 @@ void main() {
   /// in the process table without matching this test's own command line.
   const marker = 'mg-lease-exec-probe';
 
+  /// The shim watchers alive right now, by argv marker.
+  Future<int> liveWatchers() async {
+    final r = await Process.run('sh', [
+      '-c',
+      'ps -eo args | grep -c "[m]g-lease-exec-probe 300"',
+    ]);
+    return int.tryParse((r.stdout as String).trim()) ?? 0;
+  }
+
+  /// The shim watchers THIS test started, as each recorded itself just before
+  /// its `exec`. `exec` keeps the PID, so every one is exactly a payload.
+  List<int> recordedPayloads() {
+    final file = File('${dir.path}/payload.pids');
+    if (!file.existsSync()) return const [];
+    return [
+      for (final line in file.readAsLinesSync()) ?int.tryParse(line.trim()),
+    ];
+  }
+
+  /// SIGKILLs [pid] only while it is still one of this test's payloads.
+  ///
+  /// A payload that exited on its own may have had its PID reused by an
+  /// unrelated process. Its argv starts with this test's own temporary
+  /// directory, and that is what proves it is ours before anything is killed.
+  /// Nothing in this file kills by name (MADR 0045 plan, deviation (f)).
+  Future<void> killOwnPayload(int pid) async {
+    final r = await Process.run('ps', ['-o', 'args=', '-p', '$pid']);
+    if ((r.stdout as String).trim().startsWith('$shimDir/$marker')) {
+      Process.killPid(pid, ProcessSignal.sigkill);
+    }
+  }
+
   setUp(() async {
     dir = await Directory.systemTemp.createTemp('mg-lease-teardown-');
     shimDir = '${dir.path}/bin';
@@ -72,6 +104,9 @@ void main() {
     File('$shimDir/inotifywait').writeAsStringSync(
       '#!/bin/sh\n'
       'echo x >> "${dir.path}/arms"\n'
+      // Its own PID, which `exec` keeps: what tearDown may kill, and nothing
+      // else.
+      'echo \$\$ >> "${dir.path}/payload.pids"\n'
       'exec "$shimDir/$marker" 300\n',
     );
     await Process.run('chmod', ['+x', '$shimDir/inotifywait']);
@@ -82,9 +117,15 @@ void main() {
       p.kill(ProcessSignal.sigkill);
     }
     spawned.clear();
-    // Nothing may outlive a test in this file — that is the whole subject.
-    await Process.run('pkill', ['-f', marker]);
+    // Nothing may outlive a test in this file — that is the whole subject. So
+    // the payloads this test recorded are killed, and then the census has to
+    // read zero: anything left is reported as a failure, never killed by name.
+    for (final pid in recordedPayloads()) {
+      await killOwnPayload(pid);
+    }
+    final noneLeft = await settles(() async => await liveWatchers() == 0);
     if (dir.existsSync()) await dir.delete(recursive: true);
+    expect(noneLeft, isTrue, reason: 'a shim watcher outlived its test');
   });
 
   String pidPath() => '${dir.path}/.git/mg-watch.t.pid';
@@ -118,15 +159,6 @@ void main() {
     );
     spawned.add(p);
     return p;
-  }
-
-  /// The shim watchers alive right now, by argv marker.
-  Future<int> liveWatchers() async {
-    final r = await Process.run('sh', [
-      '-c',
-      'ps -eo args | grep -c "[m]g-lease-exec-probe 300"',
-    ]);
-    return int.tryParse((r.stdout as String).trim()) ?? 0;
   }
 
   // (a) and (b): the two pre-checks. Both existed before; what is new is that
@@ -355,8 +387,17 @@ void main() {
       expect(await settles(() async => arms() == 1), isTrue);
 
       // The holder crashed: its lock is still there, its lease is not fresh.
+      // SIGKILL cannot reach the loop shell's child, so its watcher goes by the
+      // PID it recorded.
       first.kill(ProcessSignal.sigkill);
-      await Process.run('pkill', ['-f', marker]);
+      for (final pid in recordedPayloads()) {
+        await killOwnPayload(pid);
+        expect(
+          await diedWithin(pid),
+          isTrue,
+          reason: 'the crashed holder is gone',
+        );
+      }
       await Process.run('touch', [
         '-t',
         '202001010000',
@@ -626,7 +667,8 @@ void main() {
       expect(
         await settles(() async => err.toString().contains(watchArmedMarker)),
         isTrue,
-        reason: 'a healthy arm announces itself rather than being inferred '
+        reason:
+            'a healthy arm announces itself rather than being inferred '
             'from the absence of a refusal',
       );
 

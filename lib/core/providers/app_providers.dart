@@ -35,6 +35,7 @@ import '../git/remote_watch_service.dart';
 import '../git/repo_tree.dart';
 import '../git/watch/admission/host_watcher_budget.dart';
 import '../git/watch/admission/watch_admission.dart';
+import '../git/watch/source/remote/git_dir_resolver.dart';
 import '../git/watch_event.dart';
 import '../github/gh_service.dart';
 import '../github/models.dart';
@@ -418,6 +419,10 @@ final remoteWatchServiceProvider = Provider<RemoteWatchService>((ref) {
     // read: both are stable for the container's life, and a service must never
     // hold one it could outlive.
     admission: ref.watch(watchAdmissionProvider),
+    // git's own answer for where each repository's git dir is: the directory
+    // its watcher locks. `<repo>/.git` is a file in a linked worktree, and
+    // assuming it refused every one (MADR 0045 F10).
+    gitDirOf: gitDirResolverFor(ref.watch(executorProvider)),
     // The watcher's own stderr. `inotifywait` reports its per-directory
     // failures here — "upper limit on inotify watches reached" above all —
     // and dropping them left a silent polling fallback with nothing to chase
@@ -1719,12 +1724,16 @@ class ConnectionController extends Notifier<ConnectionState> {
   /// for the session being usable.
   Future<void> _sweepStaleWatchers(int attempt, String repoPath) async {
     try {
-      final scoped = state.scopedGitDirs;
-      final repos = <String, String>{
-        for (final p in state.repoPaths.isEmpty ? [repoPath] : state.repoPaths)
-          p: scoped[p] ?? '$p/.git',
-      };
-      await ref.read(remoteWatchServiceProvider).sweepStaleWatchers(repos);
+      final service = ref.read(remoteWatchServiceProvider);
+      // Keyed by each repository's resolved git dir — where its watcher locks
+      // and leases — not `<repo>/.git`, which is a file in a linked worktree
+      // (MADR 0045 F10).
+      final repos = await service.resolveSweepTargets(
+        state.repoPaths.isEmpty ? [repoPath] : state.repoPaths,
+        state.scopedGitDirs,
+      );
+      if (attempt != _attempt || !ref.mounted) return;
+      await service.sweepStaleWatchers(repos);
     } catch (_) {
       // Best-effort by design.
     }

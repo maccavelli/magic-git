@@ -23,6 +23,7 @@ import 'package:remote_magic_git/core/git/watch_diagnostics.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 
+import 'helpers/conventional_git_dir.dart';
 import 'helpers/fake_watcher_handle.dart';
 
 /// Arms against one [FakeWatcherHandle] and records every one-shot command, so
@@ -102,6 +103,7 @@ void main() {
       hostKey: () => 'host',
       onDiagnostic: diagnostics.add,
       admission: WatchAdmission(budget: hostBudget),
+      gitDirOf: conventionalGitDir,
     );
     // The transition log, not the live-watcher count. A slot is reserved
     // BEFORE the stream is opened and given back if the arm fails, so
@@ -283,6 +285,7 @@ void main() {
       executor,
       hostKey: () => 'host',
       admission: WatchAdmission(budget: hostBudget),
+      gitDirOf: conventionalGitDir,
     );
     final sub = service.watch('/repo').listen((_) {});
     await executor.armed.future;

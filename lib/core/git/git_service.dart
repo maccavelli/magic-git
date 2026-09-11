@@ -1435,84 +1435,12 @@ class GitService {
   /// floor), falls back to `--absolute-git-dir` and canonicalizes every path
   /// on the command host with POSIX `cd -P`/`pwd -P`. The fallback must not use
   /// this app process's filesystem: [repoPath] may name an SSH host path.
-  Future<RepoLayout> repoLayout(String repoPath) =>
-      _resolveRepoLayout(repoPath, extraEnv: _scopeEnvFor(repoPath));
-
-  static const _legacyRepoLayoutScript = r'''
-canon_dir() {
-  p=$1
-  case "$p" in
-    /*) ;;
-    *) p="./$p" ;;
-  esac
-  (CDPATH= cd -P "$p" && pwd -P)
-}
-top=$(git rev-parse --show-toplevel) || exit $?
-git_dir=$(git rev-parse --absolute-git-dir) || exit $?
-common_dir=$(git rev-parse --git-common-dir) || exit $?
-top=$(canon_dir "$top") || exit $?
-git_dir=$(canon_dir "$git_dir") || exit $?
-common_dir=$(canon_dir "$common_dir") || exit $?
-printf '%s\n%s\n%s\n' "$top" "$git_dir" "$common_dir"
-''';
-
-  Future<RepoLayout> _resolveRepoLayout(
-    String repoPath, {
-    required Map<String, String>? extraEnv,
-  }) async {
-    final modern = await _executor.execute(
-      repoPath: repoPath,
-      extraEnv: extraEnv,
-      gitArgs: [
-        'git',
-        'rev-parse',
-        '--path-format=absolute',
-        '--show-toplevel',
-        '--git-dir',
-        '--git-common-dir',
-      ],
-      retries: _readRetries,
-      lane: ExecLane.read,
-    );
-    if (modern.isSuccess) {
-      final layout = _parseRepoLayoutLines(modern.stdout);
-      if (layout != null) return layout;
-    }
-
-    // Git < 2.31 rejects `--path-format`. Resolve the fallback on the command
-    // host so an SSH path is never interpreted against the local Mac.
-    final legacy = await _executor.execute(
-      repoPath: repoPath,
-      extraEnv: extraEnv,
-      gitArgs: ['sh', '-c', _legacyRepoLayoutScript],
-      retries: _readRetries,
-      lane: ExecLane.read,
-    );
-    if (!legacy.isSuccess) {
-      throw GitException('Could not resolve the repository layout', legacy);
-    }
-    final layout = _parseRepoLayoutLines(legacy.stdout);
-    if (layout == null) {
-      throw GitException('Could not resolve the repository layout', legacy);
-    }
-    return layout;
-  }
-
-  /// Parses the three absolute, host-canonicalized repository layout paths.
-  RepoLayout? _parseRepoLayoutLines(String stdout) {
-    final lines = const LineSplitter()
-        .convert(stdout)
-        .map((l) => l.trim())
-        .where((l) => l.isNotEmpty)
-        .toList();
-    if (lines.length < 3) return null;
-
-    return RepoLayout(
-      toplevel: lines[0],
-      gitDir: lines[1],
-      gitCommonDir: lines[2],
-    );
-  }
+  Future<RepoLayout> repoLayout(String repoPath) => resolveRepoLayout(
+    _executor,
+    repoPath,
+    extraEnv: _scopeEnvFor(repoPath),
+    retries: _readRetries,
+  );
 
   /// The gitfile-redirect target of `<repoPath>/.git`, when `.git` is a *file*
   /// containing `gitdir: <path>` — the dotfiles redirect into e.g.
@@ -1585,9 +1513,11 @@ printf '%s\n%s\n%s\n' "$top" "$git_dir" "$common_dir"
   Future<RepoLayout> scopedRepoLayout(
     String repoPath, {
     required String gitDir,
-  }) => _resolveRepoLayout(
+  }) => resolveRepoLayout(
+    _executor,
     repoPath,
     extraEnv: {'GIT_DIR': gitDir, 'GIT_WORK_TREE': repoPath},
+    retries: _readRetries,
   );
 
   /// All worktrees of this repository, main worktree first.
@@ -6632,4 +6562,95 @@ printf 'EC\n%d %d\n' "$ns" "$nu"
   }) async {
     await _run(repoPath, gitArgs, label, timeout: timeout);
   }
+}
+
+/// Where [repoPath]'s git data lives: its toplevel, its own git dir and the
+/// common git dir. [GitService.repoLayout] is this with the service's scope and
+/// read retries.
+///
+/// Top-level so that a caller with an executor and no [GitService] resolves it
+/// exactly the same way — the watcher's lock key above all, which assumed
+/// `<repo>/.git` and so refused every linked worktree (MADR 0045 F10).
+///
+/// Prefers `--path-format=absolute` (usable absolute/symlink-resolved paths).
+/// On Git that rejects that flag (pre-2.31, still within the app's 2.24 floor),
+/// falls back to `--absolute-git-dir` and canonicalizes every path on the
+/// command host with POSIX `cd -P`/`pwd -P`. The fallback must not use this app
+/// process's filesystem: [repoPath] may name an SSH host path.
+Future<RepoLayout> resolveRepoLayout(
+  CommandExecutor executor,
+  String repoPath, {
+  Map<String, String>? extraEnv,
+  int retries = 0,
+}) async {
+  final modern = await executor.execute(
+    repoPath: repoPath,
+    extraEnv: extraEnv,
+    gitArgs: [
+      'git',
+      'rev-parse',
+      '--path-format=absolute',
+      '--show-toplevel',
+      '--git-dir',
+      '--git-common-dir',
+    ],
+    retries: retries,
+    lane: ExecLane.read,
+  );
+  if (modern.isSuccess) {
+    final layout = _parseRepoLayoutLines(modern.stdout);
+    if (layout != null) return layout;
+  }
+
+  // Git < 2.31 rejects `--path-format`. Resolve the fallback on the command
+  // host so an SSH path is never interpreted against the local Mac.
+  final legacy = await executor.execute(
+    repoPath: repoPath,
+    extraEnv: extraEnv,
+    gitArgs: ['sh', '-c', _legacyRepoLayoutScript],
+    retries: retries,
+    lane: ExecLane.read,
+  );
+  if (!legacy.isSuccess) {
+    throw GitException('Could not resolve the repository layout', legacy);
+  }
+  final layout = _parseRepoLayoutLines(legacy.stdout);
+  if (layout == null) {
+    throw GitException('Could not resolve the repository layout', legacy);
+  }
+  return layout;
+}
+
+const _legacyRepoLayoutScript = r'''
+canon_dir() {
+  p=$1
+  case "$p" in
+    /*) ;;
+    *) p="./$p" ;;
+  esac
+  (CDPATH= cd -P "$p" && pwd -P)
+}
+top=$(git rev-parse --show-toplevel) || exit $?
+git_dir=$(git rev-parse --absolute-git-dir) || exit $?
+common_dir=$(git rev-parse --git-common-dir) || exit $?
+top=$(canon_dir "$top") || exit $?
+git_dir=$(canon_dir "$git_dir") || exit $?
+common_dir=$(canon_dir "$common_dir") || exit $?
+printf '%s\n%s\n%s\n' "$top" "$git_dir" "$common_dir"
+''';
+
+/// Parses the three absolute, host-canonicalized repository layout paths.
+RepoLayout? _parseRepoLayoutLines(String stdout) {
+  final lines = const LineSplitter()
+      .convert(stdout)
+      .map((l) => l.trim())
+      .where((l) => l.isNotEmpty)
+      .toList();
+  if (lines.length < 3) return null;
+
+  return RepoLayout(
+    toplevel: lines[0],
+    gitDir: lines[1],
+    gitCommonDir: lines[2],
+  );
 }
