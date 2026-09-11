@@ -1073,7 +1073,8 @@ worktree exists, creating one is a write to the host: ask first.**
 
 7.6 **MADR 0044 step 4.3.** With the sampler running, the maintainer switches between two
 remote tabs six times. Report each heartbeat-to-lock interval and the median against
-0044's 250 ms acceptance.
+0044's 250 ms acceptance. *(Executed 2026-09-11 with ten switches rather than six; every interval is
+in the execution record.)*
 
 7.7 **Docs:**
 
@@ -2222,6 +2223,42 @@ filtered`; `p5: the watcher outlives its last listener` → the four tests devia
 **Commit.** Code `806e90e`. Its message is the hook's and does not name the deviations; they are
 (m) and (n) above.
 
+*(This phase-5 record sat after the later phases' records from `7eab2e2` until 7.7 moved it back;
+its text is unchanged.)*
+
+**Catalogue changes.** Four entries added to 0045: the plan's three, and `p5: the facade's watcher
+subscription outlives its build` (deviation (m)). One replaced: `p2: leaving the ignored-path filter does not reach the watcher` by
+`p5: the watcher outlives its last listener` (deviation (n)).
+
+#### Deviation (n) — the filter no longer decides the watcher's lifetime (2026-09-11)
+
+**Found.** Catalogue 0045 at the phase-5 gate: `26 killed, 1 survived`, the survivor `p2: leaving
+the ignored-path filter does not reach the watcher` — the `async*` pass-through amendment 0045.1
+removed. Reproduced by hand in the harness's kept, isolated worktree with the mutation applied:
+`repo_watch_ignore_filter_test.dart` and `repo_watch_provider_sharing_test.dart`,
+`00:08 +14: All tests passed!`, including `the last listener leaving tears the watcher down` and
+`a returning listener on a quiet repository gets a watcher at once`, which assert the watcher's
+handle cancelled.
+
+**Why.** After this phase the filter does not hold the watcher. A leaving view disposes the facade,
+whose `onDispose` closes its listen on `watcherProvider` (deviation (m)), and the watcher's own
+auto-dispose stops the engine; the facade also closes the controller the filter reads, so even an
+`async*` filter ends. The mutant cannot produce the defect it was written for, and the 14 tests
+show no other difference.
+
+**Decision: resolution 1** (maintainer: "resolution option 1"). The entry is re-anchored to where the
+property now lives: `p5: the watcher outlives its last listener` removes `autoDispose` from
+`watcherProvider`, with the same two test files. Tried in the same worktree before the decision, it
+failed four tests, each `Expected: true, Actual: <false>` on the watcher's cancel: `leaving reaches
+the watcher while the repository is quiet`, `leaving reaches the watcher while a tick waits on git`,
+`the last listener leaving tears the watcher down`, `a returning listener on a quiet repository gets
+a watcher at once`. The `asyncMap` filter itself is unchanged; the change is to the catalogue only.
+
+**Rejected.** Re-coupling the watcher's lifetime to the facade's filtered stream so the old entry
+could fail again — the coupling amendment 0045.1 was about.
+
+**Scope added:** none; one catalogue entry replaced in place.
+
 ### Phase 6 — identity on records, tests without sleeps, structural guards
 
 Landed in `9dc567d`, with deviations (o)–(s). None changes a decision or a fact MADR 0045
@@ -2435,14 +2472,17 @@ In progress.
 after that commit (a docs-only commit over the `v1.7.0` tag at `7eab2e2`). Three remote tabs, one per
 saved SSH connection and host, and two local tabs were open throughout.
 
+**Every host and repository name in this record is a placeholder**, per the repository's
+redaction convention: the three hosts are A, B and C, and the repositories `repo-a` to `repo-d`.
+
 **7.2 — registry census**, read-only over SSH, 13:07 host time, one remote tab active:
 
 ```text
-admdevops   armed: 1 of 21 repositories — percona-postgres: 1 lock, 1 pid (alive), 1 heartbeat, one token;
-            4 watcher processes (the script, its inotifywait, two lease-loop subshells)
-            stranded: one heartbeat, base36 token, 781 s old — written before this build was installed
-awsutility  armed: 0; watcher processes: 0
-wonder      armed: 0; watcher processes: 0
+host A  armed: 1 of 21 repositories — repo-a: 1 lock, 1 pid (alive), 1 heartbeat, one token;
+        4 watcher processes (the script, its inotifywait, two lease-loop subshells)
+        stranded: one heartbeat, base36 token, 781 s old — written before this build was installed
+host B  armed: 0; watcher processes: 0
+host C  armed: 0; watcher processes: 0
 ```
 
 The stranded heartbeat's token is in the pre-phase-6 base36 form and predates the installed binary,
@@ -2450,28 +2490,28 @@ so it came from the previous build being quit without a teardown; the connect sw
 the next connect, below.
 
 **7.3 — reconnect**, with a read-only 5 ms registry sampler on all three hosts. The maintainer
-disconnected and reconnected the admdevops tab, and during it clicked `lkq-eck-elastic`:
+disconnected and reconnected the host A tab, and during it clicked `repo-c`:
 
 ```text
-13:13:08.539 - percona-postgres mg-watch.0471e57fea5d5e75.pid     disconnect: the watcher exits
-13:13:08.545 - percona-postgres mg-watch.lock                     ...and its script releases the lock
-13:13:09.145 + lkq-eck-elastic  mg-watch.372f6a023cd81701.hb      the maintainer's click
-13:13:09.368 + lkq-eck-elastic  mg-watch.372f6a023cd81701.pid
-13:13:09.368 + lkq-eck-elastic  mg-watch.lock
-13:13:25.515 - lkq-eck-elastic  mg-watch.372f6a023cd81701.pid     torn down with the transport up:
-13:13:25.521 - lkq-eck-elastic  mg-watch.lock                     pid, lock AND heartbeat removed
-13:13:25.682 - lkq-eck-elastic  mg-watch.372f6a023cd81701.hb
-13:13:27.746 + percona-postgres mg-watch.7d238872593d49a5.hb      re-armed once: heartbeat to lock 222 ms
-13:13:27.968 + percona-postgres mg-watch.7d238872593d49a5.pid
-13:13:27.968 + percona-postgres mg-watch.lock
-13:13:32.550 - percona-postgres mg-watch.hm726mnstwa.hb           the connect sweep reclaims 7.2's stale lease
+13:13:08.539 - repo-a mg-watch.0471e57fea5d5e75.pid     disconnect: the watcher exits
+13:13:08.545 - repo-a mg-watch.lock                     ...and its script releases the lock
+13:13:09.145 + repo-c mg-watch.372f6a023cd81701.hb      the maintainer's click
+13:13:09.368 + repo-c mg-watch.372f6a023cd81701.pid
+13:13:09.368 + repo-c mg-watch.lock
+13:13:25.515 - repo-c mg-watch.372f6a023cd81701.pid     torn down with the transport up:
+13:13:25.521 - repo-c mg-watch.lock                     pid, lock AND heartbeat removed
+13:13:25.682 - repo-c mg-watch.372f6a023cd81701.hb
+13:13:27.746 + repo-a mg-watch.7d238872593d49a5.hb      re-armed once: heartbeat to lock 222 ms
+13:13:27.968 + repo-a mg-watch.7d238872593d49a5.pid
+13:13:27.968 + repo-a mg-watch.lock
+13:13:32.550 - repo-a mg-watch.hm726mnstwa.hb           the connect sweep reclaims 7.2's stale lease
 ```
 
 Torn down once and re-armed once, as required. Five minutes after the re-arm, at 13:18:31:
 
 ```text
-percona-postgres: lock 7d238872593d49a5 (303 s), pid 1323403 alive, heartbeat 7d238872593d49a5 (3 s)
-                  heartbeat 0471e57fea5d5e75, 380 s old, NO pid file beside it  <- stranded
+repo-a: lock 7d238872593d49a5 (303 s), pid 1323403 alive, heartbeat 7d238872593d49a5 (3 s)
+        heartbeat 0471e57fea5d5e75, 380 s old, NO pid file beside it  <- stranded
 ```
 
 Every lock has a live watcher; not every heartbeat has a pid file. **7.3 failed.**
@@ -2483,7 +2523,7 @@ before `_invalidateRepoState()`; `connectLocal()` does the same when leaving an 
 watcher is torn down after the transport is gone, so its client-owned heartbeat removal — issued
 through that transport — fails silently (the teardown is best-effort by design). The host script
 removes its own pid file and lock when its channel closes, which is exactly the sampler's picture:
-pid and lock gone at 13:13:08, heartbeat never. `lkq-eck-elastic`'s teardown, with the transport up,
+pid and lock gone at 13:13:08, heartbeat never. `repo-c`'s teardown, with the transport up,
 removed all three. The connect sweep reclaims a heartbeat with no pid only once it is older than the
 five-minute stale age — deliberately, because a fresh one is what an arm in flight looks like — and
 runs only at connect, so a disconnect's heartbeat waits for a connect to that host at least five
@@ -2655,23 +2695,23 @@ and (u) above. 7.3 is re-run on a rebuild of it.
 `git describe --tags` reads `v1.7.0-3-gce26422`, the binary was written at 14:35:11, and the tree was
 clean after the build. The maintainer quit and reopened; the app process started at 14:38:42.
 
-**7.2 — census**, 14:40:56: admdevops holds exactly one watcher (`systems-workspace`: one lock, one
+**7.2 — census**, 14:40:56: host A holds exactly one watcher (`repo-b`: one lock, one
 live pid, one heartbeat, one token); the other two hosts hold nothing. One heartbeat with no pid beside
 it, last touched at 14:38:05 — before the running app started at 14:38:42 — so it is the previous
 build's, left by quitting it. A quit tears nothing down; that path is outside deviation (t).
 
-**7.3 — reconnect**, rerun. The maintainer disconnected and reconnected the admdevops tab; its
-`percona-postgres` tab took focus in between:
+**7.3 — reconnect**, rerun. The maintainer disconnected and reconnected the host A tab; its
+`repo-a` tab took focus in between:
 
 ```text
-15:10:15.663 - systems-workspace mg-watch.842d02cb1259cc85.pid     disconnect
-15:10:15.668 - systems-workspace mg-watch.lock
-15:10:15.833 - systems-workspace mg-watch.842d02cb1259cc85.hb      the heartbeat now goes too
-15:10:16.520 + percona-postgres  mg-watch.088fb1ccdae4398d.hb      the focused tab arms
-15:10:28.720 - percona-postgres  mg-watch.088fb1ccdae4398d.hb      ...and releases all three on return
-15:10:31.226 + systems-workspace mg-watch.c607ae4c79adb1c5.hb      re-armed once
-15:10:31.473 + systems-workspace mg-watch.c607ae4c79adb1c5.pid / mg-watch.lock
-15:10:35.892 - systems-workspace mg-watch.84b8af597d4abd07.hb      the sweep reclaims 7.2's stale heartbeat
+15:10:15.663 - repo-b mg-watch.842d02cb1259cc85.pid     disconnect
+15:10:15.668 - repo-b mg-watch.lock
+15:10:15.833 - repo-b mg-watch.842d02cb1259cc85.hb      the heartbeat now goes too
+15:10:16.520 + repo-a mg-watch.088fb1ccdae4398d.hb      the focused tab arms
+15:10:28.720 - repo-a mg-watch.088fb1ccdae4398d.hb      ...and releases all three on return
+15:10:31.226 + repo-b mg-watch.c607ae4c79adb1c5.hb      re-armed once
+15:10:31.473 + repo-b mg-watch.c607ae4c79adb1c5.pid / mg-watch.lock
+15:10:35.892 - repo-b mg-watch.84b8af597d4abd07.hb      the sweep reclaims 7.2's stale heartbeat
 ```
 
 Five minutes after the re-arm, 15:15:36: one repository armed, lock `c607ae4c79adb1c5`, pid 1381590
@@ -2679,7 +2719,7 @@ alive, heartbeat 4 s, **no stranded heartbeat**. Every heartbeat has a pid file 
 lock a live watcher. **7.3 passes.**
 
 **7.6 — tab switches**, with the sampler running. The maintainer switched between the
-`systems-workspace` and `percona-postgres` tabs ten times; every teardown released pid, lock and
+`repo-b` and `repo-a` tabs ten times; every teardown released pid, lock and
 heartbeat, one watcher was armed at a time, and heartbeat-to-lock per arm was:
 
 ```text
@@ -2687,9 +2727,9 @@ heartbeat, one watcher was armed at a time, and heartbeat-to-lock per arm was:
 ```
 
 Against MADR 0044's 250 ms acceptance: **the median passes**; the one slow arm (672 ms) was the first
-return to `systems-workspace`.
+return to `repo-b`.
 
-**7.4 — the foreign-lock refusal.** A lock was staged on `percona-postgres` with `mkdir`, which refuses
+**7.4 — the foreign-lock refusal.** A lock was staged on `repo-a` with `mkdir`, which refuses
 an existing lock, and token `f0e1gn0045c7`, its heartbeat refreshed every 5 s by a loop that ends when
 the lock is gone or no longer its token, bounded in time — it reached its first 15-minute bound before
 the maintainer's switch and was resumed, 21 s later, well inside the lease's five-minute staleness.
@@ -2697,8 +2737,8 @@ The maintainer opened the tab; the Output pane:
 
 ```text
 watcher: mg-watch: lock held by f0e1gn0045c7
-watcher: another live watcher already holds …/collections/percona-postgres (token f0e1gn0045c7) — polling here
-watcher: polling …/collections/percona-postgres — arm unavailable: heldByAnother; watchers held 0, restarts spent 0
+watcher: another live watcher already holds …/repo-a (token f0e1gn0045c7) — polling here
+watcher: polling …/repo-a — arm unavailable: heldByAnother; watchers held 0, restarts spent 0
   after: stopped(stream cancelled) -> armed(arm succeeded) -> stopped(stream cancelled) -> armFailed(held by another watcher (token f0e1gn0045c7)) watcher 2/1
 ```
 
@@ -2709,15 +2749,15 @@ never touched. Cleanup by exact path: the lock removed at 16:17:45.894, the refr
 the host carries the token. **7.4 passes.**
 
 **7.5 — a remote linked worktree.** No repository on the three hosts had one. With the maintainer's
-permission a throwaway worktree was created; `testrepo111`, first proposed, has no commit, and the
-maintainer chose `percona-postgres` instead: `…/collections/percona-postgres-mg-p7-wt` on a new
-branch `mg-p7-worktree-check` at `018b412`. Opened from the Worktrees page as a detached window, the
+permission a throwaway worktree was created; `repo-d`, first proposed, has no commit, and the
+maintainer chose `repo-a` instead: `…/repo-a-mg-p7-wt` on a new
+branch `mg-p7-worktree-check` at its then-current commit. Opened from the Worktrees page as a detached window, the
 main window armed its watcher:
 
 ```text
-lock:    …/percona-postgres/.git/worktrees/percona-postgres-mg-p7-wt/mg-watch.lock   (token 46fad39a45ab8cad)
+lock:    …/repo-a/.git/worktrees/repo-a-mg-p7-wt/mg-watch.lock   (token 46fad39a45ab8cad)
 pid:     1403785 alive; heartbeat 18 s; stranded: none
-cwd:     the script (1403785) and its inotifywait (1403838) both in …/collections/percona-postgres-mg-p7-wt
+cwd:     the script (1403785) and its inotifywait (1403838) both in …/repo-a-mg-p7-wt
 ```
 
 The lock is under the worktree's resolved git dir, not its `.git` file — F10's fix, live — and the
@@ -2760,38 +2800,101 @@ seen to fail in a scratch copy with the name reintroduced.
 
 **Scope added:** `test/watch_stack_structure_test.dart`, one list entry.
 
-**Catalogue changes.** Four entries added to 0045: the plan's three, and `p5: the facade's watcher
-subscription outlives its build` (deviation (m)). One replaced: `p2: leaving the ignored-path filter does not reach the watcher` by
-`p5: the watcher outlives its last listener` (deviation (n)).
 
-#### Deviation (n) — the filter no longer decides the watcher's lifetime (2026-09-11)
+#### Deviation (w), executed
 
-**Found.** Catalogue 0045 at the phase-5 gate: `26 killed, 1 survived`, the survivor `p2: leaving
-the ignored-path filter does not reach the watcher` — the `async*` pass-through amendment 0045.1
-removed. Reproduced by hand in the harness's kept, isolated worktree with the mutation applied:
-`repo_watch_ignore_filter_test.dart` and `repo_watch_provider_sharing_test.dart`,
-`00:08 +14: All tests passed!`, including `the last listener leaving tears the watcher down` and
-`a returning listener on a quiet repository gets a watcher at once`, which assert the watcher's
-handle cancelled.
+`test/watch_stack_structure_test.dart`'s retired list gains `_slotReleases`; nothing else changed.
 
-**Why.** After this phase the filter does not hold the watcher. A leaving view disposes the facade,
-whose `onDispose` closes its listen on `watcherProvider` (deviation (m)), and the watcher's own
-auto-dispose stops the engine; the facade also closes the controller the filter reads, so even an
-`async*` filter ends. The mutant cannot produce the defect it was written for, and the 14 tests
-show no other difference.
+```text
+dart format --output=none --set-exit-if-changed test/watch_stack_structure_test.dart   0 changed
+flutter analyze                                   No issues found!
+flutter test test/watch_stack_structure_test.dart 00:00 +3: All tests passed!
+```
 
-**Decision: resolution 1** (maintainer: "resolution option 1"). The entry is re-anchored to where the
-property now lives: `p5: the watcher outlives its last listener` removes `autoDispose` from
-`watcherProvider`, with the same two test files. Tried in the same worktree before the decision, it
-failed four tests, each `Expected: true, Actual: <false>` on the watcher's cancel: `leaving reaches
-the watcher while the repository is quiet`, `leaving reaches the watcher while a tick waits on git`,
-`the last listener leaving tears the watcher down`, `a returning listener on a quiet repository gets
-a watcher at once`. The `asyncMap` filter itself is unchanged; the change is to the catalogue only.
+**Seen to fail**, in a scratch copy of the tree with `_slotReleases` reintroduced into
+`host_watcher_budget.dart`:
 
-**Rejected.** Re-coupling the watcher's lifetime to the facade's filtered stream so the old entry
-could fail again — the coupling amendment 0045.1 was about.
+```text
+00:00 +0 -1: the retired machinery is gone [E]
+Expected: empty
+  Actual: ['lib/core/git/watch/admission/host_watcher_budget.dart: _slotReleases']
+```
 
-**Scope added:** none; one catalogue entry replaced in place.
+**Commit.** Test `9216938`. Its message is the hook's and does not name the deviation; it is (w).
+
+#### Criterion 6's assertions, checked rather than assumed (2026-09-11)
+
+Phase 4 recorded the nine ported test *names* as unchanged, checked against the deleted file. Nothing
+had compared their assertions, which is what criterion 6 claims. Checked at closure, read-only: each
+test of `git show 360b846^:test/watch_lifecycle_test.dart` against its same-named port in
+`test/watch_engine_test.dart`, the `expect(` calls as a multiset with whitespace, trailing commas and
+juxtaposed string literals normalised — phase 6's parity normalisation.
+
+```text
+old tests: 9
+same      3->3 expects  successful arm emits an immediate eventDriven tick
+same      3->3 expects  signalPath delivers coalesced paths in the next tick
+same      2->2 expects  WatchUnavailable degrades to polling immediately
+same      1->1 expects  WatchAborted emits nothing — caller already cleaned up
+same      3->3 expects  scheduleRestart triggers re-arm after backoff
+same      1->1 expects  exhausted restarts degrade to polling
+same      5->5 expects  noteActivity resets the restart budget
+same      2->2 expects  path overflow at maxPaths emits empty paths set
+same      1->1 expects  cancellation tears down and closes the stream
+```
+
+**Seen to fail** against a scratch copy of `watch_engine_test.dart` with one assertion altered
+(`expect(armCount, 1)` → `expect(!armCount, 1)`), asserted in place before the run:
+
+```text
+DIFFERENT 5->5 expects  noteActivity resets the restart budget
+    only old: expect(armCount,1)
+    only new: expect(!armCount,1)
+```
+
+#### After the measurements, the registry is empty (2026-09-11, 17:01 host time)
+
+A read-only census of all three hosts, over the same 29 repositories the 7.2 runs used, found **no
+`mg-watch` registry file at all**: no lock, no pid file, no heartbeat, nothing stranded. The app had
+been closed or disconnected since 7.4's cleanup at 16:18.
+
+On a build carrying deviation (t)'s fix this is what an exit should leave. ⌘Q is not a kill: the
+native `applicationShouldTerminate` holds termination open (3 s backstop) while Dart's
+`prepareToTerminate` runs `_disconnectAllTabs()` (`tabs_host.dart`), and a disconnect now releases
+every watcher before the transport closes. Whether this particular exit was a quit or a disconnect is
+not established, so this is evidence, not a test.
+
+It does settle what 7.2's stranded heartbeats were. Both were written by a build older than the fix —
+the first in the pre-phase-6 base36 token form, the second at 14:38:05 by the `1.7.0.1` build the
+maintainer had just replaced — so neither is a quit of the fixed build, and the
+one-heartbeat-per-armed-repository clause holds for every watcher this build armed.
+
+#### Deviation (x) — one 7.2 condition was never checked (2026-09-11, open)
+
+**Found** while checking criterion 10 at closure. Step 7.2 requires "exactly one watcher, one lock,
+one pid file and one heartbeat per armed repository, **and no `mg-watch: armed` in any file**". The
+census script reports each registry entry's name, pid, liveness and age; it never reads a file's
+*contents*. The marker clause was therefore not checked in either 7.2 run, and both records are
+silent about it rather than wrong. The marker belongs on the watcher's stderr; a script that let it
+reach a registry file would be corrupting the pid or lease that file exists to hold.
+
+Checked after the event, at 17:01 host time: **0 registry files across the three hosts**, so the check
+had nothing to read and the clause stays unverified against live data.
+
+**The rest of criterion 10 stands.** 7.3, 7.4 and 7.5's watcher checks passed on the rebuild, 7.6's
+median is reported, and the stranded heartbeats belonged to older builds, as recorded above.
+
+**Resolutions.**
+
+1. *Check it live.* The maintainer opens the app on the current build with a remote tab active, and a
+   read-only census reads every `mg-watch*` file and reports whether any carries the marker. Cost: one
+   host round trip, no writes, no rebuild; criterion 10 then closes fully met.
+2. *Close the record with the gap named.* Criterion 10 is recorded as met except this clause, reported
+   as unchecked. Cost: nothing to run, and a clause the step asked for stays unproven — nothing else
+   in the plan would catch a script that wrote the marker into the registry.
+
+**The consequence of doing nothing:** the plan would close claiming 7.2 "passes as specified" when one
+clause of it was never read — the unchecked claim this plan's rule 1 exists to prevent.
 
 ## Verification
 
