@@ -1,6 +1,6 @@
 ---
 status: "in-progress"
-date: 2026-09-10
+date: 2026-09-11
 associated-madr: "0045-MADR-one-owner-per-watcher-concern.md"
 ---
 
@@ -774,11 +774,15 @@ Then the catalogues, one at a time: `0041`, `0043`, `0044`, `0045`.
   * `Cancel`.
 * **`lib/core/git/watch/engine/engine_state.dart`:** a sealed `EngineState` —
   `Idle`, `Arming(attempt, rearmPending)`, `Armed(attempt, ArmedSource)`,
-  `BackingOff(attempt)`, `Polling(reason)`, `Stopped`.
+  `BackingOff(attempt)`, `Polling(reason)`, `Stopped`. *(Deviation (i), 2026-09-11: `Arming(attempt)`
+  — under rule 3 no current re-arm request can arrive while arming, so the flag could never be
+  set; collapse is rule 3's.)*
 * **`lib/core/git/watch/engine/watch_engine.dart`:** `final class WatchEngine({required
   WatchSource source, required String repoPath, BoundedWatchSpecSource? bounded,
   WatchTimings timings = WatchTimings.standard, WatchTransitionSink? onTransition,
-  Stream<void>? budgetReleased})`, with `Stream<RepoWatchEvent> get events`. Rules:
+  Stream<void>? budgetReleased})`, with `Stream<RepoWatchEvent> get events`. *(Recorded in the
+  execution record: also `void Function()? onPollingRecoveryAttempt`, which rule 4 needs, and a
+  `@visibleForTesting` `debugPost(EngineEvent)`.)* Rules:
   1. **A mailbox:** a `Queue<EngineEvent>` and `_drain()` with a reentrancy guard; every
      state change happens inside `_handle(event)`, synchronously.
   2. **Effects are asynchronous and post back tagged.** Arming calls `source.arm(ArmRequest(…,
@@ -800,9 +804,13 @@ Then the catalogues, one at a time: `0041`, `0043`, `0044`, `0045`.
      * more than `maxPathsPerTick` paths overflow to an unscoped tick;
      * `Cancel` completes the cancellation future, cancels every timer, closes the current
        source (and any later `SourceArmed` via rule 3), records `stopped`, and closes the
-       stream.
+       stream. *(Deviation (j), 2026-09-11: Cancel leaves the attempt current and moves to
+       `Stopped`, where the in-flight result is settled — `SourceArmed` closed, `SourceAborted`
+       recorded as `stopped: arm aborted`, `SourceUnavailable` neither recorded nor polled.)*
   5. **Every transition** that `watchLifecycle` reports through `onTransition` is reported
-     with the same kind and cause text, in the same order.
+     with the same kind and cause text, in the same order. *(Deviation (j): except the
+     `degradedToPolling` `watchLifecycle` recorded for a refusal arriving after cancel, along
+     with the two timers it leaked.)*
 
 **Modify:**
 
@@ -819,14 +827,18 @@ Then the catalogues, one at a time: `0041`, `0043`, `0044`, `0045`.
 with identical names and assertions. Replace the `fastLifecycle` helper with a
 `fastEngine({required Future<SourceArm> Function(ArmRequest) arm, int maxRestarts = 3})`
 that builds a `WatchEngine` over the new `test/helpers/function_watch_source.dart` with
-`WatchTimings.forTest()` durations equal to the helper's current values. Add:
+`WatchTimings.forTest()` durations equal to the helper's current values. *(Deviation (h),
+2026-09-10: `forTest()` does not have those values; the helper builds its own coherent
+`WatchTimings` — recovery 2 days rather than 1 — see the execution record.)* Add:
 
 * `an arm result from a superseded attempt is closed, not adopted`;
 * `a source arriving after cancel is closed`;
 * `many re-arms while arming collapse into a single follow-up` (ported from
   `watch_transition_wiring_test.dart`);
 * `overlapping starts tear down every armed source` (ported likewise);
-* `a budget release wakes only a ceiling refusal`.
+* `a budget release wakes only a ceiling refusal`;
+* *(deviation (j))* `a refusal arriving after cancel starts no polling`;
+* *(deviation (k))* `a re-arm spends no restart budget and emits no stopped tick`.
 
 4.2 **`test/watch_transition_wiring_test.dart`:** replace `watchLifecycle(` and
 `WatchHooks` with the engine and `FunctionWatchSource`, assertions unchanged.
@@ -837,9 +849,10 @@ that builds a `WatchEngine` over the new `test/helpers/function_watch_source.dar
 | --- | --- |
 | `p4: a stale arm result is adopted` | `an arm result from a superseded attempt is closed, not adopted` |
 | `p4: a source arriving after cancel is left open` | `a source arriving after cancel is closed` |
-| `p4: a re-arm spends the restart budget` | `watch_engine_test.dart`, `surface_rearm_policy_test.dart` |
+| `p4: a re-arm spends the restart budget` | `watch_engine_test.dart`, `surface_rearm_policy_test.dart` *(deviation (k): `a re-arm spends no restart budget and emits no stopped tick`; the policy test builds no engine)* |
 | `p4: a budget release wakes every refusal` | `a budget release wakes only a ceiling refusal`, `a refusal that is NOT the ceiling is not woken by a slot release` |
 | `p4: path overflow is ignored` | `path overflow at maxPaths emits empty paths set` |
+| *(deviation (j))* `p4: a refusal after cancel starts polling` | `a refusal arriving after cancel starts no polling` |
 
 **Verify:**
 
@@ -1869,6 +1882,223 @@ splitting. The test measures wall-clock time against 50 ms; it passed three time
 synchronous-signal fix, and once in the full suite. It is likely load-sensitive near its bound when
 two test files run together. The entry's kill does not depend on it; the test's margin is named
 here rather than widened.
+
+
+### Phase 4 — one engine replaces `watchLifecycle`
+
+Landed in `360b846`, with deviations (h)–(l) and MADR amendment 0045.2.
+
+#### Deviation (h) — `WatchTimings.forTest()` does not have the helper's durations (2026-09-10)
+
+**Found.** Step 4.1 ports the nine `watch_lifecycle_test.dart` tests "with identical names and
+assertions", through a `fastEngine` helper "with `WatchTimings.forTest()` durations equal to the
+helper's current values". They are not equal:
+
+| duration | `fastLifecycle` (`watch_lifecycle_test.dart:12-23`) | `WatchTimings.forTest()` (`watch_timings.dart:37-52`) |
+| --- | --- | --- |
+| trailing / maxWait / minInterval | 0 / 10 ms / 0 | 0 / 10 ms / 0 |
+| pollInterval | 1 day | 50 ms |
+| recoveryInterval | 1 day | 200 ms |
+| restartBackoffStep | 2 s (the engine default) | 10 ms |
+
+`noteActivity resets the restart budget` spends the budget and waits 1 s expecting no further arm
+until `noteActivity`; a 200 ms recovery would re-arm several times in that second and break its arm
+count. `scheduleRestart triggers re-arm after backoff` documents and waits out a 2 s backoff. Read
+from the code; the engine does not yet exist to run it. The helper's own values are also incoherent
+by `WatchTimings.coherenceErrors()`, which rejects `pollInterval >= recoveryInterval`, so
+`forTest()` cannot simply be changed to them.
+
+**Decision: resolution 1** (maintainer: "option 1"). The helper builds its own `WatchTimings`:
+trailing 0, maxWait 10 ms, minInterval 0, pollInterval 1 day, recoveryInterval **2 days**, the
+backoff step at its 2 s default, `maxRestarts` from its argument. No ported test elapses near a day,
+so the nine keep identical names, assertions and timing, and the value is coherent. `forTest()` is
+unchanged.
+
+**Rejected.** The helper's exact values (poll and recovery both 1 day) would run the engine under
+timings `coherenceErrors()` rejects, silently.
+
+**Scope added to phase 4:** none beyond the files the plan names.
+
+**Recorded, no decision needed.**
+
+* Step 4.1 ports two tests from `watch_transition_wiring_test.dart` into the engine test while
+  step 4.2 keeps them there, assertions unchanged; both are kept, as written.
+* `WatchEngine` takes `void Function()? onPollingRecoveryAttempt`, which the plan's signature
+  omits. Rule 4 requires it: `watchLifecycle` calls it before each recovery arm, and the remote
+  service passes `RemoteWatchSource.invalidateCaches` so the tool and git dir are asked again.
+* The public API cannot produce a superseded attempt — no second arm starts while one is in
+  flight — so `an arm result from a superseded attempt is closed, not adopted` posts through a
+  `@visibleForTesting` `debugPost(EngineEvent)`, named by the repository's `debug…` convention.
+
+#### Deviation (i) — `Arming.rearmPending` can never be set (2026-09-11)
+
+**Found.** Rule 3 drops any event whose attempt is not current, and a source's signals reach
+the engine only once it is adopted (`ArmedSource.signals`, `watch_source.dart:65-72`). While
+`Arming(n+1)`, the replaced source's signals carry `n` and are stale, and the new source is not
+yet listened to; the poll and recovery timers are cancelled when the arm begins, and
+`BudgetReleased` wakes only `Polling(ceiling)`. No current re-arm request can arrive while
+arming, so the flag is unreachable. Traced by hand through the ported
+`many re-arms during one slow arm collapse into a single follow-up`: under rule 3 the three
+requests yield the asserted `armCalls == 2`.
+
+**Decision: resolution 1** (maintainer: "follow your recommendations"). `Arming(attempt)`, with
+a doc comment stating that collapse is rule 3.
+
+**Rejected.** Letting the replaced source's re-arm set the flag contradicts rule 3, and when that
+source is slow to close it turns the ported test's three requests into two follow-ups.
+
+**Scope added:** none.
+
+#### Deviation (j) — a result arriving after cancel: rules 3–4 against rule 5, and a leak (2026-09-11)
+
+**Found.** Rule 4 closes a `SourceArmed` arriving after `Cancel` "via rule 3", which makes the
+in-flight attempt stale; rule 3 would then also drop a `SourceAborted`, yet a source aborts only
+once cancelled, so `stopped: arm aborted` — which rule 5 requires — could never be recorded.
+Probed on the unmodified tree with a gitignored scratch test (`build/probe/`): cancel while the
+arm is gated, then resolve it.
+
+| resolves as | transitions | periodic timers before → after |
+| --- | --- | --- |
+| unavailable (`heldByAnother`) | `stopped: stream cancelled`, `degradedToPolling: arm unavailable: heldByAnother` | 0 → 2 |
+| aborted | `stopped: stream cancelled`, `stopped: arm aborted` | 0 → 0 |
+| armed | `stopped: stream cancelled` (torn down once) | 0 → 0 |
+
+The first row is a **pre-existing defect**: `watchLifecycle` starts its poll and recovery timers
+for a stream that no longer exists, and they run for the life of the process; the remote service
+also writes "polling …" to the Output log for it. It is reachable in production:
+`RemoteWatchSource` returns `SourceUnavailable` for a host refusal (`remote_watch_source.dart:194-214`)
+without re-checking cancellation.
+
+**Decision: resolution 1.** `Cancel` leaves the attempt current and moves to `Stopped`; there the
+in-flight result is settled — `SourceArmed` closed, `SourceAborted` recorded as today,
+`SourceUnavailable` neither recorded nor polled, `ArmThrew` ignored as today. A superseded attempt
+is still rule 3's. The stale path and the after-cancel path stay separate code, each with its own
+test and catalogue entry. MADR amendment 0045.2.
+
+**Rejected.** Resolution 2 — still recording `degradedToPolling`, without the timers — keeps rule 5
+to the letter and keeps the Output log reporting a poll for a watcher that is gone.
+
+**Scope added:** the test `a refusal arriving after cancel starts no polling` and the catalogue
+entry `p4: a refusal after cancel starts polling`, both in files already in scope.
+
+#### Deviation (k) — `p4: a re-arm spends the restart budget` has no killing test (2026-09-11)
+
+**Found.** The catalogue table names `watch_engine_test.dart` and `surface_rearm_policy_test.dart`.
+None of the fourteen planned engine tests asserts on the budget or a `stopped` tick after a re-arm;
+`surface_rearm_policy_test.dart` exercises the debounce and never builds an engine; and no test in
+`test/` pins it (`grep` for a re-arm with budget, stopped or restart finds only the lifecycle
+backoff test; the bounded 0022 H5 test asserts paths). The entry would survive.
+
+**Decision: resolution 1.** Add `a re-arm spends no restart budget and emits no stopped tick` to
+`watch_engine_test.dart` and name it as the killer.
+
+**Scope added:** that test, in a file already in scope.
+
+#### Deviation (l) — the MADR's injected timer factory is not in the plan (2026-09-11)
+
+**Found.** MADR section 3: "Timers come from an injected clock and timer factory … so every engine
+test runs under `fakeAsync`". The plan's `WatchEngine` constructor carries neither.
+
+**Decision: resolution 1.** Follow the plan: the engine uses zone timers, which `fakeAsync`
+controls — the nine `watch_lifecycle_test.dart` tests already run that way. MADR amendment 0045.2
+records it.
+
+**Rejected.** Timer-factory parameters that no production caller would set.
+
+**Scope added:** none.
+
+#### Phase 4, executed
+
+**Created.** `lib/core/git/watch/engine/engine_event.dart` (the nine events), `engine_state.dart`
+(`Idle`, `Arming(attempt)`, `Armed`, `BackingOff`, `Polling(reason)`, `Stopped`) and
+`watch_engine.dart`; `test/helpers/function_watch_source.dart` (`FunctionWatchSource`, and
+`FakeArmedSource`, whose signals are synchronous and single-subscription like both real sources');
+`test/watch_engine_test.dart` — the nine ported tests, the plan's five, and one each from
+deviations (j) and (k).
+
+**Modified.** Both services return `WatchEngine(…).events`, building a `WatchTimings` from
+`watch()`'s five duration parameters; the remote one passes `source.invalidateCaches` and
+`admission.budget.releases(host)` as before. `WatchUnavailableReason` moved into
+`watch_source.dart`, its doc reworded for the engine; `watcher_process.dart`,
+`remote_watch_source.dart` and `watcher_process_test.dart` import it from there. The two
+`watch_transition_wiring_test.dart` tests build an engine over `FunctionWatchSource`, assertions
+unchanged. The acceptance grep's comment hits in `watch_diagnostics.dart`,
+`remote_watch_service.dart`, `local_watch_service.dart` and `remote_watch_service_test.dart` are
+reworded.
+
+**Deleted.** `lib/core/git/watch_lifecycle.dart`, `lib/core/git/watch/source/lifecycle_adapter.dart`
+and `test/watch_lifecycle_test.dart` — after `flutter test test/watch_engine_test.dart
+test/watch_lifecycle_test.dart` reported `00:00 +25: All tests passed!`, the old nine beside the
+new sixteen.
+
+**Implementation notes.**
+
+* *The engine does not await a replaced source's subscription cancel.* The first run of the engine
+  test failed five tests the same way — the second arm never began (`scheduleRestart triggers
+  re-arm after backoff`: `Expected: an object with length of <2>, Actual: [0]`). Temporary prints,
+  removed before any other run, placed it: the arm reached `await previousSignals?.cancel()` and
+  continued only after the test had already failed, outside `fakeAsync`'s control. The engine now
+  cancels the subscription unawaited when a source is replaced, and on cancel, and awaits only the
+  source's `close()`. Nothing is lost by the reorder: from that point everything the replaced source
+  reports carries a stale attempt and rule 3 drops it. The adapter's close-then-cancel order existed
+  so a closing source's reports still reached the hooks; the engine has no use for them.
+* *The restart timer is cancelled when an arm begins.* The lifecycle function left it running, so a
+  re-arm during backoff was followed by a second arm; here a late `RestartDue` would be stale anyway.
+* *Tick mode is a field of its own.* Activity while polling made ticks `eventDriven` while the poll
+  kept running, and the budget-release wake checked that mode; `_mode` keeps both exactly.
+* *The ported tests' group is `WatchEngine`, not the old function's name*, which the acceptance grep
+  forbids anywhere in `test/`; the nine test names are unchanged, checked against
+  `git show HEAD:test/watch_lifecycle_test.dart`.
+* *`_createLifecycle` keeps its name*: 0043's and 0045's `bounded` entries anchor on its call.
+
+**Verification.**
+
+```text
+flutter test test/watch_engine_test.dart test/watch_lifecycle_test.dart
+                                                  00:00 +25: All tests passed!   (before the deletion)
+flutter analyze                                   No issues found!
+dart format --output=none --set-exit-if-changed <14 changed .dart files>
+                                                  exit 1: watch_engine.dart, watch_engine_test.dart; formatted, then exit 0
+grep -rn 'watchLifecycle\|WatchHooks\|WatchArmed(' lib test
+                                                  exit 1, no output
+flutter test test/watch_engine_test.dart test/watch_transition_wiring_test.dart \
+  test/remote_watch_service_test.dart test/local_watch_service_test.dart
+                                                  00:08 +41: All tests passed!
+flutter test                                      03:43 +4041 ~3: All tests passed!   (phase 3: +4034 ~3)
+tool/mutate.py --check 0041 0043 0044 0045        67 entries in 4 catalogue(s): 67 sound, 0 did not apply, 0 do not compile (4m 26s)
+```
+
+The count is phase 3's plus the sixteen engine tests less the nine deleted. `record splitting a
+large burst costs linear time, not a copy per record` — the test the synchronous signals were for —
+passed in the full suite with every path now crossing the mailbox.
+
+**Catalogue changes.** Six entries added to 0045: the plan's five, and `p4: a refusal after cancel
+starts polling` (deviation (j)).
+
+**Catalogue runs.** After `--check`, each catalogue one at a time with no other test run in
+progress; each mirrored 18 uncommitted paths and 3 deletions, passed its baseline and recognised
+the compile canary:
+
+```text
+tool/mutate.py 0041-watcher-teardown         27 killed, 0 survived, 0 did not apply, 0 did not compile, 0 observed by no test
+tool/mutate.py 0043-one-watcher-per-repo      7 killed, 0 survived, 0 did not apply, 0 did not compile, 0 observed by no test
+tool/mutate.py 0044-arm-readiness            10 killed, 0 survived, 0 did not apply, 0 did not compile, 0 observed by no test
+tool/mutate.py 0045-watch-stack              23 killed, 0 survived, 0 did not apply, 0 did not compile, 0 observed by no test
+```
+
+The six new entries were killed by: `p4: a stale arm result is adopted` → `an arm result from a
+superseded attempt is closed, not adopted`; `p4: a source arriving after cancel is left open` → `a
+source arriving after cancel is closed`; `p4: a refusal after cancel starts polling` → `a refusal
+arriving after cancel starts no polling`; `p4: a re-arm spends the restart budget` → `a re-arm spends
+no restart budget and emits no stopped tick` (deviation (k)'s test, and no other); `p4: a budget
+release wakes every refusal` → `a budget release wakes only a ceiling refusal` and `a refusal that is
+NOT the ceiling is not woken by a slot release`; `p4: path overflow is ignored` → `path overflow at
+maxPaths emits empty paths set`. Each new engine test is thereby seen to fail against the defect it
+names; `a refusal arriving after cancel starts no polling` was also seen as the defect itself, on the
+unmodified tree, by deviation (j)'s probe.
+
+**Commit.** Code `360b846`. Its message is the hook's and does not name the deviations; they are
+(h)–(l) above.
 
 ## Verification
 

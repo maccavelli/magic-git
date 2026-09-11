@@ -353,7 +353,8 @@ and all of `_SharedWatch`:
 * **Cancellation is a token passed to the source**, instead of polling `isCancelled()`
   between awaits.
 * **Timers come from an injected clock and timer factory** (`package:clock` is already
-  a dependency), so every engine test runs under `fakeAsync`.
+  a dependency), so every engine test runs under `fakeAsync`. *(Zone timers, which `fakeAsync`
+  already controls — see amendment 0045.2.)*
 * **The nine `watch_lifecycle_test.dart` tests are the engine's specification**, ported
   with their assertions unchanged. `Coalescer` is reused as is.
 
@@ -551,6 +552,30 @@ pending, so ticks stay ordered. Its four behaviours are unchanged and are now ea
 the provider level, where none was tested before; a returning listener on a quiet repository
 is pinned too. Phase 5's facade keeps the corrected filter. The plan's deviation (d) holds
 the evidence and the execution.
+
+### 0045.2 — the engine at cancellation, and its timers (2026-09-11)
+
+**What section 3 left open.** It says an outcome from a stale attempt is discarded by comparison,
+and the plan derived from it treats a result arriving after cancellation the same way while also
+requiring every transition `watchLifecycle` records to be kept. Those conflict: a source aborts only
+once cancelled, so `stopped: arm aborted` exists only after a cancel. And a probe of the unmodified
+tree showed the conflict hiding a defect — a host refusal arriving after cancellation made
+`watchLifecycle` record `degradedToPolling` and start its poll and recovery timers for a stream that
+no longer existed, where they ran for the life of the process. `RemoteWatchSource` returns such a
+refusal without re-checking cancellation, so production reaches it.
+
+**Decision.** Cancellation does not supersede the attempt in flight; it stops the engine, and the
+stopped engine settles that attempt's result: an armed source is closed, an abort is recorded as
+before, and a refusal is neither recorded nor polled. A superseded attempt is still discarded by
+comparison. The one transition no longer recorded is that post-cancellation `degradedToPolling`.
+
+**Timers.** Section 3's injected clock and timer factory is not built. The engine uses zone timers,
+which `fakeAsync` controls, and that meets the purpose the bullet states: the nine lifecycle tests
+already ran that way, and the engine's tests do. A factory would be constructor parameters no
+production caller sets.
+
+The plan's deviations (j) and (l) hold the evidence and the execution; (i) and (k) change only the
+plan.
 
 ## More Information
 
