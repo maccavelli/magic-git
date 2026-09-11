@@ -14,6 +14,7 @@
 
 import 'dart:async';
 
+import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:remote_magic_git/core/git/bounded_watch.dart';
 import 'package:remote_magic_git/core/git/remote_watch_service.dart';
@@ -182,26 +183,31 @@ String? _leaseTouched(List<String> commands) {
   return null;
 }
 
-/// Waits for the arm to settle.
+/// Lets an arm that has opened its stream settle, in fake time.
 ///
 /// EVERY arm races a script-level refusal (no watchable paths, or another
 /// watcher holding the repository) against the readiness marker, so a refusal
 /// is seen as a refusal rather than as a watcher that armed and died. Both
-/// signals cross a real event loop, not a microtask, so `pumpEventQueue()`
-/// alone returns before the arm has decided anything.
+/// signals cross the event loop rather than a single microtask.
 ///
-/// This used to wait out `RemoteWatchService.armSignalCeiling`'s predecessor —
-/// a flat 250 ms every arm paid — and now only has to outlast a signal that
-/// arrives at once (MADR 0044).
-Future<void> pastEarlyExitRead() =>
-    Future<void>.delayed(const Duration(milliseconds: 50));
+/// This used to outlast `RemoteWatchService.armSignalCeiling`'s predecessor — a
+/// flat 250 ms every arm paid — and now only has to outlast a signal that
+/// arrives at once (MADR 0044). Fake time since MADR 0045 phase 6.
+void pastEarlyExitRead(FakeAsync async) {
+  async.flushMicrotasks();
+  async.elapse(const Duration(milliseconds: 50));
+  async.flushMicrotasks();
+}
 
 void main() {
   late HostWatcherBudget hostBudget;
 
   setUp(() => hostBudget = HostWatcherBudget());
 
-  Future<_RecordingExecutor> armThenCancel({bool throwOnRemove = false}) async {
+  _RecordingExecutor armThenCancel(
+    FakeAsync async, {
+    bool throwOnRemove = false,
+  }) {
     final executor = _RecordingExecutor(throwOnRemove: throwOnRemove);
     final service = RemoteWatchService(
       executor,
@@ -211,62 +217,66 @@ void main() {
     );
     final events = <RepoWatchEvent>[];
     final sub = service.watch('/repo').listen(events.add);
-    await executor.armed.future;
-    await pastEarlyExitRead();
-    await pumpEventQueue();
-    await sub.cancel();
-    await pumpEventQueue();
+    pastEarlyExitRead(async);
+    sub.cancel();
+    async.flushMicrotasks();
     return executor;
   }
 
-  test('teardown removes the lease this arm stamped', () async {
-    final executor = await armThenCancel();
+  test('teardown removes the lease this arm stamped', () {
+    fakeAsync((async) {
+      final executor = armThenCancel(async);
 
-    final touch = _leaseTouched(executor.commands);
-    expect(
-      touch,
-      isNotNull,
-      reason: 'the arm stamps its lease before arming — 0027 deviation (b)',
-    );
-    // The token is what makes this the arm's OWN lease rather than the repo's.
-    final hb = RegExp(r'mg-watch\.[\w]+\.hb').firstMatch(touch!)!.group(0);
+      final touch = _leaseTouched(executor.commands);
+      expect(
+        touch,
+        isNotNull,
+        reason: 'the arm stamps its lease before arming — 0027 deviation (b)',
+      );
+      // The token is what makes this the arm's OWN lease rather than the
+      // repo's.
+      final hb = RegExp(r'mg-watch\.[\w]+\.hb').firstMatch(touch!)!.group(0);
 
-    expect(
-      executor.commands.where((c) => c.contains('rm -f') && c.contains(hb!)),
-      isNotEmpty,
-      reason:
-          'the client wrote this heartbeat, so the client removes it — '
-          'otherwise the watcher waits out leaseStaleAfter (0041 F2)',
-    );
+      expect(
+        executor.commands.where((c) => c.contains('rm -f') && c.contains(hb!)),
+        isNotEmpty,
+        reason:
+            'the client wrote this heartbeat, so the client removes it — '
+            'otherwise the watcher waits out leaseStaleAfter (0041 F2)',
+      );
+    });
   });
 
-  test('teardown gives the repository lock back, token-guarded', () async {
-    // MADR 0043 F3/F4: the next arm for this path waits on the teardown, so
-    // the teardown finishing has to mean the lock is actually gone. Closing
-    // the channel usually achieves that within a second on its own; this is
-    // the part the next arm is allowed to rely on.
-    final executor = await armThenCancel();
+  test('teardown gives the repository lock back, token-guarded', () {
+    fakeAsync((async) {
+      // MADR 0043 F3/F4: the next arm for this path waits on the teardown, so
+      // the teardown finishing has to mean the lock is actually gone. Closing
+      // the channel usually achieves that within a second on its own; this is
+      // the part the next arm is allowed to rely on.
+      final executor = armThenCancel(async);
 
-    final release = executor.commands.where((c) => c.contains('mg-watch.lock'));
-    expect(
-      release,
-      isNotEmpty,
-      reason: 'the teardown releases the lock it claimed',
-    );
-    expect(
-      release.single,
-      contains('token'),
-      reason:
-          'guarded by ownership: between deciding to tear down and this '
-          'running, another watcher may legitimately have taken the lock, and '
-          'removing it would delete a live watcher\'s exclusion',
-    );
+      final release = executor.commands.where(
+        (c) => c.contains('mg-watch.lock'),
+      );
+      expect(
+        release,
+        isNotEmpty,
+        reason: 'the teardown releases the lock it claimed',
+      );
+      expect(
+        release.single,
+        contains('token'),
+        reason:
+            'guarded by ownership: between deciding to tear down and this '
+            'running, another watcher may legitimately have taken the lock, and '
+            'removing it would delete a live watcher\'s exclusion',
+      );
+    });
   });
 
-  test(
-    'teardown never removes the pid file, which is the watcher\'s',
-    () async {
-      final executor = await armThenCancel();
+  test('teardown never removes the pid file, which is the watcher\'s', () {
+    fakeAsync((async) {
+      final executor = armThenCancel(async);
 
       expect(
         executor.commands.where(
@@ -277,25 +287,28 @@ void main() {
             'ownership is split so a half-dead pair stays the shape the sweep '
             'reclaims: the watcher removes what the watcher wrote',
       );
-    },
-  );
+    });
+  });
 
-  test('a removal that throws does not fail the teardown', () async {
-    // The realistic case: teardown during a disconnect, with no transport left.
-    //
-    // Reaching the end of this test IS the assertion. The removal is
-    // unawaited, so an escaping error arrives as an unhandled asynchronous
-    // exception, which the test runner fails on — there is nowhere for it to
-    // hide. Deleting the `catch` in `releaseLease` is what proves that, and
-    // the mutation catalogue does exactly that.
-    final executor = await armThenCancel(throwOnRemove: true);
-    await pumpEventQueue();
+  test('a removal that throws does not fail the teardown', () {
+    fakeAsync((async) {
+      // The realistic case: teardown during a disconnect, with no transport
+      // left.
+      //
+      // Reaching the end of this test IS the assertion. The removal is
+      // unawaited, so an escaping error arrives as an unhandled asynchronous
+      // exception, which the test runner fails on — there is nowhere for it to
+      // hide. Deleting the `catch` in `releaseLease` is what proves that, and
+      // the mutation catalogue does exactly that.
+      final executor = armThenCancel(async, throwOnRemove: true);
+      async.flushMicrotasks();
 
-    expect(
-      executor.commands.where((c) => c.contains('rm -f')),
-      isNotEmpty,
-      reason: 'it was attempted — so this test is not vacuously green',
-    );
+      expect(
+        executor.commands.where((c) => c.contains('rm -f')),
+        isNotEmpty,
+        reason: 'it was attempted — so this test is not vacuously green',
+      );
+    });
   });
 
   // MADR 0041 phase 3. The host refuses a second watcher by exit STATUS, and
@@ -303,9 +316,8 @@ void main() {
   // died — the latter spends three restarts before degrading, which is 0022 M6
   // in a different costume.
 
-  test(
-    'a locked repository degrades to polling, not to three restarts',
-    () async {
+  test('a locked repository degrades to polling, not to three restarts', () {
+    fakeAsync((async) {
       watchDiagnostics.clear();
       final executor = _RefusingExecutor(boundedWatchLockedExit);
       final service = RemoteWatchService(
@@ -316,9 +328,7 @@ void main() {
       );
       final events = <RepoWatchEvent>[];
       final sub = service.watch('/repo').listen(events.add);
-      await executor.armed.future;
-      await pumpEventQueue();
-      addTearDown(sub.cancel);
+      async.flushMicrotasks();
 
       final records = watchDiagnostics.forRepo('/repo').records;
       expect(
@@ -349,70 +359,75 @@ void main() {
         0,
         reason: 'a refused arm holds no slot',
       );
-    },
-  );
-
-  test('the bounded no-paths refusal is unchanged by the widened read', () async {
-    // Widening the early-exit read to every arm must not change what it already
-    // did for bounded ones (0022 M6).
-    watchDiagnostics.clear();
-    final executor = _RefusingExecutor(boundedWatchNoPathsExit);
-    final service = RemoteWatchService(
-      executor,
-      hostKey: () => 'host',
-      admission: WatchAdmission(budget: hostBudget),
-      gitDirOf: conventionalGitDir,
-    );
-    final sub = service
-        .watch(
-          '/repo',
-          bounded: () async => computeBoundedWatchSpec(
-            gitDir: '/repo/.git',
-            workTree: '/repo',
-            trackedFiles: const [],
-          ),
-        )
-        .listen((_) {});
-    await executor.armed.future;
-    await pastEarlyExitRead();
-    await pumpEventQueue();
-    addTearDown(sub.cancel);
-
-    expect(
-      watchDiagnostics
-          .forRepo('/repo')
-          .records
-          .where((r) => r.cause == 'no watched paths'),
-      isNotEmpty,
-    );
-    expect(hostBudget.liveFor('host'), 0);
+      sub.cancel();
+      async.flushMicrotasks();
+    });
   });
 
-  test('a recursive arm does not read 97 as a refusal', () async {
-    // 97 means "the bounded spec matched no paths", which a recursive arm
-    // cannot produce — so it must NOT be read as one there. The condition that
-    // keeps them apart is `spec != null`, and this is what fails if it goes.
-    watchDiagnostics.clear();
-    final executor = _RefusingExecutor(boundedWatchNoPathsExit);
-    final service = RemoteWatchService(
-      executor,
-      hostKey: () => 'host',
-      admission: WatchAdmission(budget: hostBudget),
-      gitDirOf: conventionalGitDir,
-    );
-    final sub = service.watch('/repo').listen((_) {});
-    await executor.armed.future;
-    await pastEarlyExitRead();
-    await pumpEventQueue();
-    addTearDown(sub.cancel);
+  test('the bounded no-paths refusal is unchanged by the widened read', () {
+    fakeAsync((async) {
+      // Widening the early-exit read to every arm must not change what it
+      // already did for bounded ones (0022 M6).
+      watchDiagnostics.clear();
+      final executor = _RefusingExecutor(boundedWatchNoPathsExit);
+      final service = RemoteWatchService(
+        executor,
+        hostKey: () => 'host',
+        admission: WatchAdmission(budget: hostBudget),
+        gitDirOf: conventionalGitDir,
+      );
+      final sub = service
+          .watch(
+            '/repo',
+            bounded: () async => computeBoundedWatchSpec(
+              gitDir: '/repo/.git',
+              workTree: '/repo',
+              trackedFiles: const [],
+            ),
+          )
+          .listen((_) {});
+      pastEarlyExitRead(async);
 
-    expect(
-      watchDiagnostics
-          .forRepo('/repo')
-          .records
-          .where((r) => r.cause == 'no watched paths'),
-      isEmpty,
-    );
+      expect(
+        watchDiagnostics
+            .forRepo('/repo')
+            .records
+            .where((r) => r.cause == 'no watched paths'),
+        isNotEmpty,
+      );
+      expect(hostBudget.liveFor('host'), 0);
+      sub.cancel();
+      async.flushMicrotasks();
+    });
+  });
+
+  test('a recursive arm does not read 97 as a refusal', () {
+    fakeAsync((async) {
+      // 97 means "the bounded spec matched no paths", which a recursive arm
+      // cannot produce — so it must NOT be read as one there. The condition
+      // that keeps them apart is `spec != null`, and this is what fails if it
+      // goes.
+      watchDiagnostics.clear();
+      final executor = _RefusingExecutor(boundedWatchNoPathsExit);
+      final service = RemoteWatchService(
+        executor,
+        hostKey: () => 'host',
+        admission: WatchAdmission(budget: hostBudget),
+        gitDirOf: conventionalGitDir,
+      );
+      final sub = service.watch('/repo').listen((_) {});
+      pastEarlyExitRead(async);
+
+      expect(
+        watchDiagnostics
+            .forRepo('/repo')
+            .records
+            .where((r) => r.cause == 'no watched paths'),
+        isEmpty,
+      );
+      sub.cancel();
+      async.flushMicrotasks();
+    });
   });
 
   // MADR 0043 F6. The arm stamps its lease BEFORE opening the stream, because
@@ -421,98 +436,108 @@ void main() {
   // give the lease back is unreachable — and every refused arm used to strand
   // one. Four were found on the reporting host.
 
-  test('a refused arm gives back the lease it stamped', () async {
-    watchDiagnostics.clear();
-    final executor = _RefusingExecutor(boundedWatchLockedExit);
-    final service = RemoteWatchService(
-      executor,
-      hostKey: () => 'host',
-      admission: WatchAdmission(budget: hostBudget),
-      gitDirOf: conventionalGitDir,
-    );
-    final sub = service.watch('/repo').listen((_) {});
-    await executor.armed.future;
-    await pastEarlyExitRead();
-    await pumpEventQueue();
-    addTearDown(sub.cancel);
-
-    expect(
-      executor.commands.where((c) => c.contains('rm -f') && c.contains('.hb')),
-      isNotEmpty,
-      reason:
-          'the refusal stamped a heartbeat and must not leave it behind for '
-          'the connect sweep to find five minutes later',
-    );
-  });
-
-  test('a refused arm does not disturb the incumbent\'s claim', () async {
-    // The release is token-guarded, and this arm never owned the lock. Issuing
-    // an unguarded removal here would delete the claim of the watcher that
-    // just refused it — turning a harmless refusal into a way to evict a live
-    // watcher.
-    watchDiagnostics.clear();
-    final executor = _RefusingExecutor(boundedWatchLockedExit);
-    final service = RemoteWatchService(
-      executor,
-      hostKey: () => 'host',
-      admission: WatchAdmission(budget: hostBudget),
-      gitDirOf: conventionalGitDir,
-    );
-    final sub = service.watch('/repo').listen((_) {});
-    await executor.armed.future;
-    await pastEarlyExitRead();
-    await pumpEventQueue();
-    addTearDown(sub.cancel);
-
-    final lockCommands = executor.commands.where(
-      (c) => c.contains('mg-watch.lock'),
-    );
-    for (final c in lockCommands) {
-      expect(
-        c,
-        contains('token'),
-        reason: 'every lock removal this app issues is guarded by ownership',
+  test('a refused arm gives back the lease it stamped', () {
+    fakeAsync((async) {
+      watchDiagnostics.clear();
+      final executor = _RefusingExecutor(boundedWatchLockedExit);
+      final service = RemoteWatchService(
+        executor,
+        hostKey: () => 'host',
+        admission: WatchAdmission(budget: hostBudget),
+        gitDirOf: conventionalGitDir,
       );
-    }
+      final sub = service.watch('/repo').listen((_) {});
+      pastEarlyExitRead(async);
+
+      expect(
+        executor.commands.where(
+          (c) => c.contains('rm -f') && c.contains('.hb'),
+        ),
+        isNotEmpty,
+        reason:
+            'the refusal stamped a heartbeat and must not leave it behind for '
+            'the connect sweep to find five minutes later',
+      );
+      sub.cancel();
+      async.flushMicrotasks();
+    });
   });
 
-  test('a stream-budget refusal gives back the lease it stamped', () async {
-    // MADR 0045 phase 2. The arm stamps its lease BEFORE asking the transport
-    // for a channel (0027 deviation (b)), so a transport that refuses the
-    // channel leaves a lease no watcher will ever read. This path returned
-    // without releasing it — the one refusal that stranded its lease after MADR
-    // 0043 F6 fixed the others.
-    watchDiagnostics.clear();
-    final executor = _BudgetSpentExecutor();
-    final service = RemoteWatchService(
-      executor,
-      hostKey: () => 'host',
-      admission: WatchAdmission(budget: hostBudget),
-      gitDirOf: conventionalGitDir,
-    );
-    final events = <RepoWatchEvent>[];
-    final sub = service.watch('/repo').listen(events.add);
-    addTearDown(sub.cancel);
-    await executor.refused.future;
-    await pastEarlyExitRead();
+  test('a refused arm does not disturb the incumbent\'s claim', () {
+    fakeAsync((async) {
+      // The release is token-guarded, and this arm never owned the lock.
+      // Issuing an unguarded removal here would delete the claim of the
+      // watcher that just refused it — turning a harmless refusal into a way
+      // to evict a live watcher.
+      watchDiagnostics.clear();
+      final executor = _RefusingExecutor(boundedWatchLockedExit);
+      final service = RemoteWatchService(
+        executor,
+        hostKey: () => 'host',
+        admission: WatchAdmission(budget: hostBudget),
+        gitDirOf: conventionalGitDir,
+      );
+      final sub = service.watch('/repo').listen((_) {});
+      pastEarlyExitRead(async);
 
-    final stamped = _leaseTouched(executor.commands);
-    expect(stamped, isNotNull, reason: 'the lease was stamped before the open');
-    final token = RegExp(r'mg-watch\.(\w+)\.hb').firstMatch(stamped!)![1];
-    expect(
-      executor.commands.where(
-        (c) => c.contains('rm -f') && c.contains('mg-watch.$token.hb'),
-      ),
-      isNotEmpty,
-      reason:
-          'a refused channel reaches no WatchArmed teardown, so this path has to '
-          'give the lease back itself or leave it for a sweep',
-    );
-    expect(
-      events.last.mode,
-      WatchMode.polling,
-      reason: 'a spent stream budget still degrades to polling',
-    );
-    expect(hostBudget.liveFor('host'), 0, reason: 'and holds no slot');
+      final lockCommands = executor.commands.where(
+        (c) => c.contains('mg-watch.lock'),
+      );
+      for (final c in lockCommands) {
+        expect(
+          c,
+          contains('token'),
+          reason: 'every lock removal this app issues is guarded by ownership',
+        );
+      }
+      sub.cancel();
+      async.flushMicrotasks();
+    });
+  });
+
+  test('a stream-budget refusal gives back the lease it stamped', () {
+    fakeAsync((async) {
+      // MADR 0045 phase 2. The arm stamps its lease BEFORE asking the
+      // transport for a channel (0027 deviation (b)), so a transport that
+      // refuses the channel leaves a lease no watcher will ever read. This path
+      // returned without releasing it — the one refusal that stranded its lease
+      // after MADR 0043 F6 fixed the others.
+      watchDiagnostics.clear();
+      final executor = _BudgetSpentExecutor();
+      final service = RemoteWatchService(
+        executor,
+        hostKey: () => 'host',
+        admission: WatchAdmission(budget: hostBudget),
+        gitDirOf: conventionalGitDir,
+      );
+      final events = <RepoWatchEvent>[];
+      final sub = service.watch('/repo').listen(events.add);
+      pastEarlyExitRead(async);
+
+      final stamped = _leaseTouched(executor.commands);
+      expect(
+        stamped,
+        isNotNull,
+        reason: 'the lease was stamped before the open',
+      );
+      final token = RegExp(r'mg-watch\.(\w+)\.hb').firstMatch(stamped!)![1];
+      expect(
+        executor.commands.where(
+          (c) => c.contains('rm -f') && c.contains('mg-watch.$token.hb'),
+        ),
+        isNotEmpty,
+        reason:
+            'a refused channel reaches no WatchArmed teardown, so this path has '
+            'to give the lease back itself or leave it for a sweep',
+      );
+      expect(
+        events.last.mode,
+        WatchMode.polling,
+        reason: 'a spent stream budget still degrades to polling',
+      );
+      expect(hostBudget.liveFor('host'), 0, reason: 'and holds no slot');
+      sub.cancel();
+      async.flushMicrotasks();
+    });
   });
 }

@@ -8,6 +8,7 @@
 
 import 'dart:async';
 
+import 'package:fake_async/fake_async.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:remote_magic_git/core/git/bounded_watch.dart';
@@ -23,8 +24,8 @@ import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 
 import 'helpers/conventional_git_dir.dart';
+import 'helpers/fake_arm_settle.dart';
 import 'helpers/fake_watcher_handle.dart';
-import 'helpers/watch_settle.dart';
 
 const _repo = '/repo';
 
@@ -107,6 +108,7 @@ class _ScriptedService extends RemoteWatchService {
     Duration minInterval = WatchTimings.defaultMinInterval,
     Duration pollInterval = WatchTimings.defaultPollInterval,
     Duration recoveryInterval = WatchTimings.defaultRecoveryInterval,
+    String sessionId = '',
   }) => events.stream;
 }
 
@@ -149,113 +151,120 @@ void main() {
       ],
     );
   });
-  tearDown(() async {
+  tearDown(() {
     container.dispose();
-    await settleArm();
     watchDiagnostics.clear();
   });
 
-  test("invalidating the facade keeps an unchanged target's watcher", () async {
-    final sub = container.listen(repoWatchProvider(_repo), (_, _) {});
-    await settleArm();
-    expect(exec.arms, hasLength(1));
+  test("invalidating the facade keeps an unchanged target's watcher", () {
+    fakeAsync((async) {
+      final sub = container.listen(repoWatchProvider(_repo), (_, _) {});
+      async.letArmsSettle();
+      expect(exec.arms, hasLength(1));
 
-    // What a reconnect does to every repository's facade.
-    container.invalidate(repoWatchProvider);
-    await container.pump();
-    await settleArm();
+      // What a reconnect does to every repository's facade. `pump` waits on
+      // the scheduler's zero-duration timer, which fake time runs by elapsing.
+      container.invalidate(repoWatchProvider);
+      async.elapse(Duration.zero);
+      async.letArmsSettle();
 
-    expect(
-      exec.arms,
-      hasLength(1),
-      reason:
-          'the rebuilt facade listens to the same target again before the '
-          "watcher's dispose runs, so nothing re-arms (MADR 0045 section 1)",
-    );
-    expect(exec.handles.single.cancelled, isFalse, reason: 'nor tears down');
-    expect(
-      watchDiagnostics.forRepo(_repo).records.map((r) => r.kind),
-      isNot(contains(WatchTransition.stopped)),
-      reason: 'and the engine recorded no stop',
-    );
-    sub.close();
+      expect(
+        exec.arms,
+        hasLength(1),
+        reason:
+            'the rebuilt facade listens to the same target again before the '
+            "watcher's dispose runs, so nothing re-arms (MADR 0045 section 1)",
+      );
+      expect(exec.handles.single.cancelled, isFalse, reason: 'nor tears down');
+      expect(
+        watchDiagnostics.forRepo(_repo).records.map((r) => r.kind),
+        isNot(contains(WatchTransition.stopped)),
+        reason: 'and the engine recorded no stop',
+      );
+      sub.close();
+    });
   });
 
-  test('a changed scoped git dir replaces the watcher', () async {
-    final sub = container.listen(repoWatchProvider(_repo), (_, _) {});
-    await settleArm();
-    expect(exec.arms.single, isNot(contains(_scopedGitDir)));
+  test('a changed scoped git dir replaces the watcher', () {
+    fakeAsync((async) {
+      final sub = container.listen(repoWatchProvider(_repo), (_, _) {});
+      async.letArmsSettle();
+      expect(exec.arms.single, isNot(contains(_scopedGitDir)));
 
-    (container.read(connectionProvider.notifier) as _Conn).scope(_scopedGitDir);
-    await container.pump();
-    await settleArm();
+      (container.read(connectionProvider.notifier) as _Conn).scope(
+        _scopedGitDir,
+      );
+      async.elapse(Duration.zero);
+      async.letArmsSettle();
 
-    expect(
-      exec.handles.first.cancelled,
-      isTrue,
-      reason:
-          'a different surface is a different watcher, and the old one goes',
-    );
-    expect(exec.arms, hasLength(2));
-    expect(
-      exec.arms.last,
-      contains(_scopedGitDir),
-      reason: 'the new watcher arms on the bounded surface',
-    );
-    sub.close();
+      expect(
+        exec.handles.first.cancelled,
+        isTrue,
+        reason:
+            'a different surface is a different watcher, and the old one goes',
+      );
+      expect(exec.arms, hasLength(2));
+      expect(
+        exec.arms.last,
+        contains(_scopedGitDir),
+        reason: 'the new watcher arms on the bounded surface',
+      );
+      sub.close();
+    });
   });
 
-  test("the facade's events are the watcher's events, filtered", () async {
-    final service = _ScriptedService();
-    final scripted = ProviderContainer(
-      retry: (_, _) => null,
-      overrides: [
-        connectionProvider.overrideWith(_Conn.new),
-        remoteWatchServiceProvider.overrideWithValue(service),
-        ignoreOracleProvider.overrideWithValue(_BuildIgnored()),
-      ],
-    );
-    addTearDown(() async {
-      scripted.dispose();
-      await service.events.close();
-    });
+  test("the facade's events are the watcher's events, filtered", () {
+    fakeAsync((async) {
+      final service = _ScriptedService();
+      final scripted = ProviderContainer(
+        retry: (_, _) => null,
+        overrides: [
+          connectionProvider.overrideWith(_Conn.new),
+          remoteWatchServiceProvider.overrideWithValue(service),
+          ignoreOracleProvider.overrideWithValue(_BuildIgnored()),
+        ],
+      );
 
-    final fromFacade = <RepoWatchEvent>[];
-    final fromWatcher = <RepoWatchEvent>[];
-    final facade = scripted.listen(repoWatchProvider(_repo), (_, next) {
-      final event = next.value;
-      if (event != null) fromFacade.add(event);
-    });
-    final watcher = scripted.listen(
-      watcherProvider(scripted.read(watchTargetProvider(_repo))),
-      (_, next) {
+      final fromFacade = <RepoWatchEvent>[];
+      final fromWatcher = <RepoWatchEvent>[];
+      final facade = scripted.listen(repoWatchProvider(_repo), (_, next) {
         final event = next.value;
-        if (event != null) fromWatcher.add(event);
-      },
-    );
+        if (event != null) fromFacade.add(event);
+      });
+      final watcher = scripted.listen(
+        watcherProvider(scripted.read(watchTargetProvider(_repo))),
+        (_, next) {
+          final event = next.value;
+          if (event != null) fromWatcher.add(event);
+        },
+      );
 
-    service.events.add(
-      RepoWatchEvent(
-        at: DateTime(2026, 9, 11),
-        mode: WatchMode.eventDriven,
-        paths: const {'lib/main.dart', 'build/app.o'},
-      ),
-    );
-    await pumpEventQueue();
+      service.events.add(
+        RepoWatchEvent(
+          at: DateTime(2026, 9, 11),
+          mode: WatchMode.eventDriven,
+          paths: const {'lib/main.dart', 'build/app.o'},
+        ),
+      );
+      async.flushMicrotasks();
 
-    expect(fromWatcher.single.paths, {'lib/main.dart', 'build/app.o'});
-    expect(
-      fromFacade.single.paths,
-      {'lib/main.dart'},
-      reason: 'the facade forwards what the watcher saw, less what git ignores',
-    );
-    facade.close();
-    watcher.close();
+      expect(fromWatcher.single.paths, {'lib/main.dart', 'build/app.o'});
+      expect(
+        fromFacade.single.paths,
+        {'lib/main.dart'},
+        reason:
+            'the facade forwards what the watcher saw, less what git ignores',
+      );
+      facade.close();
+      watcher.close();
+      scripted.dispose();
+      service.events.close();
+      async.flushMicrotasks();
+    });
   });
 
-  test(
-    'an override of repoWatchProvider still replaces the whole chain',
-    () async {
+  test('an override of repoWatchProvider still replaces the whole chain', () {
+    fakeAsync((async) {
       final tick = RepoWatchEvent(
         at: DateTime(2026, 9, 11),
         mode: WatchMode.polling,
@@ -272,14 +281,13 @@ void main() {
           repoWatchProvider.overrideWith((ref, repoPath) => Stream.value(tick)),
         ],
       );
-      addTearDown(overridden.dispose);
 
       final seen = <RepoWatchEvent>[];
       final sub = overridden.listen(repoWatchProvider(_repo), (_, next) {
         final event = next.value;
         if (event != null) seen.add(event);
       });
-      await settleArm();
+      async.letArmsSettle();
 
       expect(seen.single, same(tick));
       expect(
@@ -290,6 +298,7 @@ void main() {
             'leave no target, no engine and no watcher behind it',
       );
       sub.close();
-    },
-  );
+      overridden.dispose();
+    });
+  });
 }

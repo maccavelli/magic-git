@@ -2,6 +2,7 @@
 // files, so a live successor cannot hold a dead predecessor's lease open and
 // the registry does not overwrite itself.
 
+import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:remote_magic_git/core/git/remote_watch_service.dart';
 import 'package:remote_magic_git/core/git/watch/admission/host_watcher_budget.dart';
@@ -9,8 +10,8 @@ import 'package:remote_magic_git/core/git/watch/admission/watch_admission.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 import 'helpers/conventional_git_dir.dart';
+import 'helpers/fake_arm_settle.dart';
 import 'helpers/fake_watcher_handle.dart';
-import 'helpers/watch_settle.dart';
 
 /// Records the watcher scripts it is asked to run, so a test can read the
 /// lease-file paths the arm actually baked into them.
@@ -73,41 +74,40 @@ void main() {
   late HostWatcherBudget hostBudget;
 
   setUp(() => hostBudget = HostWatcherBudget());
-  tearDown(() async {
-    // In-flight arms take real time to decide (see [settleArm]); let them
-    // finish before the next test starts.
-    await settleArm();
-  });
 
-  test('two watcher instances own distinct lease files', () async {
-    final exec = _Recording();
-    final service = RemoteWatchService(
-      exec,
-      admission: WatchAdmission(budget: hostBudget),
-      gitDirOf: conventionalGitDir,
-    );
+  test('two watcher instances own distinct lease files', () {
+    fakeAsync((async) {
+      final exec = _Recording();
+      final service = RemoteWatchService(
+        exec,
+        admission: WatchAdmission(budget: hostBudget),
+        gitDirOf: conventionalGitDir,
+      );
 
-    // Two instances for the SAME repo — the production case, where one is a
-    // re-arm of the other and the older may outlive it as an orphan.
-    final a = service.watch('/repo').listen((_) {});
-    await settleArm();
-    final afterFirst = leasePaths(exec.scripts);
-    await a.cancel();
+      // Two instances for the SAME repo — the production case, where one is a
+      // re-arm of the other and the older may outlive it as an orphan.
+      final a = service.watch('/repo').listen((_) {});
+      async.letArmsSettle();
+      final afterFirst = leasePaths(exec.scripts);
+      a.cancel();
+      async.flushMicrotasks();
 
-    final b = service.watch('/repo').listen((_) {});
-    await settleArm();
-    final all = leasePaths(exec.scripts);
-    await b.cancel();
+      final b = service.watch('/repo').listen((_) {});
+      async.letArmsSettle();
+      final all = leasePaths(exec.scripts);
+      b.cancel();
+      async.flushMicrotasks();
 
-    expect(afterFirst, isNotEmpty, reason: 'the first arm names lease files');
-    expect(
-      all.length,
-      greaterThan(afterFirst.length),
-      reason:
-          'the second instance must not reuse the first instance files; '
-          'sharing them is what lets a live successor hold a dead '
-          "predecessor's lease open (0027 defect 3)",
-    );
+      expect(afterFirst, isNotEmpty, reason: 'the first arm names lease files');
+      expect(
+        all.length,
+        greaterThan(afterFirst.length),
+        reason:
+            'the second instance must not reuse the first instance files; '
+            'sharing them is what lets a live successor hold a dead '
+            "predecessor's lease open (0027 defect 3)",
+      );
+    });
   });
 
   test('a pid file and its heartbeat share one instance token', () {
@@ -127,48 +127,51 @@ void main() {
     expect(tokens, hasLength(50));
   });
 
-  test('the lease exists before the watcher is armed', () async {
-    // 0027 deviation (b). The lease loop's FIRST action is
-    // `[ -f $hb ] || exit 0`. If the client stamps the heartbeat after
-    // launching the script, the script loses the race and exits in ~5 ms —
-    // every arm, because the tokenised filename can never pre-exist. The repo
-    // then burns its restart budget and polls forever at 48 host processes a
-    // minute.
-    //
-    // Neither half of this is wrong on its own, which is why testing the
-    // halves missed it. This asserts the SEAM: the order of the two host
-    // operations, and that they name the same instance.
-    final exec = _Recording();
-    final service = RemoteWatchService(
-      exec,
-      admission: WatchAdmission(budget: hostBudget),
-      gitDirOf: conventionalGitDir,
-    );
-    final sub = service.watch('/repo').listen((_) {});
-    await settleArm();
-    await sub.cancel();
+  test('the lease exists before the watcher is armed', () {
+    fakeAsync((async) {
+      // 0027 deviation (b). The lease loop's FIRST action is
+      // `[ -f $hb ] || exit 0`. If the client stamps the heartbeat after
+      // launching the script, the script loses the race and exits in ~5 ms —
+      // every arm, because the tokenised filename can never pre-exist. The
+      // repo then burns its restart budget and polls forever at 48 host
+      // processes a minute.
+      //
+      // Neither half of this is wrong on its own, which is why testing the
+      // halves missed it. This asserts the SEAM: the order of the two host
+      // operations, and that they name the same instance.
+      final exec = _Recording();
+      final service = RemoteWatchService(
+        exec,
+        admission: WatchAdmission(budget: hostBudget),
+        gitDirOf: conventionalGitDir,
+      );
+      final sub = service.watch('/repo').listen((_) {});
+      async.letArmsSettle();
+      sub.cancel();
+      async.flushMicrotasks();
 
-    final beat = exec.events.indexWhere((e) => e.startsWith('beat:'));
-    final arm = exec.events.indexWhere((e) => e.startsWith('arm:'));
-    expect(beat, isNot(-1), reason: 'the client must stamp a lease at all');
-    expect(arm, isNot(-1), reason: 'and it must arm a watcher');
-    expect(
-      beat,
-      lessThan(arm),
-      reason:
-          'the lease must exist BEFORE the script checks for it; '
-          'events were: ${exec.events.map((e) => e.split(':').first).toList()}',
-    );
+      final beat = exec.events.indexWhere((e) => e.startsWith('beat:'));
+      final arm = exec.events.indexWhere((e) => e.startsWith('arm:'));
+      expect(beat, isNot(-1), reason: 'the client must stamp a lease at all');
+      expect(arm, isNot(-1), reason: 'and it must arm a watcher');
+      expect(
+        beat,
+        lessThan(arm),
+        reason:
+            'the lease must exist BEFORE the script checks for it; '
+            'events were: ${exec.events.map((e) => e.split(':').first).toList()}',
+      );
 
-    // And it must be THIS instance's lease, not some other arm's.
-    final token = RegExp(
-      r'mg-watch\.(\w+)\.hb',
-    ).firstMatch(exec.events[beat])?[1];
-    expect(token, isNotNull, reason: 'the beat names a tokenised lease file');
-    expect(
-      exec.events[arm],
-      contains(token!),
-      reason: 'the armed script must check the lease the client just stamped',
-    );
+      // And it must be THIS instance's lease, not some other arm's.
+      final token = RegExp(
+        r'mg-watch\.(\w+)\.hb',
+      ).firstMatch(exec.events[beat])?[1];
+      expect(token, isNotNull, reason: 'the beat names a tokenised lease file');
+      expect(
+        exec.events[arm],
+        contains(token!),
+        reason: 'the armed script must check the lease the client just stamped',
+      );
+    });
   });
 }

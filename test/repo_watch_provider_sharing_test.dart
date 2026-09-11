@@ -6,6 +6,7 @@
 // a statement about watchers. `repoWatchProvider` is the only production caller
 // of the watch services, so what a listener sees here is what the app sees.
 
+import 'package:fake_async/fake_async.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:remote_magic_git/core/git/remote_watch_service.dart';
@@ -18,8 +19,8 @@ import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 
 import 'helpers/conventional_git_dir.dart';
+import 'helpers/fake_arm_settle.dart';
 import 'helpers/fake_watcher_handle.dart';
-import 'helpers/watch_settle.dart';
 
 const _repo = '/repo';
 
@@ -91,9 +92,8 @@ void main() {
       ],
     );
   });
-  tearDown(() async {
+  tearDown(() {
     container.dispose();
-    await settleArm();
     watchDiagnostics.clear();
   });
 
@@ -109,110 +109,120 @@ void main() {
     if (mode != null) into.add(mode);
   }, fireImmediately: fireImmediately);
 
-  test('two listeners on one repository arm one watcher', () async {
-    final a = listen([]);
-    final b = listen([]);
-    await settleArm();
+  test('two listeners on one repository arm one watcher', () {
+    fakeAsync((async) {
+      final a = listen([]);
+      final b = listen([]);
+      async.letArmsSettle();
 
-    expect(
-      exec.handles,
-      hasLength(1),
-      reason:
-          'one provider instance per repository per container, so one watcher '
-          '— the guarantee `_SharedWatch` used to rebuild by hand',
-    );
-    expect(budget.liveFor('host'), 1);
+      expect(
+        exec.handles,
+        hasLength(1),
+        reason:
+            'one provider instance per repository per container, so one watcher '
+            '— the guarantee `_SharedWatch` used to rebuild by hand',
+      );
+      expect(budget.liveFor('host'), 1);
 
-    a.close();
-    b.close();
+      a.close();
+      b.close();
+    });
   });
 
-  test('both listeners receive the same events', () async {
-    final seenA = <WatchMode>[];
-    final seenB = <WatchMode>[];
-    final a = listen(seenA);
-    final b = listen(seenB);
-    await settleArm();
+  test('both listeners receive the same events', () {
+    fakeAsync((async) {
+      final seenA = <WatchMode>[];
+      final seenB = <WatchMode>[];
+      final a = listen(seenA);
+      final b = listen(seenB);
+      async.letArmsSettle();
 
-    expect(seenA, isNotEmpty, reason: 'the first listener sees the arm');
-    expect(
-      seenB,
-      equals(seenA),
-      reason: 'sharing a watcher means sharing its events, not just its cost',
-    );
+      expect(seenA, isNotEmpty, reason: 'the first listener sees the arm');
+      expect(
+        seenB,
+        equals(seenA),
+        reason: 'sharing a watcher means sharing its events, not just its cost',
+      );
 
-    a.close();
-    b.close();
+      a.close();
+      b.close();
+    });
   });
 
-  test('a late listener gets the current mode immediately', () async {
-    final a = listen([]);
-    await settleArm();
+  test('a late listener gets the current mode immediately', () {
+    fakeAsync((async) {
+      final a = listen([]);
+      async.letArmsSettle();
 
-    // Attaching to an already-armed, quiet repository. Without the provider's
-    // current value this listener would have no mode until something happened
-    // on the host — which on a quiet repository can be a long time.
-    final late = <WatchMode>[];
-    final b = listen(late, fireImmediately: true);
+      // Attaching to an already-armed, quiet repository. Without the provider's
+      // current value this listener would have no mode until something happened
+      // on the host — which on a quiet repository can be a long time.
+      final late = <WatchMode>[];
+      final b = listen(late, fireImmediately: true);
 
-    expect(late, [
-      WatchMode.eventDriven,
-    ], reason: 'the current value is delivered on attach, without waiting');
-    expect(exec.handles, hasLength(1), reason: 'and still only one watcher');
+      expect(late, [
+        WatchMode.eventDriven,
+      ], reason: 'the current value is delivered on attach, without waiting');
+      expect(exec.handles, hasLength(1), reason: 'and still only one watcher');
 
-    a.close();
-    b.close();
+      a.close();
+      b.close();
+    });
   });
 
-  test('one listener leaving keeps the watcher', () async {
-    final a = listen([]);
-    final b = listen([]);
-    await settleArm();
+  test('one listener leaving keeps the watcher', () {
+    fakeAsync((async) {
+      final a = listen([]);
+      final b = listen([]);
+      async.letArmsSettle();
 
-    a.close();
-    await settleArm();
+      a.close();
+      async.letArmsSettle();
 
-    expect(
-      exec.handles.single.cancelled,
-      isFalse,
-      reason:
-          'tearing down while another listener is still watching would take '
-          'the watcher away from someone who never asked for that',
-    );
-    expect(budget.liveFor('host'), 1);
+      expect(
+        exec.handles.single.cancelled,
+        isFalse,
+        reason:
+            'tearing down while another listener is still watching would take '
+            'the watcher away from someone who never asked for that',
+      );
+      expect(budget.liveFor('host'), 1);
 
-    b.close();
+      b.close();
+    });
   });
 
-  test('the last listener leaving tears the watcher down', () async {
-    final a = listen([]);
-    final b = listen([]);
-    await settleArm();
+  test('the last listener leaving tears the watcher down', () {
+    fakeAsync((async) {
+      final a = listen([]);
+      final b = listen([]);
+      async.letArmsSettle();
 
-    a.close();
-    b.close();
-    await settleArm();
+      a.close();
+      b.close();
+      async.letArmsSettle();
 
-    expect(
-      exec.handles.single.cancelled,
-      isTrue,
-      reason: 'nobody is listening, so the host must not keep a watcher',
-    );
-    expect(budget.liveFor('host'), 0, reason: 'and the slot goes back');
+      expect(
+        exec.handles.single.cancelled,
+        isTrue,
+        reason: 'nobody is listening, so the host must not keep a watcher',
+      );
+      expect(budget.liveFor('host'), 0, reason: 'and the slot goes back');
+    });
   });
 
-  test(
-    'a returning listener on a quiet repository gets a watcher at once',
-    () async {
+  test('a returning listener on a quiet repository gets a watcher at once', () {
+    fakeAsync((async) {
       // MADR 0045 amendment 0045.1. The ignored-path filter used to be an
       // `async*` generator, which observes a cancel only at its next yield: a
       // quiet repository's watcher outlived its last listener, and a view coming
       // back waited on that watcher's lock instead of getting one of its own.
       final first = listen([]);
-      await settleArm();
+      async.letArmsSettle();
       first.close();
-      await container.pump();
-      await settleArm();
+      // `container.pump()`: the scheduler disposes on a zero-duration timer.
+      async.elapse(Duration.zero);
+      async.letArmsSettle();
 
       expect(
         exec.handles.single.cancelled,
@@ -222,7 +232,7 @@ void main() {
 
       final back = <WatchMode>[];
       final returned = listen(back, fireImmediately: true);
-      await settleArm();
+      async.letArmsSettle();
 
       expect(
         back,
@@ -234,6 +244,6 @@ void main() {
       expect(exec.handles.last.cancelled, isFalse);
 
       returned.close();
-    },
-  );
+    });
+  });
 }

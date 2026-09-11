@@ -103,8 +103,8 @@
   {
     "label": "p2: the lifecycle ignores the bounded parameter",
     "file": "lib/core/git/remote_watch_service.dart",
-    "find": "    return _createLifecycle(\n      repoPath,\n      bounded: bounded,",
-    "replace": "    return _createLifecycle(\n      repoPath,\n      bounded: null,",
+    "find": "    return _createLifecycle(\n      repoPath,\n      sessionId: sessionId,\n      bounded: bounded,",
+    "replace": "    return _createLifecycle(\n      repoPath,\n      sessionId: sessionId,\n      bounded: null,",
     "tests": [
       "test/watch_shared_path_test.dart"
     ]
@@ -247,6 +247,36 @@
     "replace": "      identical(watching, watching);\n",
     "tests": [
       "test/repo_watch_facade_test.dart"
+    ]
+  },
+  {
+    "label": "p6: records lose the watcher id",
+    "file": "lib/core/git/remote_watch_service.dart",
+    "find": "          restarts: restarts,\n          watcher: watcher,\n",
+    "replace": "          restarts: restarts,\n",
+    "tests": [
+      "test/watch_diagnostics_test.dart",
+      "test/watch_transition_wiring_test.dart"
+    ]
+  },
+  {
+    "label": "p6: the summary drops the watcher id",
+    "file": "lib/core/git/watch_diagnostics.dart",
+    "find": "        '$tail$watcher';\n",
+    "replace": "        '$tail';\n",
+    "tests": [
+      "test/watch_diagnostics_test.dart"
+    ]
+  },
+  {
+    "label": "p6: the channel close is not awaited",
+    "file": "lib/core/git/watch/source/remote/watcher_process.dart",
+    "find": "    unawaited(_stderr.cancel());\n    await _handle.cancel();\n",
+    "replace": "    unawaited(_stderr.cancel());\n    unawaited(_handle.cancel());\n",
+    "tests": [
+      "test/watch_shared_path_test.dart",
+      "test/watch_lease_release_test.dart",
+      "test/watcher_process_test.dart"
     ]
   }
 ]

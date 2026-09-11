@@ -129,7 +129,10 @@ final class WatcherProcess {
     }, onError: (Object _) {});
 
     Future<void> discard() async {
-      await errSub.cancel();
+      // The listener's cancel is not awaited: it stops delivery at the call,
+      // and its future waits on nothing — the channel is what `handle.cancel`
+      // releases.
+      unawaited(errSub.cancel());
       await handle.cancel();
     }
 
@@ -212,11 +215,16 @@ final class WatcherProcess {
     return WatcherOpened(WatcherProcess._(stdoutSub, errSub, handle));
   }
 
-  /// Cancels the output listeners, then the channel — stdout first, mirroring
-  /// the engine's source-before-coalescer ordering.
+  /// Cancels the output listeners, then the channel — stdout first — and
+  /// completes once the channel has closed.
+  ///
+  /// Only the channel's close is awaited. A listener's cancel stops delivery
+  /// at the call, and on the SSH session's streams its future waits on nothing
+  /// (no `onCancel`); awaiting it only made a teardown under `fakeAsync` stall
+  /// before it reached the channel (MADR 0045 plan, deviation (s)).
   Future<void> close() async {
-    await _stdout.cancel();
-    await _stderr.cancel();
+    unawaited(_stdout.cancel());
+    unawaited(_stderr.cancel());
     await _handle.cancel();
   }
 }

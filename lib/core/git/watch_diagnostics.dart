@@ -13,6 +13,8 @@
 /// issues a command, spawns a process, or touches the host.
 library;
 
+import 'watch/watcher_id.dart';
+
 /// A mode change the watcher engine performed.
 enum WatchTransition {
   /// A watch source armed successfully and is delivering events.
@@ -57,6 +59,7 @@ class WatchTransitionRecord {
     required this.cause,
     required this.liveWatchers,
     required this.restarts,
+    this.watcher,
   });
 
   final DateTime at;
@@ -75,19 +78,31 @@ class WatchTransitionRecord {
   /// The engine's spent restart budget at this instant.
   final int restarts;
 
+  /// Which watcher this came from — its session, attempt and, for a remote arm,
+  /// host token — so two records are known to be adjacent only when they are
+  /// (MADR 0045 F9).
+  final WatcherId? watcher;
+
   @override
   String toString() =>
       '${at.toIso8601String()} ${kind.name} $repoPath '
-      'cause=$cause live=$liveWatchers restarts=$restarts';
+      'cause=$cause live=$liveWatchers restarts=$restarts'
+      '${watcher == null ? '' : ' watcher=$watcher'}';
 }
 
 /// How the engine reports a transition to whoever is recording it.
 ///
 /// The engine is transport-agnostic: it knows the transition, why it happened,
-/// and its own restart budget, but not the repository path or how many watcher
-/// processes the transport is holding. The service supplies those.
+/// its own restart budget and which arm attempt it is on, but not the
+/// repository path, the session or how many watcher processes the transport is
+/// holding. The service supplies those.
 typedef WatchTransitionSink =
-    void Function(WatchTransition kind, String cause, int restarts);
+    void Function(
+      WatchTransition kind,
+      String cause,
+      int restarts,
+      int attempt,
+    );
 
 /// The transition history for one repository.
 class WatchTransitionLog {
@@ -134,8 +149,10 @@ class WatchTransitionLog {
         .map((r) => '${r.kind.name}(${r.cause})')
         .join(' -> ');
     final tail = runUp.isEmpty ? '' : '  after: $runUp';
+    final watcher = d.watcher == null ? '' : ' watcher ${d.watcher}';
     return 'polling ${d.repoPath} — ${d.cause}; '
-        'watchers held ${d.liveWatchers}, restarts spent ${d.restarts}$tail';
+        'watchers held ${d.liveWatchers}, restarts spent ${d.restarts}'
+        '$tail$watcher';
   }
 }
 

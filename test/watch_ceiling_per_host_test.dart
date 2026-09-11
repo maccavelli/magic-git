@@ -10,6 +10,7 @@
 // consumed nothing, degrading to polling at 48 host processes per minute
 // (MADR 0026).
 
+import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:remote_magic_git/core/git/remote_watch_service.dart';
 import 'package:remote_magic_git/core/git/watch/admission/host_watcher_budget.dart';
@@ -19,8 +20,8 @@ import 'package:remote_magic_git/core/git/watch_event.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 import 'helpers/conventional_git_dir.dart';
+import 'helpers/fake_arm_settle.dart';
 import 'helpers/fake_watcher_handle.dart';
-import 'helpers/watch_settle.dart';
 
 /// Reports a watcher tool and arms successfully, so every arm holds a slot.
 class _ArmsAlways extends SSHCommandExecutor {
@@ -85,114 +86,115 @@ int _ceilingRefusals(String repoPath) => watchDiagnostics
 void main() {
   late HostWatcherBudget hostBudget;
 
+  // No test leaves an arm deciding for the next one: each runs its arms in its
+  // own fake time and cancels them inside it. Each test also counts against its
+  // own budget (MADR 0045 phase 2), so even a late release could no longer skew
+  // the next test's count as it did when the counter was process-wide.
   setUp(() {
     hostBudget = HostWatcherBudget();
     watchDiagnostics.clear();
   });
-  // Wait for in-flight arms before the next test starts: an arm takes real time
-  // to decide (see [settleArm]), so a test can end with one still running. Each
-  // test counts against its own budget (MADR 0045 phase 2), so a late release
-  // can no longer skew the next test's count as it did when the counter was
-  // process-wide.
-  tearDown(() async {
-    await settleArm();
+
+  test('one host filling its budget does not starve another host', () {
+    fakeAsync((async) {
+      final alpha = _serviceOn('alpha', hostBudget);
+      final beta = _serviceOn('beta', hostBudget);
+
+      // Tab 1 (host alpha) takes both of alpha's slots.
+      final a1 = alpha.watch('/one').listen((_) {});
+      final a2 = alpha.watch('/two').listen((_) {});
+      async.letArmsSettle();
+
+      expect(hostBudget.liveFor('alpha'), 2);
+      expect(hostBudget.liveFor('beta'), 0);
+
+      // A third repo on alpha is correctly refused — the budget protects the
+      // host from accumulating processes, and that has not changed.
+      final refused = <RepoWatchEvent>[];
+      final a3 = alpha.watch('/three').listen(refused.add);
+      async.letArmsSettle();
+      expect(refused.last.mode, WatchMode.polling);
+
+      // Tab 2 is on a different host and has spent nothing. It must get a live
+      // watcher. With a process-global counter it did not — this is F4.
+      final onBeta = <RepoWatchEvent>[];
+      final b1 = beta.watch('/one').listen(onBeta.add);
+      async.letArmsSettle();
+
+      expect(
+        onBeta.last.mode,
+        WatchMode.eventDriven,
+        reason: 'host beta has its own budget and has consumed none of it',
+      );
+      expect(hostBudget.liveFor('beta'), 1);
+      expect(hostBudget.liveTotal, 3, reason: 'alpha 2 + beta 1');
+
+      a1.cancel();
+      a2.cancel();
+      a3.cancel();
+      b1.cancel();
+      async.flushMicrotasks();
+    });
   });
 
-  test('one host filling its budget does not starve another host', () async {
-    final alpha = _serviceOn('alpha', hostBudget);
-    final beta = _serviceOn('beta', hostBudget);
+  test('a freed slot wakes a repo waiting on that host, not another', () {
+    fakeAsync((async) {
+      final alpha = _serviceOn('alpha', hostBudget);
+      final beta = _serviceOn('beta', hostBudget);
 
-    // Tab 1 (host alpha) takes both of alpha's slots.
-    final a1 = alpha.watch('/one').listen((_) {});
-    final a2 = alpha.watch('/two').listen((_) {});
-    await settleArm();
+      final a1 = alpha.watch('/one').listen((_) {});
+      final a2 = alpha.watch('/two').listen((_) {});
+      final b1 = beta.watch('/one').listen((_) {});
+      final b2 = beta.watch('/two').listen((_) {});
+      async.letArmsSettle();
+      expect(hostBudget.liveFor('alpha'), 2);
+      expect(hostBudget.liveFor('beta'), 2);
 
-    expect(hostBudget.liveFor('alpha'), 2);
-    expect(hostBudget.liveFor('beta'), 0);
+      // Both hosts now have a repo stuck on polling.
+      final alphaWaiting = <RepoWatchEvent>[];
+      final betaWaiting = <RepoWatchEvent>[];
+      final a3 = alpha.watch('/three').listen(alphaWaiting.add);
+      final b3 = beta.watch('/three').listen(betaWaiting.add);
+      async.letArmsSettle();
+      expect(alphaWaiting.last.mode, WatchMode.polling);
+      expect(betaWaiting.last.mode, WatchMode.polling);
 
-    // A third repo on alpha is correctly refused — the budget protects the host
-    // from accumulating processes, and that has not changed.
-    final refused = <RepoWatchEvent>[];
-    final a3 = alpha.watch('/three').listen(refused.add);
-    await settleArm();
-    expect(refused.last.mode, WatchMode.polling);
+      // Free one slot on beta only.
+      b1.cancel();
+      async.letArmsSettle();
 
-    // Tab 2 is on a different host and has spent nothing. It must get a live
-    // watcher. With a process-global counter it did not — this is F4.
-    final onBeta = <RepoWatchEvent>[];
-    final b1 = beta.watch('/one').listen(onBeta.add);
-    await settleArm();
+      expect(
+        betaWaiting.last.mode,
+        WatchMode.eventDriven,
+        reason: 'the waiting repo on beta takes the slot beta just freed',
+      );
+      expect(
+        alphaWaiting.last.mode,
+        WatchMode.polling,
+        reason:
+            'alpha is still full — a release elsewhere must not wake it into '
+            'an arm attempt that can only be refused',
+      );
 
-    expect(
-      onBeta.last.mode,
-      WatchMode.eventDriven,
-      reason: 'host beta has its own budget and has consumed none of it',
-    );
-    expect(hostBudget.liveFor('beta'), 1);
-    expect(hostBudget.liveTotal, 3, reason: 'alpha 2 + beta 1');
-
-    await a1.cancel();
-    await a2.cancel();
-    await a3.cancel();
-    await b1.cancel();
+      a1.cancel();
+      a2.cancel();
+      a3.cancel();
+      b2.cancel();
+      b3.cancel();
+      async.flushMicrotasks();
+    });
   });
 
-  test('a freed slot wakes a repo waiting on that host, not another', () async {
-    final alpha = _serviceOn('alpha', hostBudget);
-    final beta = _serviceOn('beta', hostBudget);
-
-    final a1 = alpha.watch('/one').listen((_) {});
-    final a2 = alpha.watch('/two').listen((_) {});
-    final b1 = beta.watch('/one').listen((_) {});
-    final b2 = beta.watch('/two').listen((_) {});
-    await settleArm();
-    expect(hostBudget.liveFor('alpha'), 2);
-    expect(hostBudget.liveFor('beta'), 2);
-
-    // Both hosts now have a repo stuck on polling.
-    final alphaWaiting = <RepoWatchEvent>[];
-    final betaWaiting = <RepoWatchEvent>[];
-    final a3 = alpha.watch('/three').listen(alphaWaiting.add);
-    final b3 = beta.watch('/three').listen(betaWaiting.add);
-    await settleArm();
-    expect(alphaWaiting.last.mode, WatchMode.polling);
-    expect(betaWaiting.last.mode, WatchMode.polling);
-
-    // Free one slot on beta only.
-    await b1.cancel();
-    await settleArm();
-
-    expect(
-      betaWaiting.last.mode,
-      WatchMode.eventDriven,
-      reason: 'the waiting repo on beta takes the slot beta just freed',
-    );
-    expect(
-      alphaWaiting.last.mode,
-      WatchMode.polling,
-      reason:
-          'alpha is still full — a release elsewhere must not wake it into '
-          'an arm attempt that can only be refused',
-    );
-
-    await a1.cancel();
-    await a2.cancel();
-    await a3.cancel();
-    await b2.cancel();
-    await b3.cancel();
-  });
-
-  test(
-    'releasing credits the host that reserved, and the map empties',
-    () async {
+  test('releasing credits the host that reserved, and the map empties', () {
+    fakeAsync((async) {
       final alpha = _serviceOn('alpha', hostBudget);
 
       final a1 = alpha.watch('/one').listen((_) {});
-      await settleArm();
+      async.letArmsSettle();
       expect(hostBudget.liveFor('alpha'), 1);
 
-      await a1.cancel();
-      await settleArm();
+      a1.cancel();
+      async.letArmsSettle();
 
       expect(hostBudget.liveFor('alpha'), 0);
       expect(
@@ -202,88 +204,93 @@ void main() {
             'a released slot must not linger as a zero entry that reads as '
             'a leaked watcher in diagnostics',
       );
-    },
-  );
-
-  test('a release elsewhere does not make a waiting repo re-probe', () async {
-    // The mode is the same either way — a woken repo on a full host simply gets
-    // refused again — so asserting the mode cannot see this. What differs is
-    // the wasted work: an unfiltered release wakes every waiting repo on every
-    // host, and each one runs an arm attempt that can only be refused. The
-    // refusals are recorded, so they are what this counts. (Host commands are
-    // NOT: the tool probe is cached for the stream's life, so a wake spends no
-    // command and counting those would have proved nothing.)
-    final alpha = _serviceOn('alpha', hostBudget);
-    final beta = _serviceOn('beta', hostBudget);
-
-    final a1 = alpha.watch('/one').listen((_) {});
-    final a2 = alpha.watch('/two').listen((_) {});
-    final b1 = beta.watch('/one').listen((_) {});
-    final b2 = beta.watch('/two').listen((_) {});
-    await settleArm();
-
-    final alphaWaiting = <RepoWatchEvent>[];
-    final a3 = alpha.watch('/three').listen(alphaWaiting.add);
-    final b3 = beta.watch('/three').listen((_) {});
-    await settleArm();
-    expect(alphaWaiting.last.mode, WatchMode.polling);
-
-    final refusalsBefore = _ceilingRefusals('/three');
-    expect(refusalsBefore, greaterThan(0));
-
-    // Free a slot on beta. Alpha is untouched and still full.
-    await b1.cancel();
-    await settleArm();
-
-    expect(
-      _ceilingRefusals('/three'),
-      refusalsBefore,
-      reason:
-          'a slot freed on another host must not wake this repo into an '
-          'arm attempt it can only lose',
-    );
-    expect(alphaWaiting.last.mode, WatchMode.polling);
-
-    await a1.cancel();
-    await a2.cancel();
-    await a3.cancel();
-    await b2.cancel();
-    await b3.cancel();
+    });
   });
 
-  test('a slot is credited back to the host that reserved it', () async {
-    // The connection can move under a long-lived service — a reconnect to a
-    // different host, a backend switch. Releasing against whatever `hostKey()`
-    // says NOW would refund a host that never paid, and leave the reserving
-    // host's budget permanently short by one.
-    var host = 'alpha';
-    final exec = _ArmsAlways();
-    final service = RemoteWatchService(
-      exec,
-      hostKey: () => host,
-      streamBudget: () => 4,
-      admission: WatchAdmission(budget: hostBudget),
-      gitDirOf: conventionalGitDir,
-    );
+  test('a release elsewhere does not make a waiting repo re-probe', () {
+    fakeAsync((async) {
+      // The mode is the same either way — a woken repo on a full host simply
+      // gets refused again — so asserting the mode cannot see this. What
+      // differs is the wasted work: an unfiltered release wakes every waiting
+      // repo on every host, and each one runs an arm attempt that can only be
+      // refused. The refusals are recorded, so they are what this counts. (Host
+      // commands are NOT: the tool probe is cached for the stream's life, so a
+      // wake spends no command and counting those would have proved nothing.)
+      final alpha = _serviceOn('alpha', hostBudget);
+      final beta = _serviceOn('beta', hostBudget);
 
-    final sub = service.watch('/one').listen((_) {});
-    await settleArm();
-    expect(hostBudget.liveFor('alpha'), 1);
+      final a1 = alpha.watch('/one').listen((_) {});
+      final a2 = alpha.watch('/two').listen((_) {});
+      final b1 = beta.watch('/one').listen((_) {});
+      final b2 = beta.watch('/two').listen((_) {});
+      async.letArmsSettle();
 
-    host = 'beta'; // the session moved while the watcher was live
+      final alphaWaiting = <RepoWatchEvent>[];
+      final a3 = alpha.watch('/three').listen(alphaWaiting.add);
+      final b3 = beta.watch('/three').listen((_) {});
+      async.letArmsSettle();
+      expect(alphaWaiting.last.mode, WatchMode.polling);
 
-    await sub.cancel();
-    await settleArm();
+      final refusalsBefore = _ceilingRefusals('/three');
+      expect(refusalsBefore, greaterThan(0));
 
-    expect(
-      hostBudget.liveFor('alpha'),
-      0,
-      reason: 'the slot must come back to alpha, which reserved it',
-    );
-    expect(
-      hostBudget.liveFor('beta'),
-      0,
-      reason: 'beta never reserved anything and must not be credited',
-    );
+      // Free a slot on beta. Alpha is untouched and still full.
+      b1.cancel();
+      async.letArmsSettle();
+
+      expect(
+        _ceilingRefusals('/three'),
+        refusalsBefore,
+        reason:
+            'a slot freed on another host must not wake this repo into an '
+            'arm attempt it can only lose',
+      );
+      expect(alphaWaiting.last.mode, WatchMode.polling);
+
+      a1.cancel();
+      a2.cancel();
+      a3.cancel();
+      b2.cancel();
+      b3.cancel();
+      async.flushMicrotasks();
+    });
+  });
+
+  test('a slot is credited back to the host that reserved it', () {
+    fakeAsync((async) {
+      // The connection can move under a long-lived service — a reconnect to a
+      // different host, a backend switch. Releasing against whatever
+      // `hostKey()` says NOW would refund a host that never paid, and leave the
+      // reserving host's budget permanently short by one.
+      var host = 'alpha';
+      final exec = _ArmsAlways();
+      final service = RemoteWatchService(
+        exec,
+        hostKey: () => host,
+        streamBudget: () => 4,
+        admission: WatchAdmission(budget: hostBudget),
+        gitDirOf: conventionalGitDir,
+      );
+
+      final sub = service.watch('/one').listen((_) {});
+      async.letArmsSettle();
+      expect(hostBudget.liveFor('alpha'), 1);
+
+      host = 'beta'; // the session moved while the watcher was live
+
+      sub.cancel();
+      async.letArmsSettle();
+
+      expect(
+        hostBudget.liveFor('alpha'),
+        0,
+        reason: 'the slot must come back to alpha, which reserved it',
+      );
+      expect(
+        hostBudget.liveFor('beta'),
+        0,
+        reason: 'beta never reserved anything and must not be credited',
+      );
+    });
   });
 }

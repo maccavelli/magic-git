@@ -2,8 +2,8 @@
  {
   "label": "p1: the watcher is built eagerly, not on the first subscriber",
   "file": "lib/core/git/remote_watch_service.dart",
-  "find": "    return _createLifecycle(\n      repoPath,\n      bounded: bounded,",
-  "replace": "    _createLifecycle(repoPath).listen((_) {});\n    return _createLifecycle(\n      repoPath,\n      bounded: bounded,",
+  "find": "    return _createLifecycle(\n      repoPath,\n      sessionId: sessionId,\n      bounded: bounded,",
+  "replace": "    _createLifecycle(repoPath, sessionId: sessionId).listen((_) {});\n    return _createLifecycle(\n      repoPath,\n      sessionId: sessionId,\n      bounded: bounded,",
   "tests": [
    "test/watch_shared_path_test.dart"
   ]

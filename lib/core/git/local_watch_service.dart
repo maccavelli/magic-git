@@ -3,6 +3,7 @@ import 'bounded_watch.dart';
 import 'watch/engine/watch_engine.dart';
 import 'watch/source/local/directory_watch_source.dart';
 import 'watch/watch_timings.dart';
+import 'watch/watcher_id.dart';
 import 'watch_diagnostics.dart';
 import 'watch_event.dart';
 import 'watch_path_filter.dart';
@@ -56,8 +57,9 @@ class LocalWatchService {
     String repoPath,
     WatchTransition kind,
     String cause,
-    int restarts,
-  ) {
+    int restarts, {
+    required WatcherId watcher,
+  }) {
     watchDiagnostics
         .forRepo(repoPath)
         .add(
@@ -68,6 +70,7 @@ class LocalWatchService {
             cause: cause,
             liveWatchers: 0,
             restarts: restarts,
+            watcher: watcher,
           ),
         );
     if (kind == WatchTransition.degradedToPolling) {
@@ -77,6 +80,9 @@ class LocalWatchService {
   }
 
   /// Watches [repoPath] for changes.
+  ///
+  /// [sessionId] names the session on every record this watcher files; empty
+  /// outside one.
   ///
   /// [bounded], when supplied, switches to the scoped work-tree surface for a
   /// dotfiles-style repo (git-dir points + tracked-file dirs, watched
@@ -93,6 +99,7 @@ class LocalWatchService {
     Duration minInterval = WatchTimings.defaultMinInterval,
     Duration pollInterval = WatchTimings.defaultPollInterval,
     Duration recoveryInterval = WatchTimings.defaultRecoveryInterval,
+    String sessionId = '',
   }) {
     // The roots, the listener and the re-arm policy are the source's (MADR 0045
     // section 4); this service is the per-backend engine factory.
@@ -107,8 +114,17 @@ class LocalWatchService {
         pollInterval: pollInterval,
         recoveryInterval: recoveryInterval,
       ),
-      onTransition: (kind, cause, restarts) =>
-          _record(repoPath, kind, cause, restarts),
+      onTransition: (kind, cause, restarts, attempt) => _record(
+        repoPath,
+        kind,
+        cause,
+        restarts,
+        watcher: WatcherId(
+          sessionId: sessionId,
+          repoPath: repoPath,
+          attempt: attempt,
+        ),
+      ),
     ).events;
   }
 }

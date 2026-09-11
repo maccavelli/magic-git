@@ -48,6 +48,7 @@ class _ScriptedService extends RemoteWatchService {
     Duration minInterval = WatchTimings.defaultMinInterval,
     Duration pollInterval = WatchTimings.defaultPollInterval,
     Duration recoveryInterval = WatchTimings.defaultRecoveryInterval,
+    String sessionId = '',
   }) => events.stream;
 }
 

@@ -95,7 +95,7 @@ void main() {
     hostKey: () => 'host',
     capacity: () => 6,
     timings: WatchTimings.standard,
-    record: (_, _) {},
+    record: (_, _, {required attempt, token}) {},
   );
 
   ArmRequest request({BoundedWatchSpecSource? bounded}) => ArmRequest(

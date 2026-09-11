@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math';
 
 import '../ssh/ssh_command_executor.dart';
 import 'bounded_watch.dart';
@@ -9,6 +10,7 @@ import 'watch/source/remote/git_dir_resolver.dart';
 import 'watch/source/remote/remote_watch_source.dart';
 import 'watch/source/remote/watcher_tool_probe.dart';
 import 'watch/watch_timings.dart';
+import 'watch/watcher_id.dart';
 import 'watch_diagnostics.dart';
 import 'watch_event.dart';
 
@@ -306,13 +308,18 @@ class RemoteWatchService {
   static String watchHeartbeatFile(String gitDir, String token) =>
       '$gitDir/mg-watch.$token.hb';
 
-  static int _tokenSeq = 0;
-
-  /// A token unique among *live* watchers. Time plus a sequence: it must not
-  /// collide with another instance, and needs no other property.
-  static String newWatchToken() =>
-      '${DateTime.now().microsecondsSinceEpoch.toRadixString(36)}'
-      '${(_tokenSeq++).toRadixString(36)}';
+  /// A token unique among *live* watchers: 64 bits from the platform's secure
+  /// random source, as hex, so it is safe in a file name and a shell word.
+  ///
+  /// Stateless. It was a timestamp plus a static counter, the one mutable
+  /// static in the watch stack (MADR 0045 plan, deviation (o)).
+  static String newWatchToken() {
+    final random = Random.secure();
+    return [
+      for (var i = 0; i < 8; i++)
+        random.nextInt(256).toRadixString(16).padLeft(2, '0'),
+    ].join();
+  }
 
   /// The git dir to sweep for each of [repoPaths]: its [scopedGitDirs] entry
   /// when it is scoped, otherwise [gitDirOf]'s answer — the directory its
@@ -379,8 +386,9 @@ class RemoteWatchService {
     String repoPath,
     WatchTransition kind,
     String cause,
-    int restarts,
-  ) => watchDiagnostics
+    int restarts, {
+    required WatcherId watcher,
+  }) => watchDiagnostics
       .forRepo(repoPath)
       .add(
         WatchTransitionRecord(
@@ -390,6 +398,7 @@ class RemoteWatchService {
           cause: cause,
           liveWatchers: admission.budget.liveTotal,
           restarts: restarts,
+          watcher: watcher,
         ),
       );
 
@@ -412,6 +421,9 @@ class RemoteWatchService {
   /// Two tabs watching one repository are two sessions with two exclusions, and
   /// still meet at the host lock — which is correct (MADR 0041 F12).
   ///
+  /// [sessionId] names the session — one tab's container — on every record this
+  /// watcher files; empty outside one.
+  ///
   /// [bounded], when supplied, switches to the **scoped work-tree** surface for
   /// a dotfiles-style repo (git-dir + tracked-file dirs, non-recursive) instead
   /// of a recursive watch of the whole work tree — see [BoundedWatchSpec] for
@@ -426,9 +438,11 @@ class RemoteWatchService {
     Duration minInterval = WatchTimings.defaultMinInterval,
     Duration pollInterval = WatchTimings.defaultPollInterval,
     Duration recoveryInterval = WatchTimings.defaultRecoveryInterval,
+    String sessionId = '',
   }) {
     return _createLifecycle(
       repoPath,
+      sessionId: sessionId,
       bounded: bounded,
       trailing: trailing,
       maxWait: maxWait,
@@ -442,6 +456,7 @@ class RemoteWatchService {
   /// state; the next call builds the next watcher.
   Stream<RepoWatchEvent> _createLifecycle(
     String repoPath, {
+    required String sessionId,
     BoundedWatchSpecSource? bounded,
     Duration trailing = WatchTimings.defaultTrailing,
     Duration maxWait = WatchTimings.defaultMaxWait,
@@ -457,7 +472,18 @@ class RemoteWatchService {
       hostKey: _hostKey,
       capacity: () => maxConcurrentWatchers,
       timings: WatchTimings.standard,
-      record: (kind, cause) => _record(repoPath, kind, cause, 0),
+      record: (kind, cause, {required attempt, token}) => _record(
+        repoPath,
+        kind,
+        cause,
+        0,
+        watcher: WatcherId(
+          sessionId: sessionId,
+          repoPath: repoPath,
+          attempt: attempt,
+          token: token,
+        ),
+      ),
       onDiagnostic: onDiagnostic,
     );
 
@@ -476,8 +502,18 @@ class RemoteWatchService {
       // again — about its tool, and about where the repository's git dir is.
       onPollingRecoveryAttempt: source.invalidateCaches,
       budgetReleased: admission.budget.releases(_hostKey()),
-      onTransition: (kind, cause, restarts) {
-        _record(repoPath, kind, cause, restarts);
+      onTransition: (kind, cause, restarts, attempt) {
+        _record(
+          repoPath,
+          kind,
+          cause,
+          restarts,
+          watcher: WatcherId(
+            sessionId: sessionId,
+            repoPath: repoPath,
+            attempt: attempt,
+          ),
+        );
         // Degradation is the expensive state and the one a maintainer needs
         // explained: report it on the channel watcher stderr already uses, so
         // "why is this repo polling" is answerable while it is polling

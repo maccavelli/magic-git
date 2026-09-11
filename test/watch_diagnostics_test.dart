@@ -3,6 +3,7 @@
 // it exists to investigate.
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:remote_magic_git/core/git/watch/watcher_id.dart';
 import 'package:remote_magic_git/core/git/watch_diagnostics.dart';
 
 WatchTransitionRecord _rec(
@@ -11,6 +12,7 @@ WatchTransitionRecord _rec(
   String cause = 'test',
   int liveWatchers = 0,
   int restarts = 0,
+  WatcherId? watcher,
 }) => WatchTransitionRecord(
   at: DateTime.fromMillisecondsSinceEpoch(i),
   kind: kind,
@@ -18,6 +20,14 @@ WatchTransitionRecord _rec(
   cause: cause,
   liveWatchers: liveWatchers,
   restarts: restarts,
+  watcher: watcher,
+);
+
+const _watcher = WatcherId(
+  sessionId: '3',
+  repoPath: '/repo',
+  attempt: 2,
+  token: 'ab12',
 );
 
 void main() {
@@ -73,6 +83,38 @@ void main() {
     expect(d.forRepo('/a').records, hasLength(1));
     expect(d.forRepo('/b').records, hasLength(2));
     expect(d.repoPaths, containsAll(<String>['/a', '/b']));
+  });
+
+  test('a record names the watcher it came from', () {
+    // MADR 0045 F9: two records are adjacent only if they came from one
+    // watcher, and nothing said whether they did.
+    expect(
+      _rec(1, watcher: _watcher).toString(),
+      endsWith(' watcher=3/2/ab12'),
+    );
+    expect(
+      _rec(1).toString(),
+      isNot(contains('watcher=')),
+      reason: 'a record without an identity says nothing about one',
+    );
+  });
+
+  test('the degradation summary names the watcher that degraded', () {
+    final log = WatchTransitionLog()
+      ..add(_rec(1, kind: WatchTransition.armed, watcher: _watcher))
+      ..add(
+        _rec(
+          2,
+          kind: WatchTransition.degradedToPolling,
+          cause: 'ceiling 2/2',
+          watcher: _watcher,
+        ),
+      );
+    expect(
+      log.degradationSummary,
+      endsWith(' watcher 3/2/ab12'),
+      reason: 'the line a maintainer reads must say which watcher it is about',
+    );
   });
 
   test('records are unmodifiable from outside', () {

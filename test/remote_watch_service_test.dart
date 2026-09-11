@@ -10,8 +10,8 @@ import 'package:remote_magic_git/core/git/watch_event.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 import 'helpers/conventional_git_dir.dart';
+import 'helpers/fake_arm_settle.dart';
 import 'helpers/fake_watcher_handle.dart';
-import 'helpers/watch_settle.dart';
 
 class _FakeExecutor extends SSHCommandExecutor {
   _FakeExecutor() : super(SSHClientManager());
@@ -242,6 +242,18 @@ List<String> _chunk(String blob, int bytes) {
   return out;
 }
 
+/// Runs fake time until [executor] has opened its watcher stream — what
+/// awaiting `armed.future` did in real time. Bounded, so an arm that never
+/// opens falls through to the assertions that say so instead of spinning.
+void _untilStreamOpened(FakeAsync async, _DrivableExecutor executor) {
+  final start = async.elapsed;
+  async.flushMicrotasks();
+  while (!executor.armed.isCompleted &&
+      async.elapsed - start < const Duration(seconds: 10)) {
+    async.elapse(const Duration(milliseconds: 5));
+  }
+}
+
 void main() {
   test('falls back to polling when no watcher tool is available', () {
     fakeAsync((async) {
@@ -399,108 +411,123 @@ void main() {
   // dartssh2 negotiates a 32 KiB maximum packet size (ssh_client.dart:57), so
   // that is the arrival shape these drive.
   group('record splitting', () {
-    test('records straddling chunk boundaries survive intact', () async {
-      // Well under 512 (the engine's maxPathsPerTick) so the burst stays
-      // path-scoped instead of overflowing to an unscoped tick.
-      final paths = [for (var i = 0; i < 60; i++) 'src/m$i/f$i.dart'];
-      final handle = FakeWatcherHandle.armed();
-      final executor = _DrivableExecutor(tool: 'inotifywait', handle: handle);
-      final service = RemoteWatchService(
-        executor,
-        gitDirOf: conventionalGitDir,
-      );
+    test('records straddling chunk boundaries survive intact', () {
+      fakeAsync((async) {
+        // Well under 512 (the engine's maxPathsPerTick) so the burst stays
+        // path-scoped instead of overflowing to an unscoped tick.
+        final paths = [for (var i = 0; i < 60; i++) 'src/m$i/f$i.dart'];
+        final handle = FakeWatcherHandle.armed();
+        final executor = _DrivableExecutor(tool: 'inotifywait', handle: handle);
+        final service = RemoteWatchService(
+          executor,
+          gitDirOf: conventionalGitDir,
+        );
 
-      final seen = <String>{};
-      final sub = service.watch('/repo').listen((e) => seen.addAll(e.paths));
-      await executor.armed.future;
-      await settleArm();
+        final seen = <String>{};
+        final sub = service.watch('/repo').listen((e) => seen.addAll(e.paths));
+        _untilStreamOpened(async, executor);
+        async.letArmsSettle();
 
-      // Deliberately awkward: 37 bytes cuts records mid-path constantly.
-      for (final c in _chunk('${paths.join('\n')}\n', 37)) {
-        handle.emitStdout(c);
-      }
-      // Longer than the coalescer's 1s minInterval/maxWait, so the burst has
-      // actually been emitted rather than still being batched.
-      await Future<void>.delayed(const Duration(milliseconds: 1500));
+        // Deliberately awkward: 37 bytes cuts records mid-path constantly.
+        for (final c in _chunk('${paths.join('\n')}\n', 37)) {
+          handle.emitStdout(c);
+        }
+        // Longer than the coalescer's 1s minInterval/maxWait, so the burst has
+        // actually been emitted rather than still being batched.
+        async.elapse(const Duration(milliseconds: 1500));
 
-      // First, last, and a middle one — cheap assertions. `containsAll` over a
-      // large set builds a pathological mismatch description when it fails.
-      expect(seen, contains(paths.first));
-      expect(seen, contains(paths[30]));
-      expect(seen, contains(paths.last));
-      expect(seen, hasLength(paths.length));
-      await sub.cancel();
+        // First, last, and a middle one — cheap assertions. `containsAll` over
+        // a large set builds a pathological mismatch description when it fails.
+        expect(seen, contains(paths.first));
+        expect(seen, contains(paths[30]));
+        expect(seen, contains(paths.last));
+        expect(seen, hasLength(paths.length));
+        sub.cancel();
+        async.flushMicrotasks();
+      });
     });
 
-    test('a large burst costs linear time, not a copy per record', () async {
-      const records = 20000;
-      final blob = [
-        for (var i = 0; i < records; i++) 'src/m$i/f$i.dart',
-      ].join('\n');
-      final chunks = _chunk('$blob\n', 32 * 1024);
+    test('a large burst costs linear time, not a copy per record', () {
+      fakeAsync((async) {
+        const records = 20000;
+        final blob = [
+          for (var i = 0; i < records; i++) 'src/m$i/f$i.dart',
+        ].join('\n');
+        final chunks = _chunk('$blob\n', 32 * 1024);
 
-      final handle = FakeWatcherHandle.armed();
-      final executor = _DrivableExecutor(tool: 'inotifywait', handle: handle);
-      final service = RemoteWatchService(
-        executor,
-        gitDirOf: conventionalGitDir,
-      );
-      final sub = service.watch('/repo').listen((_) {});
-      await executor.armed.future;
-      await settleArm();
+        final handle = FakeWatcherHandle.armed();
+        final executor = _DrivableExecutor(tool: 'inotifywait', handle: handle);
+        final service = RemoteWatchService(
+          executor,
+          gitDirOf: conventionalGitDir,
+        );
+        final sub = service.watch('/repo').listen((_) {});
+        _untilStreamOpened(async, executor);
+        async.letArmsSettle();
 
-      final sw = Stopwatch()..start();
-      for (final c in chunks) {
-        handle.emitStdout(c);
-      }
-      while (handle.delivered < chunks.length) {
-        await Future<void>.delayed(Duration.zero);
-      }
-      sw.stop();
+        // The stopwatch runs on REAL time, which fake time does not drive: the
+        // split happens inside the flushes below, so it times that work alone,
+        // without the event-loop turns the real-time version also counted.
+        final sw = Stopwatch()..start();
+        for (final c in chunks) {
+          handle.emitStdout(c);
+        }
+        for (
+          var i = 0;
+          i < chunks.length && handle.delivered < chunks.length;
+          i++
+        ) {
+          async.flushMicrotasks();
+        }
+        sw.stop();
 
-      // Measured: re-slicing the buffer per record costs ~134 ms here; a
-      // cursor costs ~1 ms. 50 ms sits ~2.7x under the quadratic cost and
-      // ~50x over the linear one, so it cannot flake on a slow machine and
-      // cannot pass on the old implementation.
-      expect(
-        sw.elapsedMilliseconds,
-        lessThan(50),
-        reason: 'splitting must not copy the remaining buffer per record',
-      );
-      await sub.cancel();
+        // Measured: re-slicing the buffer per record costs ~134 ms here; a
+        // cursor costs ~1 ms. 50 ms sits ~2.7x under the quadratic cost and
+        // ~50x over the linear one, so it cannot flake on a slow machine and
+        // cannot pass on the old implementation.
+        expect(
+          sw.elapsedMilliseconds,
+          lessThan(50),
+          reason: 'splitting must not copy the remaining buffer per record',
+        );
+        sub.cancel();
+        async.flushMicrotasks();
+      });
     });
   });
 
   // ---- 0024 H3: the watcher's stderr -------------------------------------
   group('watcher diagnostics', () {
-    test('a diagnostic on stderr is surfaced, not discarded', () async {
-      final handle = FakeWatcherHandle.armed();
-      final executor = _DrivableExecutor(tool: 'inotifywait', handle: handle);
-      final diagnostics = <String>[];
-      final service = RemoteWatchService(
-        executor,
-        onDiagnostic: diagnostics.add,
-        gitDirOf: conventionalGitDir,
-      );
+    test('a diagnostic on stderr is surfaced, not discarded', () {
+      fakeAsync((async) {
+        final handle = FakeWatcherHandle.armed();
+        final executor = _DrivableExecutor(tool: 'inotifywait', handle: handle);
+        final diagnostics = <String>[];
+        final service = RemoteWatchService(
+          executor,
+          onDiagnostic: diagnostics.add,
+          gitDirOf: conventionalGitDir,
+        );
 
-      final sub = service.watch('/repo').listen((_) {});
-      await executor.armed.future;
-      await settleArm();
+        final sub = service.watch('/repo').listen((_) {});
+        _untilStreamOpened(async, executor);
+        async.letArmsSettle();
 
-      // The one message that says WHY the watcher died, and names the knob.
-      handle.emitStderr(
-        'Failed to watch /home/u/src; upper limit on inotify watches reached\n',
-      );
-      await Future<void>.delayed(Duration.zero);
+        // The one message that says WHY the watcher died, and names the knob.
+        handle.emitStderr(
+          'Failed to watch /home/u/src; upper limit on inotify watches reached\n',
+        );
+        async.elapse(Duration.zero);
 
-      expect(diagnostics, hasLength(1));
-      expect(diagnostics.single, contains('upper limit on inotify watches'));
-      await sub.cancel();
+        expect(diagnostics, hasLength(1));
+        expect(diagnostics.single, contains('upper limit on inotify watches'));
+        sub.cancel();
+        async.flushMicrotasks();
+      });
     });
 
-    test(
-      'startup chatter is dropped, so it cannot crowd out a real one',
-      () async {
+    test('startup chatter is dropped, so it cannot crowd out a real one', () {
+      fakeAsync((async) {
         // `inotifywait` prints these on every arm. They spent two of the twenty
         // lines each time, right where a real message lands — and next to them,
         // for months, sat `--exclude: only the last option will be taken into
@@ -515,8 +542,8 @@ void main() {
         );
 
         final sub = service.watch('/repo').listen((_) {});
-        await executor.armed.future;
-        await settleArm();
+        _untilStreamOpened(async, executor);
+        async.letArmsSettle();
 
         handle.emitStderr(
           'Setting up watches.  Beware: since -r was given, this may take a '
@@ -524,7 +551,7 @@ void main() {
           'Watches established.\n'
           '--exclude: only the last option will be taken into consideration.\n',
         );
-        await Future<void>.delayed(Duration.zero);
+        async.elapse(Duration.zero);
 
         expect(
           diagnostics.where((d) => d.startsWith('Setting up watches')),
@@ -541,33 +568,37 @@ void main() {
               'the filter is an enumerated list of noise, not a pattern — it '
               'must not swallow a message nobody has seen yet',
         );
-        await sub.cancel();
-      },
-    );
+        sub.cancel();
+        async.flushMicrotasks();
+      });
+    });
 
-    test('a flooding watcher cannot fill the log', () async {
-      // inotifywait prints one failure line per directory it cannot watch, so
-      // a host at its watch limit emits one per entry in the surface.
-      final handle = FakeWatcherHandle.armed();
-      final executor = _DrivableExecutor(tool: 'inotifywait', handle: handle);
-      final diagnostics = <String>[];
-      final service = RemoteWatchService(
-        executor,
-        onDiagnostic: diagnostics.add,
-        gitDirOf: conventionalGitDir,
-      );
+    test('a flooding watcher cannot fill the log', () {
+      fakeAsync((async) {
+        // inotifywait prints one failure line per directory it cannot watch, so
+        // a host at its watch limit emits one per entry in the surface.
+        final handle = FakeWatcherHandle.armed();
+        final executor = _DrivableExecutor(tool: 'inotifywait', handle: handle);
+        final diagnostics = <String>[];
+        final service = RemoteWatchService(
+          executor,
+          onDiagnostic: diagnostics.add,
+          gitDirOf: conventionalGitDir,
+        );
 
-      final sub = service.watch('/repo').listen((_) {});
-      await executor.armed.future;
-      await settleArm();
+        final sub = service.watch('/repo').listen((_) {});
+        _untilStreamOpened(async, executor);
+        async.letArmsSettle();
 
-      for (var i = 0; i < 500; i++) {
-        handle.emitStderr('Failed to watch /d$i\n');
-      }
-      await Future<void>.delayed(const Duration(milliseconds: 50));
+        for (var i = 0; i < 500; i++) {
+          handle.emitStderr('Failed to watch /d$i\n');
+        }
+        async.elapse(const Duration(milliseconds: 50));
 
-      expect(diagnostics, hasLength(RemoteWatchService.maxDiagnosticLines));
-      await sub.cancel();
+        expect(diagnostics, hasLength(RemoteWatchService.maxDiagnosticLines));
+        sub.cancel();
+        async.flushMicrotasks();
+      });
     });
   });
 
@@ -627,9 +658,8 @@ void main() {
       );
     });
 
-    test(
-      'arms past the ceiling degrade to polling with a diagnostic',
-      () async {
+    test('arms past the ceiling degrade to polling with a diagnostic', () {
+      fakeAsync((async) {
         final exec = _MultiArmExecutor();
         final diagnostics = <String>[];
         final service = RemoteWatchService(
@@ -652,7 +682,7 @@ void main() {
                 .listen((e) => modes[i]!.add(e.mode)),
           );
         }
-        await Future<void>.delayed(const Duration(milliseconds: 900));
+        async.elapse(const Duration(milliseconds: 900));
 
         // The arms within the ceiling are live; the one past it polls, and says
         // why — the failure mode that produced 19 orphans was accumulating in
@@ -666,15 +696,15 @@ void main() {
         expect(exec.handles.length, cap);
 
         for (final sub in subs) {
-          await sub.cancel();
+          sub.cancel();
         }
-      },
-    );
+        async.flushMicrotasks();
+      });
+    });
   });
 
-  test(
-    'the arm actually uses a leased, self-terminating script (0025 C1)',
-    () async {
+  test('the arm actually uses a leased, self-terminating script (0025 C1)', () {
+    fakeAsync((async) {
       // Pins the WIRING, not the builder. The builder supported a lease for a
       // while before the arm passed one — a silent no-op that every script-level
       // test still passed. This is the assertion that would have caught it.
@@ -687,8 +717,8 @@ void main() {
       );
 
       final sub = service.watch('/repo').listen((_) {});
-      await executor.armed.future;
-      await settleArm();
+      _untilStreamOpened(async, executor);
+      async.letArmsSettle();
 
       final script = executor.lastStreamArgs.last;
       // Tokenised per watcher instance since 0027 — the invariant is that the
@@ -723,7 +753,8 @@ void main() {
       );
       expect(script, contains('cat <&3'), reason: 'and the watchdog reads it');
       expect(script, contains('trap'), reason: 'owns its child on signal');
-      await sub.cancel();
-    },
-  );
+      sub.cancel();
+      async.flushMicrotasks();
+    });
+  });
 }

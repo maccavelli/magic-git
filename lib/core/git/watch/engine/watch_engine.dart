@@ -402,5 +402,5 @@ final class WatchEngine {
   }
 
   void _record(WatchTransition kind, String cause) =>
-      onTransition?.call(kind, cause, _restarts);
+      onTransition?.call(kind, cause, _restarts, _attempt);
 }

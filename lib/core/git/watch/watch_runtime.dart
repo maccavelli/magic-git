@@ -25,8 +25,8 @@ final class WatchRuntime {
   /// The files git tracks in a repository, asked on every bounded arm.
   final Future<List<String>> Function(String repoPath) listTrackedFiles;
 
-  /// The session — one tab's container — these watchers belong to, as a
-  /// `WatcherId` names it.
+  /// The session — one tab's container — these watchers belong to, as the
+  /// `WatcherId` on each of their records names it.
   final String sessionId;
 
   /// A watcher for [target]. Every call builds its own; sharing one is
@@ -43,8 +43,16 @@ final class WatchRuntime {
     // Exhaustive switch (no default) so a new backend can't silently fall
     // through to the SSH watcher.
     return switch (target.backend) {
-      WatchBackend.local => local.watch(target.repoPath, bounded: bounded),
-      WatchBackend.ssh => remote.watch(target.repoPath, bounded: bounded),
+      WatchBackend.local => local.watch(
+        target.repoPath,
+        bounded: bounded,
+        sessionId: sessionId,
+      ),
+      WatchBackend.ssh => remote.watch(
+        target.repoPath,
+        bounded: bounded,
+        sessionId: sessionId,
+      ),
     };
   }
 

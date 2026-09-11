@@ -11,6 +11,7 @@
 // So the last test here is not a detail. It is the regression guard for the
 // decision, and it fails the moment the key grows a session component again.
 
+import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:remote_magic_git/core/git/remote_watch_service.dart';
 import 'package:remote_magic_git/core/git/watch/admission/host_watcher_budget.dart';
@@ -20,8 +21,8 @@ import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 
 import 'helpers/conventional_git_dir.dart';
+import 'helpers/fake_arm_settle.dart';
 import 'helpers/fake_watcher_handle.dart';
-import 'helpers/watch_settle.dart';
 
 /// Arms every time, so each arm holds a slot until it is cancelled.
 class _ArmsAlways extends SSHCommandExecutor {
@@ -59,9 +60,6 @@ void main() {
   late HostWatcherBudget hostBudget;
 
   setUp(() => hostBudget = HostWatcherBudget());
-  tearDown(() async {
-    await settleArm();
-  });
 
   RemoteWatchService serviceOn(String host, {required int budget}) =>
       RemoteWatchService(
@@ -93,7 +91,7 @@ void main() {
     );
   });
 
-  test('the cap is read per arm, so a budget that drops is honoured', () async {
+  test('the cap is read per arm, so a budget that drops is honoured', () {
     var budget = 8;
     final service = RemoteWatchService(
       _ArmsAlways(),
@@ -115,67 +113,73 @@ void main() {
     );
   });
 
-  test('two sessions on one host share ONE budget', () async {
-    // The regression guard for MADR 0041 F5. Each of these stands for a tab
-    // container: its own service, its own executor, its own connection — and
-    // the same host. If the counter ever grows a session component again, each
-    // gets its own ceiling and the host's bound becomes N x the cap.
-    final tabOne = serviceOn('same-host', budget: 4); // ceiling 2
-    final tabTwo = serviceOn('same-host', budget: 4);
+  test('two sessions on one host share ONE budget', () {
+    fakeAsync((async) {
+      // The regression guard for MADR 0041 F5. Each of these stands for a tab
+      // container: its own service, its own executor, its own connection — and
+      // the same host. If the counter ever grows a session component again,
+      // each gets its own ceiling and the host's bound becomes N x the cap.
+      final tabOne = serviceOn('same-host', budget: 4); // ceiling 2
+      final tabTwo = serviceOn('same-host', budget: 4);
 
-    final a = tabOne.watch('/a').listen((_) {});
-    final b = tabOne.watch('/b').listen((_) {});
-    await settleArm();
-    expect(hostBudget.liveFor('same-host'), 2);
+      final a = tabOne.watch('/a').listen((_) {});
+      final b = tabOne.watch('/b').listen((_) {});
+      async.letArmsSettle();
+      expect(hostBudget.liveFor('same-host'), 2);
 
-    final events = <RepoWatchEvent>[];
-    final c = tabTwo.watch('/c').listen(events.add);
-    await settleArm();
+      final events = <RepoWatchEvent>[];
+      final c = tabTwo.watch('/c').listen(events.add);
+      async.letArmsSettle();
 
-    expect(
-      events.last.mode,
-      WatchMode.polling,
-      reason:
-          'the second tab must be refused by the FIRST tab\'s watchers. Keyed '
-          'per (session, host) it would be granted, and eight tabs would put '
-          'up to 48 watchers on one host with nothing bounding it',
-    );
-    expect(
-      hostBudget.liveFor('same-host'),
-      2,
-      reason: 'the host budget is spent, whoever spent it',
-    );
+      expect(
+        events.last.mode,
+        WatchMode.polling,
+        reason:
+            'the second tab must be refused by the FIRST tab\'s watchers. Keyed '
+            'per (session, host) it would be granted, and eight tabs would put '
+            'up to 48 watchers on one host with nothing bounding it',
+      );
+      expect(
+        hostBudget.liveFor('same-host'),
+        2,
+        reason: 'the host budget is spent, whoever spent it',
+      );
 
-    await a.cancel();
-    await b.cancel();
-    await c.cancel();
+      a.cancel();
+      b.cancel();
+      c.cancel();
+      async.flushMicrotasks();
+    });
   });
 
-  test('two hosts do not share a budget', () async {
-    // The other half of the same decision (MADR 0039 F4): keyed by host means
-    // a host that has consumed nothing is not starved by one that has.
-    final alpha = serviceOn('alpha', budget: 4);
-    final beta = serviceOn('beta', budget: 4);
+  test('two hosts do not share a budget', () {
+    fakeAsync((async) {
+      // The other half of the same decision (MADR 0039 F4): keyed by host
+      // means a host that has consumed nothing is not starved by one that has.
+      final alpha = serviceOn('alpha', budget: 4);
+      final beta = serviceOn('beta', budget: 4);
 
-    final a1 = alpha.watch('/a1').listen((_) {});
-    final a2 = alpha.watch('/a2').listen((_) {});
-    await settleArm();
-    expect(hostBudget.liveFor('alpha'), 2);
+      final a1 = alpha.watch('/a1').listen((_) {});
+      final a2 = alpha.watch('/a2').listen((_) {});
+      async.letArmsSettle();
+      expect(hostBudget.liveFor('alpha'), 2);
 
-    final events = <RepoWatchEvent>[];
-    final b1 = beta.watch('/b1').listen(events.add);
-    await settleArm();
+      final events = <RepoWatchEvent>[];
+      final b1 = beta.watch('/b1').listen(events.add);
+      async.letArmsSettle();
 
-    expect(
-      events.last.mode,
-      WatchMode.eventDriven,
-      reason: 'beta has spent nothing and must not be refused',
-    );
-    expect(hostBudget.liveFor('beta'), 1);
+      expect(
+        events.last.mode,
+        WatchMode.eventDriven,
+        reason: 'beta has spent nothing and must not be refused',
+      );
+      expect(hostBudget.liveFor('beta'), 1);
 
-    await a1.cancel();
-    await a2.cancel();
-    await b1.cancel();
+      a1.cancel();
+      a2.cancel();
+      b1.cancel();
+      async.flushMicrotasks();
+    });
   });
 
   test('an unwired service is conservative, not optimistic', () {

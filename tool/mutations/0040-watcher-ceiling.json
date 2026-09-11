@@ -1,18 +1,18 @@
 [
   {
     "label": "p1: the catch-all is removed, so four of five failures strand the slot",
-    "file": "lib/core/git/remote_watch_service.dart",
-    "find": "        } catch (_) {\n          // Idempotent, so this is safe even on the paths that already\n          // released explicitly. The host claims too: a failure past admission\n          // may have stamped a lease that no watcher will ever refresh.\n          ticket.releaseBudget();",
-    "replace": "        } catch (_) {",
+    "file": "lib/core/git/watch/source/remote/remote_watch_source.dart",
+    "find": "    } catch (_) {\n      // Idempotent, so safe on paths that already released. The host claims\n      // too: a failure past admission may have stamped a lease.\n      ticket.releaseBudget();",
+    "replace": "    } catch (_) {\n      // Idempotent, so safe on paths that already released. The host claims\n      // too: a failure past admission may have stamped a lease.",
     "tests": [
       "test/watch_slot_leak_test.dart"
     ]
   },
   {
     "label": "p1: the catch swallows, so a blip looks like a successful arm",
-    "file": "lib/core/git/remote_watch_service.dart",
-    "find": "          rethrow;\n        }",
-    "replace": "          return const WatchUnavailable(WatchUnavailableReason.noTool);\n        }",
+    "file": "lib/core/git/watch/source/remote/remote_watch_source.dart",
+    "find": "      rethrow;\n    }",
+    "replace": "      return const SourceUnavailable(WatchUnavailableReason.noTool);\n    }",
     "tests": [
       "test/watch_slot_leak_test.dart",
       "test/remote_watch_service_test.dart"

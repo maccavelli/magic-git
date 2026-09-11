@@ -42,8 +42,15 @@ final class RemoteWatchSource implements WatchSource {
   final int Function() capacity;
   final WatchTimings timings;
 
-  /// Files one transition against this source's repository.
-  final void Function(WatchTransition kind, String cause) record;
+  /// Files one transition against this source's repository, naming the arm
+  /// [attempt] and host [token] it happened on.
+  final void Function(
+    WatchTransition kind,
+    String cause, {
+    required int attempt,
+    String? token,
+  })
+  record;
   final void Function(String line)? onDiagnostic;
 
   /// Debounces deliberate re-arms. Spans arms; cancelled by every close.
@@ -69,10 +76,12 @@ final class RemoteWatchSource implements WatchSource {
     // ONE identity per arm. Every re-arm is a new watcher instance with its own
     // lease and registry files (0027).
     final token = RemoteWatchService.newWatchToken();
+    void note(WatchTransition kind, String cause) =>
+        record(kind, cause, attempt: request.attempt, token: token);
     final tool = await probe.tool(repoPath);
     if (cancelled) return const SourceAborted();
     if (tool == RemoteWatcherTool.none) {
-      record(WatchTransition.armFailed, 'no watcher tool');
+      note(WatchTransition.armFailed, 'no watcher tool');
       return const SourceUnavailable(WatchUnavailableReason.noTool);
     }
 
@@ -105,7 +114,7 @@ final class RemoteWatchSource implements WatchSource {
           'watcher ceiling reached for $host '
           '($live/$ceiling) — polling $repoPath instead',
         );
-        record(WatchTransition.armFailed, 'ceiling $live/$ceiling');
+        note(WatchTransition.armFailed, 'ceiling $live/$ceiling');
         return const SourceUnavailable(WatchUnavailableReason.ceiling);
       case AdmissionCancelled():
         return const SourceAborted();
@@ -168,7 +177,7 @@ final class RemoteWatchSource implements WatchSource {
           );
         },
         onDied: (cause) {
-          record(WatchTransition.stopped, cause);
+          note(WatchTransition.stopped, cause);
           emit(SourceDied(cause));
         },
       );
@@ -180,7 +189,7 @@ final class RemoteWatchSource implements WatchSource {
           await lease.releaseHostClaims();
           ticket.releaseExclusion();
           onDiagnostic?.call('$error — falling back to polling for this repo');
-          record(WatchTransition.armFailed, 'stream budget');
+          note(WatchTransition.armFailed, 'stream budget');
           unawaited(signals.close());
           return const SourceUnavailable(WatchUnavailableReason.streamBudget);
         case WatcherCancelled(:final discard):
@@ -204,9 +213,9 @@ final class RemoteWatchSource implements WatchSource {
               'another live watcher already holds $repoPath$held '
               '— polling here',
             );
-            record(WatchTransition.armFailed, 'held by another watcher$held');
+            note(WatchTransition.armFailed, 'held by another watcher$held');
           } else {
-            record(WatchTransition.armFailed, 'no watched paths');
+            note(WatchTransition.armFailed, 'no watched paths');
           }
           ticket.releaseExclusion();
           unawaited(signals.close());

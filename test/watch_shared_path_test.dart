@@ -27,8 +27,8 @@ import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 
 import 'helpers/conventional_git_dir.dart';
+import 'helpers/fake_arm_settle.dart';
 import 'helpers/fake_watcher_handle.dart';
-import 'helpers/watch_settle.dart';
 
 /// Records every arm, so "how many watchers exist" is a number rather than an
 /// inference.
@@ -149,10 +149,7 @@ void main() {
   late HostWatcherBudget hostBudget;
 
   setUp(() => hostBudget = HostWatcherBudget());
-  tearDown(() async {
-    await settleArm();
-    watchDiagnostics.clear();
-  });
+  tearDown(watchDiagnostics.clear);
 
   RemoteWatchService serviceOn(_ArmRecorder exec) => RemoteWatchService(
     exec,
@@ -162,9 +159,8 @@ void main() {
     gitDirOf: conventionalGitDir,
   );
 
-  test(
-    'two concurrent watch() calls on one path never hold the lock together',
-    () async {
+  test('two concurrent watch() calls on one path never hold the lock together', () {
+    fakeAsync((async) {
       // 0043 F2's reproduction, under admission. Both callers build a watcher —
       // sharing is gone — but the second may not reach the host until the first
       // has given its lock back, so the host lock never sees one session twice.
@@ -173,7 +169,7 @@ void main() {
 
       final a = service.watch('/repo').listen((_) {});
       final b = service.watch('/repo').listen((_) {});
-      await settleArm();
+      async.letArmsSettle();
 
       expect(
         exec.log,
@@ -189,8 +185,8 @@ void main() {
         reason: 'and holds no slot while it waits',
       );
 
-      await a.cancel();
-      await settleArm();
+      a.cancel();
+      async.letArmsSettle();
 
       expect(
         exec.log,
@@ -203,59 +199,64 @@ void main() {
         reason: 'never two live handles',
       );
 
-      await b.cancel();
-    },
-  );
-
-  test('the last subscriber leaving tears the watcher down', () async {
-    final exec = _ArmRecorder();
-    final service = serviceOn(exec);
-
-    final a = service.watch('/repo').listen((_) {});
-    final b = service.watch('/repo').listen((_) {});
-    await settleArm();
-
-    await a.cancel();
-    await b.cancel();
-    await settleArm();
-
-    expect(
-      exec.handles.where((h) => !h.cancelled),
-      isEmpty,
-      reason: 'nobody is listening, so the host must not keep a watcher',
-    );
-    // Without sharing, the second subscriber arms its own watcher once the
-    // first is gone, so how many watchers there were is not the contract. That
-    // each was torn down before the next armed is (MADR 0045 plan, deviation
-    // (d)).
-    expect(exec.log, [
-      for (var i = 0; i < exec.log.length; i++) i.isEven ? 'arm' : 'teardown',
-    ], reason: 'each watcher is gone before the next arms — never two live');
-    expect(hostBudget.liveFor('host'), 0, reason: 'and the slot goes back');
+      b.cancel();
+      async.flushMicrotasks();
+    });
   });
 
-  test('two different paths still get two watchers', () async {
-    final exec = _ArmRecorder();
-    final service = serviceOn(exec);
+  test('the last subscriber leaving tears the watcher down', () {
+    fakeAsync((async) {
+      final exec = _ArmRecorder();
+      final service = serviceOn(exec);
 
-    final a = service.watch('/one').listen((_) {});
-    final b = service.watch('/two').listen((_) {});
-    await settleArm();
+      final a = service.watch('/repo').listen((_) {});
+      final b = service.watch('/repo').listen((_) {});
+      async.letArmsSettle();
 
-    expect(
-      exec.tokens,
-      hasLength(2),
-      reason: 'sharing is per PATH; different repositories are unrelated',
-    );
-    expect(hostBudget.liveFor('host'), 2);
+      a.cancel();
+      b.cancel();
+      async.letArmsSettle();
 
-    await a.cancel();
-    await b.cancel();
+      expect(
+        exec.handles.where((h) => !h.cancelled),
+        isEmpty,
+        reason: 'nobody is listening, so the host must not keep a watcher',
+      );
+      // Without sharing, the second subscriber arms its own watcher once the
+      // first is gone, so how many watchers there were is not the contract.
+      // That each was torn down before the next armed is (MADR 0045 plan,
+      // deviation (d)).
+      expect(exec.log, [
+        for (var i = 0; i < exec.log.length; i++) i.isEven ? 'arm' : 'teardown',
+      ], reason: 'each watcher is gone before the next arms — never two live');
+      expect(hostBudget.liveFor('host'), 0, reason: 'and the slot goes back');
+    });
   });
 
-  test(
-    'two services on one path arm twice — sharing is per connection',
-    () async {
+  test('two different paths still get two watchers', () {
+    fakeAsync((async) {
+      final exec = _ArmRecorder();
+      final service = serviceOn(exec);
+
+      final a = service.watch('/one').listen((_) {});
+      final b = service.watch('/two').listen((_) {});
+      async.letArmsSettle();
+
+      expect(
+        exec.tokens,
+        hasLength(2),
+        reason: 'sharing is per PATH; different repositories are unrelated',
+      );
+      expect(hostBudget.liveFor('host'), 2);
+
+      a.cancel();
+      b.cancel();
+      async.flushMicrotasks();
+    });
+  });
+
+  test('two services on one path arm twice — sharing is per connection', () {
+    fakeAsync((async) {
       // Two tabs are two sessions, with two executors and two exclusions, and
       // the host lock is what arbitrates between them (MADR 0041 F12). One
       // exclusion across both would make one session wait on another's watcher
@@ -265,7 +266,7 @@ void main() {
 
       final a = serviceOn(execA).watch('/repo').listen((_) {});
       final b = serviceOn(execB).watch('/repo').listen((_) {});
-      await settleArm();
+      async.letArmsSettle();
 
       expect(execA.tokens, hasLength(1));
       expect(
@@ -277,82 +278,93 @@ void main() {
             'built for that case',
       );
 
-      await a.cancel();
-      await b.cancel();
-    },
-  );
-
-  test('a stream that is never listened to arms nothing', () async {
-    final exec = _ArmRecorder();
-    final service = serviceOn(exec);
-
-    service.watch('/repo'); // handed out, never subscribed
-    await settleArm();
-
-    expect(
-      exec.tokens,
-      isEmpty,
-      reason:
-          'building on first listen, not on the call, is what keeps an '
-          'unused stream free',
-    );
+      a.cancel();
+      b.cancel();
+      async.flushMicrotasks();
+    });
   });
 
-  test('a rebuilt caller re-arms after the last subscriber left', () async {
-    // The provider-rebuild shape: the old subscription goes, a new one
-    // arrives. One watcher at a time, but a NEW one — the path is watched
-    // again rather than left dead.
-    final exec = _ArmRecorder();
-    final service = serviceOn(exec);
+  test('a stream that is never listened to arms nothing', () {
+    fakeAsync((async) {
+      final exec = _ArmRecorder();
+      final service = serviceOn(exec);
 
-    final a = service.watch('/repo').listen((_) {});
-    await settleArm();
-    await a.cancel();
-    await settleArm();
+      service.watch('/repo'); // handed out, never subscribed
+      async.letArmsSettle();
 
-    final b = service.watch('/repo').listen((_) {});
-    await settleArm();
-
-    expect(exec.tokens, hasLength(2), reason: 'a second, distinct watcher');
-    expect(
-      exec.tokens.first,
-      isNot(exec.tokens.last),
-      reason: 'each watcher owns its own lease, per 0027',
-    );
-    expect(hostBudget.liveFor('host'), 1);
-
-    await b.cancel();
+      expect(
+        exec.tokens,
+        isEmpty,
+        reason:
+            'building on first listen, not on the call, is what keeps an '
+            'unused stream free',
+      );
+    });
   });
 
-  test('a new subscriber waits for a pending teardown before arming', () async {
-    // MADR 0043 F3/F4, and the gap a sabotage run found: the earlier re-arm
-    // test settles between cancelling and re-subscribing, so the teardown has
-    // already finished and the gate is never exercised. Here the teardown is
-    // deliberately slow and the next subscriber arrives DURING it — which on a
-    // real host is the arm that gets refused by its own predecessor.
-    final exec = _ArmRecorder(cancelDelay: const Duration(milliseconds: 400));
-    final service = serviceOn(exec);
+  test('a rebuilt caller re-arms after the last subscriber left', () {
+    fakeAsync((async) {
+      // The provider-rebuild shape: the old subscription goes, a new one
+      // arrives. One watcher at a time, but a NEW one — the path is watched
+      // again rather than left dead.
+      final exec = _ArmRecorder();
+      final service = serviceOn(exec);
 
-    final a = service.watch('/repo').listen((_) {});
-    await settleArm();
-    expect(exec.log, ['arm']);
+      final a = service.watch('/repo').listen((_) {});
+      async.letArmsSettle();
+      a.cancel();
+      async.letArmsSettle();
 
-    // Cancel and immediately re-subscribe — no settle, so the teardown is
-    // still in flight.
-    unawaited(a.cancel());
-    final b = service.watch('/repo').listen((_) {});
-    await Future<void>.delayed(const Duration(seconds: 2));
+      final b = service.watch('/repo').listen((_) {});
+      async.letArmsSettle();
 
-    expect(
-      exec.log,
-      ['arm', 'teardown', 'arm'],
-      reason:
-          'the second watcher must not be built until the first has finished '
-          'giving its host lock back — arming into that window is exactly the '
-          'refusal MADR 0043 is about',
-    );
+      expect(exec.tokens, hasLength(2), reason: 'a second, distinct watcher');
+      expect(
+        exec.tokens.first,
+        isNot(exec.tokens.last),
+        reason: 'each watcher owns its own lease, per 0027',
+      );
+      expect(hostBudget.liveFor('host'), 1);
 
-    await b.cancel();
+      b.cancel();
+      async.flushMicrotasks();
+    });
+  });
+
+  test('a new subscriber waits for a pending teardown before arming', () {
+    fakeAsync((async) {
+      // MADR 0043 F3/F4, and the gap a sabotage run found: the earlier re-arm
+      // test settles between cancelling and re-subscribing, so the teardown
+      // has already finished and the gate is never exercised. Here the
+      // teardown is deliberately slow and the next subscriber arrives DURING
+      // it — which on a real host is the arm that gets refused by its own
+      // predecessor.
+      final exec = _ArmRecorder(cancelDelay: const Duration(milliseconds: 400));
+      final service = serviceOn(exec);
+
+      final a = service.watch('/repo').listen((_) {});
+      async.letArmsSettle();
+      expect(exec.log, ['arm']);
+
+      // Cancel and immediately re-subscribe — no settle, so the teardown is
+      // still in flight.
+      unawaited(a.cancel());
+      final b = service.watch('/repo').listen((_) {});
+      async.elapse(const Duration(seconds: 2));
+
+      expect(
+        exec.log,
+        ['arm', 'teardown', 'arm'],
+        reason:
+            'the second watcher must not be built until the first has finished '
+            'giving its host lock back — arming into that window is exactly the '
+            'refusal MADR 0043 is about',
+      );
+
+      // Past the 400 ms teardown, so it finishes in fake time.
+      b.cancel();
+      async.letArmsSettle();
+    });
   });
 
   // MADR 0043 amendment 0043.1 (0044 PLAN deviation (c)). Found on a live host:
@@ -362,25 +374,24 @@ void main() {
   // talking to a redialing transport. None of the tests above lets a subscriber
   // LEAVE while a build is still deferred, which is why it went unseen.
 
-  test(
-    'a subscriber leaving while a build is deferred orphans nothing',
-    () async {
+  test('a subscriber leaving while a build is deferred orphans nothing', () {
+    fakeAsync((async) {
       final exec = _ArmRecorder(cancelDelay: const Duration(milliseconds: 400));
       final service = serviceOn(exec);
       Iterable<FakeWatcherHandle> live() =>
           exec.handles.where((h) => !h.cancelled);
 
       final s1 = service.watch('/repo').listen((_) {});
-      await settleArm();
+      async.letArmsSettle();
 
       unawaited(s1.cancel()); // the teardown is now in flight
-      await pumpEventQueue();
+      async.flushMicrotasks();
       final s2 = service.watch('/repo').listen((_) {});
-      await pumpEventQueue();
+      async.flushMicrotasks();
       unawaited(s2.cancel()); // ...and this one leaves before it settles
-      await pumpEventQueue();
+      async.flushMicrotasks();
       final s3 = service.watch('/repo').listen((_) {});
-      await Future<void>.delayed(const Duration(seconds: 2));
+      async.elapse(const Duration(seconds: 2));
 
       expect(
         live(),
@@ -389,8 +400,8 @@ void main() {
             'one subscriber, so exactly one watcher — not one per interleaving',
       );
 
-      await s3.cancel();
-      await Future<void>.delayed(const Duration(seconds: 2));
+      s3.cancel();
+      async.elapse(const Duration(seconds: 2));
 
       expect(
         live(),
@@ -400,25 +411,24 @@ void main() {
             'it keeps its host lock and lease until the connection dies',
       );
       expect(hostBudget.liveFor('host'), 0);
-    },
-  );
+    });
+  });
 
-  test(
-    'arriving, leaving and arriving during a teardown arms once, after it',
-    () async {
+  test('arriving, leaving and arriving during a teardown arms once, after it', () {
+    fakeAsync((async) {
       final exec = _ArmRecorder(cancelDelay: const Duration(milliseconds: 400));
       final service = serviceOn(exec);
 
       final a = service.watch('/repo').listen((_) {});
-      await settleArm();
+      async.letArmsSettle();
       unawaited(a.cancel());
-      await pumpEventQueue();
+      async.flushMicrotasks();
       final b = service.watch('/repo').listen((_) {});
-      await pumpEventQueue();
+      async.flushMicrotasks();
       unawaited(b.cancel());
-      await pumpEventQueue();
+      async.flushMicrotasks();
       final c = service.watch('/repo').listen((_) {});
-      await Future<void>.delayed(const Duration(seconds: 2));
+      async.elapse(const Duration(seconds: 2));
 
       expect(
         exec.log,
@@ -428,9 +438,11 @@ void main() {
             'next watcher is built once, and only after the lock has been given back',
       );
 
-      await c.cancel();
-    },
-  );
+      // Past the 400 ms teardown, so it finishes in fake time.
+      c.cancel();
+      async.letArmsSettle();
+    });
+  });
 
   test(
     'a teardown that never settles holds the next arm only until the grace',
@@ -470,82 +482,89 @@ void main() {
     },
   );
 
-  test('a rebuild with new parameters arms the new surface', () async {
-    // The provider-rebuild shape that 0043's factory refresh existed for: in one
-    // flush, the old subscription goes and a new one arrives asking for a
-    // DIFFERENT surface. A shared watcher keyed by path alone kept the first
-    // caller's parameters (MADR 0045 F1); a watcher per call cannot.
-    final exec = _ArmRecorder();
-    final service = serviceOn(exec);
+  test('a rebuild with new parameters arms the new surface', () {
+    fakeAsync((async) {
+      // The provider-rebuild shape that 0043's factory refresh existed for: in
+      // one flush, the old subscription goes and a new one arrives asking for a
+      // DIFFERENT surface. A shared watcher keyed by path alone kept the first
+      // caller's parameters (MADR 0045 F1); a watcher per call cannot.
+      final exec = _ArmRecorder();
+      final service = serviceOn(exec);
 
-    final recursive = service.watch('/repo').listen((_) {});
-    await settleArm();
+      final recursive = service.watch('/repo').listen((_) {});
+      async.letArmsSettle();
 
-    unawaited(recursive.cancel());
-    final bounded = service
-        .watch(
-          '/repo',
-          bounded: () async => computeBoundedWatchSpec(
-            gitDir: '/repo/.git',
-            workTree: '/repo',
-            trackedFiles: const ['a.txt'],
-          ),
-        )
-        .listen((_) {});
-    await Future<void>.delayed(const Duration(seconds: 2));
+      unawaited(recursive.cancel());
+      final bounded = service
+          .watch(
+            '/repo',
+            bounded: () async => computeBoundedWatchSpec(
+              gitDir: '/repo/.git',
+              workTree: '/repo',
+              trackedFiles: const ['a.txt'],
+            ),
+          )
+          .listen((_) {});
+      async.elapse(const Duration(seconds: 2));
 
-    expect(
-      exec.surfaces,
-      ['recursive', 'bounded'],
-      reason: 'the second watcher is built from the second call\'s parameters',
-    );
-    expect(
-      exec.handles.where((h) => !h.cancelled),
-      hasLength(1),
-      reason: 'and it replaced the first rather than joining it',
-    );
+      expect(
+        exec.surfaces,
+        ['recursive', 'bounded'],
+        reason:
+            'the second watcher is built from the second call\'s parameters',
+      );
+      expect(
+        exec.handles.where((h) => !h.cancelled),
+        hasLength(1),
+        reason: 'and it replaced the first rather than joining it',
+      );
 
-    await bounded.cancel();
+      bounded.cancel();
+      async.flushMicrotasks();
+    });
   });
 
-  test('the next watcher waits for the host claims, not just the channel', () async {
-    // MADR 0045 plan, deviation (e). The pending-teardown test above cannot see
-    // this: its executor answers the release at once, and logs `teardown` when
-    // the channel closes — before the release. Here the release is held open
-    // and the next subscriber arrives meanwhile. Releasing the exclusion before
-    // the host has given its lock back would let that subscriber arm into its
-    // own predecessor's lock (MADR 0043 F3, F4).
-    final exec = _GatedRelease();
-    final service = RemoteWatchService(
-      exec,
-      hostKey: () => 'host',
-      streamBudget: () => 8,
-      admission: WatchAdmission(budget: hostBudget),
-      gitDirOf: conventionalGitDir,
-    );
+  test('the next watcher waits for the host claims, not just the channel', () {
+    fakeAsync((async) {
+      // MADR 0045 plan, deviation (e). The pending-teardown test above cannot
+      // see this: its executor answers the release at once, and logs `teardown`
+      // when the channel closes — before the release. Here the release is held
+      // open and the next subscriber arrives meanwhile. Releasing the exclusion
+      // before the host has given its lock back would let that subscriber arm
+      // into its own predecessor's lock (MADR 0043 F3, F4).
+      final exec = _GatedRelease();
+      final service = RemoteWatchService(
+        exec,
+        hostKey: () => 'host',
+        streamBudget: () => 8,
+        admission: WatchAdmission(budget: hostBudget),
+        gitDirOf: conventionalGitDir,
+      );
 
-    final a = service.watch('/repo').listen((_) {});
-    await settleArm();
-    unawaited(a.cancel());
-    final b = service.watch('/repo').listen((_) {});
-    await Future<void>.delayed(const Duration(seconds: 1));
+      final a = service.watch('/repo').listen((_) {});
+      async.letArmsSettle();
+      unawaited(a.cancel());
+      final b = service.watch('/repo').listen((_) {});
+      async.elapse(const Duration(seconds: 1));
 
-    expect(exec.log, [
-      'arm',
-      'teardown',
-      'release-start',
-    ], reason: 'the host still holds the lock, so the next arm must not start');
+      expect(
+        exec.log,
+        ['arm', 'teardown', 'release-start'],
+        reason: 'the host still holds the lock, so the next arm must not start',
+      );
 
-    exec.gate.complete();
-    await settleArm();
+      exec.gate.complete();
+      async.letArmsSettle();
 
-    expect(exec.log, [
-      'arm',
-      'teardown',
-      'release-start',
-      'release-done',
-      'arm',
-    ], reason: 'and it arms once the host has let go');
-    await b.cancel();
+      expect(exec.log, [
+        'arm',
+        'teardown',
+        'release-start',
+        'release-done',
+        'arm',
+      ], reason: 'and it arms once the host has let go');
+      b.cancel();
+      async.flushMicrotasks();
+    });
   });
 }

@@ -244,7 +244,7 @@ void main() {
         final armed = <WatchTransition>[];
         final engine = fastEngine(
           arm: (_) async => SourceArmed(FakeArmedSource()),
-          onTransition: (kind, _, _) {
+          onTransition: (kind, _, _, _) {
             if (kind == WatchTransition.armed) armed.add(kind);
           },
         );
@@ -306,7 +306,7 @@ void main() {
               WatchUnavailableReason.heldByAnother,
             );
           },
-          onTransition: (kind, cause, _) =>
+          onTransition: (kind, cause, _, _) =>
               transitions.add('${kind.name}: $cause'),
         ).events.listen((_) {});
         async.elapse(Duration.zero);
