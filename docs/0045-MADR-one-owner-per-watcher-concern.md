@@ -301,7 +301,8 @@ set of a bounded surface, stays a supplier that the engine re-arms against, as t
   and becomes a facade: it derives the target from connection state, watches
   `watcherProvider(target)`, and applies `_withoutIgnoredPaths`.
 * **A parameter change is a different key.** Riverpod disposes the old engine and
-  creates a new one. No closure swap, no generation, no inference from timing.
+  creates a new one. No closure swap, no generation, no inference from timing. *(Only once
+  the facade closes its own subscription — see amendment 0045.3.)*
 * **A rebuild with an unchanged target keeps the running engine.** Riverpod 3.3.2 skips
   disposing an element that has regained a listener before its dispose task runs
   (`ProviderScheduler._performDispose` checks `hasNonWeakListeners`). So invalidating
@@ -576,6 +577,24 @@ production caller sets.
 
 The plan's deviations (j) and (l) hold the evidence and the execution; (i) and (k) change only the
 plan.
+
+### 0045.3 — a rebuilt stream provider keeps its previous subscriptions (2026-09-11)
+
+**What section 1 got wrong.** It says a parameter change makes Riverpod dispose the old engine,
+and that an unchanged rebuild keeps it because the dispose pass skips an element that has regained
+a listener. The second half is true; the first is not, for a facade that is itself a stream
+provider. Riverpod 3.3.2 pauses a rebuilding provider's previous subscriptions and closes them only
+when the new build completes — for a stream provider, when its stream is done
+(`element.dart:174`, `743-745`, `1187-1193`, `1218-1225`). A watcher stream is never done, so the
+facade kept listening to the old `watcherProvider` for its whole life, the dispose pass skipped it
+(`scheduler.dart:238-242`), and after a scoped git dir changed the old recursive watcher ran beside
+the new bounded one. Observed with a phase-5 test and probe; the unmodified tree replaced the
+watcher correctly.
+
+**Decision.** The facade closes its own subscription in `ref.onDispose`. The old watcher then
+loses its listener at the rebuild; a changed target's is disposed, and an unchanged target's
+regains a listener before the dispose pass runs — section 1's mechanism, in force. The plan's
+deviation (m) holds the evidence and the execution.
 
 ## More Information
 

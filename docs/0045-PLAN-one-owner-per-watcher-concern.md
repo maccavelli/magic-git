@@ -902,6 +902,8 @@ sweepStaleWatchers(...)`.
      `ref.onDispose` (annotated `// ignore: close_sinks` with the reason);
    * `ref.listen(watcherProvider(target), (_, next) { final v = next.value; if (v != null
      && !controller.isClosed) controller.add(v); }, fireImmediately: true);`
+     *(Deviation (m), 2026-09-11: the subscription is kept as `watching` and closed through
+     `ref.onDispose(watching.close)` — without it a rebuilt facade keeps its old watcher.)*
    * return `_withoutIgnoredPaths(oracle, repoPath, controller.stream)`.
 5. `_sweepStaleWatchers` calls `ref.read(watchRuntimeProvider).sweepStaleWatchers(...)`.
 
@@ -926,6 +928,7 @@ deviation: stop, and prompt with the evidence.
 | `p5: the facade family key includes a per-listen nonce` | `invalidating the facade keeps an unchanged target's watcher` |
 | `p5: the target ignores the scoped git dir` | `a changed scoped git dir replaces the watcher` |
 | `p5: the facade forwards unfiltered events` | `the facade's events are the watcher's events, filtered` |
+| *(deviation (m))* `p5: the facade's watcher subscription outlives its build` | `a changed scoped git dir replaces the watcher` |
 
 **Verify:**
 
@@ -1614,7 +1617,7 @@ catalogue was written; 0041, 0043, 0044 and 0045 were re-serialised in their com
 | 0043 | `p2: a new arm does not wait for a pending teardown` | `repo_exclusion.dart`: the wait loop's condition made never-true by an opaque `identical` test, which keeps null promotion |
 | 0044 | `p2: a refused arm keeps its slot` | the locked refusal's `ticket.releaseBudget()` removed |
 | 0045 | six `p2` entries from the table above | added |
-| 0045 | `p2: leaving the ignored-path filter does not reach the watcher` | added (deviation (d)): an `async*` pass-through in front of the `asyncMap` |
+| 0045 | `p2: leaving the ignored-path filter does not reach the watcher` | added (deviation (d)): an `async*` pass-through in front of the `asyncMap` *(replaced in phase 5 by `p5: the watcher outlives its last listener` — deviation (n))* |
 
 **Verification, so far.**
 
@@ -2099,6 +2102,149 @@ unmodified tree, by deviation (j)'s probe.
 
 **Commit.** Code `360b846`. Its message is the hook's and does not name the deviations; they are
 (h)–(l) above.
+
+### Phase 5 — identity in Riverpod, behind the unchanged facade
+
+Landed in `806e90e`, with deviations (m) and (n) and MADR amendment 0045.3.
+
+#### Deviation (m) — a rebuilt facade keeps the watcher it listened to (2026-09-11)
+
+**Found.** With step 4 as written, `invalidating the facade keeps an unchanged target's watcher`
+passed and `a changed scoped git dir replaces the watcher` failed: `Expected: true, Actual: <false>`
+on the first watcher's `cancelled`. A scratch probe showed the facade rebuilt with the bounded
+target and its watcher armed, while `watcherProvider(<the recursive target>)` still existed after
+further pumps and 1.5 s, its handle never cancelled, and the transition log read `armed, armed`
+with no `stopped`.
+
+Riverpod 3.3.2 does not close a rebuilding provider's previous subscriptions. `runOnDispose`
+pauses them and queues them as inactive (`element.dart:1218-1225`), and `_didCompleteInitialization`
+closes them when the new build completes (`element.dart:1187-1193`), which `buildState` wires to
+the value `create` returns (`element.dart:743-745`). For an async provider that is `done()`
+(`element.dart:291-295`), and for a stream provider `done` is the stream's `onDone`
+(`element.dart:174`). A watcher's stream is never done, so the facade holds its previous build's
+subscription for its whole life. A paused subscription still counts as a listener, so
+`_performDispose` skips the old watcher (`scheduler.dart:238-242`), and going inactive only pauses
+its stream (`element.dart:188-192`).
+
+**Not pre-existing.** The same probe against HEAD (`2856b34`) in a detached scratch worktree:
+`arms=2 cancelled=[true, false] lastBounded=true` — today's `repoWatchProvider` builds the stream
+inline and a rebuild cancels it (`element.dart:318`). The defect is the plan's design, and it
+contradicts MADR 0045 section 1's "Riverpod disposes the old engine"; the first test's pass
+confirmed nothing, since the retained subscription would keep the watcher alive either way.
+
+**Decision: resolution 1** (maintainer: "proceed with option 1"). The facade keeps its listen as
+`watching` and closes it through `ref.onDispose`. Closing removes it from the inactive queue
+(`element.dart:1049-1052`), so a changed target's old watcher loses its listener at once and is
+disposed; an unchanged target regains a listener within the same rebuild, before the scheduler's
+dispose pass — the mechanism section 1 described, now actually in force. Validated before the
+decision in the scratch worktree, with this phase's changes and the line applied:
+`repo_watch_facade_test.dart`, `repo_watch_provider_sharing_test.dart` and
+`repo_watch_ignore_filter_test.dart`, `00:08 +18: All tests passed!`. MADR amendment 0045.3.
+
+**Rejected.** Building the engine inside `repoWatchProvider` again, without the family: correct,
+and it abandons section 1's goal — every reconnect's invalidation would re-arm every watcher.
+
+**Scope added:** the catalogue entry `p5: the facade's watcher subscription outlives its build`.
+
+#### Phase 5, executed
+
+**Created.** `lib/core/git/watch/watch_runtime.dart` — `WatchRuntime.watch(target)` picks the
+service by backend and, for a `BoundedSurface`, builds the per-arm supplier with today's
+degrade-to-git-dir-only on a failed `listTrackedFiles`; `sweepStaleWatchers(repoPaths,
+scopedGitDirs, {required stillWanted})` resolves, asks `stillWanted`, then sweeps, which is how
+the plan's `(...)` keeps the connect path's attempt/`mounted` check between the two awaits.
+`test/repo_watch_facade_test.dart`, the plan's four tests.
+
+**Modified.** `app_providers.dart`: `watchTargetProvider`, `watchRuntimeProvider` and
+`watcherProvider` as specified; `repoWatchProvider`'s body is the facade, with deviation (m)'s
+close; `_sweepStaleWatchers` calls the runtime. Its `dart:developer` and `bounded_watch.dart`
+imports became unused and are gone.
+
+**Implementation notes.**
+
+* *`watchRuntimeProvider` reads the git service on each bounded arm rather than watching it.*
+  `gitServiceProvider` rebuilds when a commit timeout, network timeout or committer identity
+  changes; watching it from the runtime would have restarted every watcher, recursive ones
+  included, on such an edit, where today only a scoped repository's facade depended on it.
+* *The test for a changed target needed a real tracked-file listing*: the bounded arm lists files
+  through `executorProvider`, overridden with the recording executor, which answers `ls-files`.
+
+**Verification, so far.**
+
+```text
+flutter analyze                                   No issues found!
+dart format --output=none --set-exit-if-changed app_providers.dart watch_runtime.dart repo_watch_facade_test.dart
+                                                  exit 1 on the test file; formatted, then exit 0
+flutter test test/repo_watch_facade_test.dart test/repo_watch_provider_sharing_test.dart \
+  test/repo_watch_ignore_filter_test.dart         00:08 +18: All tests passed!
+flutter test <the 23 repoWatchProvider test files>
+                                                  00:26 +254: All tests passed!
+git diff --quiet HEAD -- <those 23, the sharing and ignore-filter tests>
+                                                  exit 0: unmodified
+flutter test                                      03:40 +4045 ~3: All tests passed!   (phase 4: +4041 ~3)
+```
+
+**Catalogue runs.** `--check`, then each catalogue one at a time with no other test run in
+progress; each passed its baseline and recognised the compile canary:
+
+```text
+tool/mutate.py --check 0039 0041 0043 0044 0045   118 entries in 5 catalogue(s): 118 sound, 0 did not apply, 0 do not compile (7m 39s)
+tool/mutate.py 0039-globals-and-heuristics       47 killed, 0 survived, 0 did not apply, 0 did not compile, 0 observed by no test
+tool/mutate.py 0041-watcher-teardown             27 killed, 0 survived, 0 did not apply, 0 did not compile, 0 observed by no test
+tool/mutate.py 0043-one-watcher-per-repo          7 killed, 0 survived, 0 did not apply, 0 did not compile, 0 observed by no test
+tool/mutate.py 0044-arm-readiness                10 killed, 0 survived, 0 did not apply, 0 did not compile, 0 observed by no test
+tool/mutate.py 0045-watch-stack                  26 killed, 1 survived, 0 did not apply, 0 did not compile, 0 observed by no test   (deviation (n))
+```
+
+After deviation (n)'s re-anchor, 0045 alone again — the only file changed since the runs above:
+
+```text
+tool/mutate.py --check 0045                      27 entries in 1 catalogue(s): 27 sound, 0 did not apply, 0 do not compile (1m 59s)
+tool/mutate.py 0045-watch-stack                  27 killed, 0 survived, 0 did not apply, 0 did not compile, 0 observed by no test
+```
+
+The phase-5 entries were killed by: `p5: the facade family key includes a per-listen nonce` →
+`invalidating the facade keeps an unchanged target's watcher` and `the facade's events are the
+watcher's events, filtered`; `p5: the target ignores the scoped git dir` and `p5: the facade's
+watcher subscription outlives its build` → `a changed scoped git dir replaces the watcher`;
+`p5: the facade forwards unfiltered events` → `the facade's events are the watcher's events,
+filtered`; `p5: the watcher outlives its last listener` → the four tests deviation (n) names.
+
+**Commit.** Code `806e90e`. Its message is the hook's and does not name the deviations; they are
+(m) and (n) above.
+
+**Catalogue changes.** Four entries added to 0045: the plan's three, and `p5: the facade's watcher
+subscription outlives its build` (deviation (m)). One replaced: `p2: leaving the ignored-path filter does not reach the watcher` by
+`p5: the watcher outlives its last listener` (deviation (n)).
+
+#### Deviation (n) — the filter no longer decides the watcher's lifetime (2026-09-11)
+
+**Found.** Catalogue 0045 at the phase-5 gate: `26 killed, 1 survived`, the survivor `p2: leaving
+the ignored-path filter does not reach the watcher` — the `async*` pass-through amendment 0045.1
+removed. Reproduced by hand in the harness's kept, isolated worktree with the mutation applied:
+`repo_watch_ignore_filter_test.dart` and `repo_watch_provider_sharing_test.dart`,
+`00:08 +14: All tests passed!`, including `the last listener leaving tears the watcher down` and
+`a returning listener on a quiet repository gets a watcher at once`, which assert the watcher's
+handle cancelled.
+
+**Why.** After this phase the filter does not hold the watcher. A leaving view disposes the facade,
+whose `onDispose` closes its listen on `watcherProvider` (deviation (m)), and the watcher's own
+auto-dispose stops the engine; the facade also closes the controller the filter reads, so even an
+`async*` filter ends. The mutant cannot produce the defect it was written for, and the 14 tests
+show no other difference.
+
+**Decision: resolution 1** (maintainer: "resolution option 1"). The entry is re-anchored to where the
+property now lives: `p5: the watcher outlives its last listener` removes `autoDispose` from
+`watcherProvider`, with the same two test files. Tried in the same worktree before the decision, it
+failed four tests, each `Expected: true, Actual: <false>` on the watcher's cancel: `leaving reaches
+the watcher while the repository is quiet`, `leaving reaches the watcher while a tick waits on git`,
+`the last listener leaving tears the watcher down`, `a returning listener on a quiet repository gets
+a watcher at once`. The `asyncMap` filter itself is unchanged; the change is to the catalogue only.
+
+**Rejected.** Re-coupling the watcher's lifetime to the facade's filtered stream so the old entry
+could fail again — the coupling amendment 0045.1 was about.
+
+**Scope added:** none; one catalogue entry replaced in place.
 
 ## Verification
 
