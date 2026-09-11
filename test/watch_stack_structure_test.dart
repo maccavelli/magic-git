@@ -88,6 +88,7 @@ void main() {
       'watchLifecycle(',
       '_SharedWatch',
       '_liveByHost',
+      '_slotReleases',
       'resetWatcherCount',
       'sharedTeardownGrace',
       '_detectWatcher',
