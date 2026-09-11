@@ -242,7 +242,8 @@ path it shows) is not what the host uses as identity (the directory it locks).
 * **`Coalescer`**: two commits in its history, and tested under `fakeAsync`.
 * **The `RepoWatchEvent` contract** that consumers depend on: `mode`, `paths`,
   `isScoped`, `touchesGitState`, `touchedAreas`.
-* **`_withoutIgnoredPaths`** and the `WatchUnavailableReason` taxonomy.
+* **`_withoutIgnoredPaths`** and the `WatchUnavailableReason` taxonomy. *(The filter's
+  contract is kept; its `async*` form is not — see amendment 0045.1.)*
 * **The readiness race** and its refusal decoding.
 * **The verification assets:** 47 watcher mutations across four catalogues, and the
   consolidated `FakeWatcherHandle`.
@@ -520,6 +521,36 @@ The executable detail — files, steps, tests, catalogue changes and acceptance 
 The limits: the claim in section 1 that an unchanged-target rebuild keeps its engine
 comes from reading Riverpod's source, not from a run, and the plan confirms it first.
 F10 is reproduced at the script level; the client's decoding of it, and a linked worktree arming on a real host, are confirmed in the plan's final phase.
+
+## Amendments
+
+### 0045.1 — the ignored-path filter did not pass cancellation through (2026-09-10)
+
+**What F11 got wrong.** F11 listed `_withoutIgnoredPaths` as solid. Its contract is; its
+implementation was not. Since it was added in `d3b2fda` (2026-07-13) it has been an `async*`
+function looping `await for` over the watcher's stream, while its doc comment describes an
+`asyncMap`. Cancelling an `async*` stream takes effect only at its next `yield`
+(`_AsyncStarStreamController.onCancel` in the VM: "Cancellation does not affect an async
+generator that is suspended at an await"), so when the last listener left
+`repoWatchProvider`, Riverpod disposed the provider and the watcher under it kept running
+until its next event. For a quiet repository that is its host process, lease, host lock and
+budget slot, for as long as the repository stays quiet. Observed with scratch probes on the
+phase-2 tree and on a clean worktree of `4e4a854`: `exists=false cancelled=false`, then
+`cancelled=true` after one event.
+
+**Why it surfaced now.** `_SharedWatch` masked it: a view returning to the repository
+re-attached to the still-live watcher. Under section 2 it cannot — the returning listener's
+new watcher waits on the stale one's exclusion hold, and a probe showed it with no mode after
+three seconds. Section 1's premise that the last listener leaving tears the watcher down was
+true of Riverpod and false of this stream.
+
+**Decision.** The filter becomes `raw.asyncMap(…)` with empty results dropped — what its doc
+comment already said. `Stream.asyncMap` sets `controller.onCancel = subscription.cancel`, so
+cancellation reaches the watcher at once, and pauses its source while a classification is
+pending, so ticks stay ordered. Its four behaviours are unchanged and are now each pinned at
+the provider level, where none was tested before; a returning listener on a quiet repository
+is pinned too. Phase 5's facade keeps the corrected filter. The plan's deviation (d) holds
+the evidence and the execution.
 
 ## More Information
 

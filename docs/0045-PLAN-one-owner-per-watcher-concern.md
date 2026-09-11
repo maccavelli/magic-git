@@ -477,6 +477,10 @@ after `cancelled = true`.
    => HostWatcherBudget())` and `watchAdmissionProvider = Provider<WatchAdmission>((ref) =>
    WatchAdmission(budget: ref.watch(hostWatcherBudgetProvider)))`.
    `remoteWatchServiceProvider` passes `admission: ref.watch(watchAdmissionProvider)`.
+   *(Deviation (d), 2026-09-10: also `_withoutIgnoredPaths` becomes a `Stream.asyncMap`,
+   so leaving the provider reaches the watcher; plus `watch_diagnostics.dart`'s doc
+   comment, `test/repo_watch_ignore_filter_test.dart`, a re-listen test in
+   `repo_watch_provider_sharing_test.dart`, and one 0045 catalogue entry.)*
 8. **`tabs_controller.dart`:** add the field `final HostWatcherBudget _watcherBudget =
    HostWatcherBudget();`. In `_create`, call `_containerFactory([hostWatcherBudgetProvider
    .overrideWithValue(_watcherBudget), ...overrides])`.
@@ -504,7 +508,7 @@ after `cancelled = true`.
   | `both subscribers receive the same events` | Moved to the new provider test |
   | `a late subscriber gets the current state without waiting` | Moved to the new provider test |
   | `the watcher survives one subscriber leaving` | Moved to the new provider test |
-  | `the last subscriber leaving tears the watcher down` | Kept (service level) |
+  | `the last subscriber leaving tears the watcher down` | Kept (service level) *(deviation (d): kept, but its `exec.handles.single` cannot hold without sharing — the assertions become every handle cancelled, never two live, and the budget back to zero)* |
   | `two different paths still get two watchers` | Kept |
   | `two services on one path arm twice — sharing is per connection` | Kept; its reason text now cites separate exclusions |
   | `a stream that is never listened to arms nothing` | Kept |
@@ -564,7 +568,7 @@ after `cancelled = true`.
 | --- | --- |
 | `p2: exclusion does not wait for a predecessor` | `a new subscriber waits for a pending teardown before arming`, A, B |
 | `p2: a cancelled exclusion wait still installs a hold` | A, `repo_exclusion_test.dart` |
-| `p2: exclusion is released before the host claims` | `a new subscriber waits for a pending teardown before arming` |
+| `p2: exclusion is released before the host claims` | `a new subscriber waits for a pending teardown before arming` *(deviation (e): that test cannot observe the order and the entry survived; killed by `the next watcher waits for the host claims, not just the channel`)* |
 | `p2: the stream-budget path strands its lease` | a new test in `watch_lease_release_test.dart`: `a stream-budget refusal gives back the lease it stamped` |
 | `p2: the admission grace is unbounded` | C |
 | `p2: the lifecycle ignores the bounded parameter` | `a rebuild with new parameters arms the new surface` |
@@ -1429,6 +1433,13 @@ About 3.6 s an entry on this machine: under three minutes for the watcher catalo
 phase boundary, and about thirteen for the full sweep — longer than the "few minutes"
 estimated when this resolution was chosen.
 
+*(The standalone plan this resolution called for is written:
+[0046-PLAN-restore-stale-workspace-mutation-entries.md](0046-PLAN-restore-stale-workspace-mutation-entries.md),
+status `proposed`, awaiting the maintainer's review. Its 14 re-anchors were checked by
+script against the tree — old anchor 0 matches, new anchor 1, killing test present by title —
+and compiled with `tool/mutate.py --check`, whose first pass caught two candidates that did not
+compile; after they were rewritten it reported `14 entries in 1 catalogue(s): 14 sound`.)*
+
 **Final catalogue runs, on the harness as committed,** one at a time, after the checks and
 with no other test run in progress. Each mirrored the same 23 paths, passed its baseline,
 and recognised the compile canary:
@@ -1442,6 +1453,234 @@ tool/mutate.py 0045-watch-stack      baseline green: 5 test file(s)  6 killed, 0
 Every kill names a real test; none rests on a `loading …` pseudo-test. The re-anchored
 `p2: a failing lease removal escapes the teardown` is killed by exactly
 `a removal that throws does not fail the teardown`.
+
+### Phase 2 — admission replaces sharing and the statics
+
+**Complete — code committed as `6defce4`** (31 files: 8 in `lib`, 17 tests, 6 catalogues;
+`test/watch_shared_path_test.dart` included, which ends the two-failure state). Gate at
+commit: `dart format --output=none --set-exit-if-changed` on the 25 staged Dart files, 0
+changed; `flutter analyze` and the full suite as recorded under deviation (e). The generated
+commit message describes admission and the release paths; the ignored-path filter's fix is
+recorded in deviation (d) and amendment 0045.1.
+
+Implemented as written: `lib/core/git/watch/admission/` (`HostWatcherBudget`,
+`RepoExclusion`, `WatchAdmission`); `WatchHooks.cancelled`; `RemoteWatchService` without
+`_SharedWatch`, its map or its statics, admitting through an injected `WatchAdmission` and
+releasing per exit path in the table's order; the two providers and `TabsController`'s
+budget; the 11 test files migrated so every service a test builds shares that test's budget
+and keeps its own exclusion; `watch_shared_path_test.dart` per the contract table; and the
+five new test files. `flutter analyze`: no issues. Tests A and B pass.
+
+The first targeted run (`flutter test` on the five new files, the 11 migrated files,
+`tabs_controller_test.dart` and `watch_lifecycle_test.dart`) reported three failures. One
+was an assertion of mine in a new test, `exclusion is acquired before the budget`, which
+expected the woken waiter to be refused when, with capacity two and one slot held, it is
+admitted; the expectation was corrected — the property under test, that the waiter holds no
+slot while it waits, is asserted earlier in the same test. The other two are deviation (d).
+
+#### Deviation (d) — leaving the provider does not reach a quiet watcher; a kept test cannot hold; one unlisted file (2026-09-10)
+
+**Found, 1 — pre-existing, and made worse by this phase.** `repoWatchProvider` returns
+`_withoutIgnoredPaths(oracle, repoPath, raw)`, an `async*` function looping
+`await for (final event in raw)`. It has had that form since it was added in `d3b2fda`
+(2026-07-13), while its doc comment says it is an `asyncMap`. Cancelling an `async*`
+stream takes effect only at its next `yield`; the VM says so in
+`dart-sdk/lib/_internal/vm/lib/async_patch.dart`, `_AsyncStarStreamController.onCancel`:
+"Cancellation does not affect an async generator that is suspended at an await." A quiet
+watcher never brings the generator to a `yield`.
+
+* *The new test that found it:* `repo_watch_provider_sharing_test.dart`,
+  `the last listener leaving tears the watcher down` — `Expected: true, Actual: <false>`
+  on the handle's `cancelled`, after both listeners closed and a 500 ms settle.
+* *Observed, not inferred* — scratch probes in gitignored `build/`, on this tree:
+
+  ```text
+  PROBE control-direct: handles=1 cancelled=[true]
+  PROBE wrapper-quiet: cancelled=false cancelFutureCompleted=false
+  PROBE wrapper-after-one-event: cancelled=true cancelFutureCompleted=true
+  PROBE provider-quiet: exists=false cancelled=false
+  PROBE provider-after-one-event: cancelled=true
+  ```
+
+  Riverpod disposed the provider (`exists=false`); the watcher stayed live until one
+  event reached it.
+* *Pre-existing:* the same probe in a scratch worktree at `4e4a854`, 0 uncommitted
+  entries, printed the identical five lines.
+* *Worse under this phase:* a view that leaves a quiet repository and returns.
+
+  ```text
+  HEAD         relisten-quiet-3s: seen=[AsyncLoading, eventDriven] handles=1 cancelled=[false]
+  this tree    relisten-quiet-3s: seen=[AsyncLoading] handles=1 cancelled=[false]
+  this tree    relisten-after-old-event: seen=[AsyncLoading, eventDriven] handles=2 cancelled=[true, false]
+  ```
+
+  On `HEAD` the returning listener re-attached to the still-live shared watcher. Here the
+  new watcher waits on the stale watcher's exclusion hold, and showed no mode after three
+  seconds; by design it would wait up to `WatchTimings.defaultAdmissionGrace` and then meet
+  its own session's host lock. That last step was not run out.
+* *Not fixed by a later phase:* phase 5's facade still returns `_withoutIgnoredPaths(…)`,
+  and MADR 0045 F11 lists the function as kept.
+
+**Found, 2.** `watch_shared_path_test.dart`, `the last subscriber leaving tears the watcher
+down`, kept by the contract table "(service level)": `Bad state: Too many elements` at
+`exec.handles.single`. Without sharing, the second subscriber arms its own watcher once the
+first leaves. A scratch probe of the same sequence, five runs, printed the same line each
+time: `after log=[arm, teardown, arm, teardown] handles=2 cancelled=[true, true]
+liveFor(host)=0`. The intent holds; the assertion is sharing's.
+
+**Found, 3.** `lib/core/git/watch_diagnostics.dart:71`, a file not in this phase's list,
+documents `WatchTransitionRecord.liveWatchers` as "`RemoteWatchService.liveWatchers` at
+this instant" — a member this phase deletes.
+
+**Decision** (maintainer: "1 and fix 3", read as resolution 1 for findings 1 and 2):
+
+1. `_withoutIgnoredPaths` becomes `raw.asyncMap(…)` with the empty results dropped — the
+   form its own doc comment describes. `Stream.asyncMap` sets
+   `controller.onCancel = subscription.cancel`, so leaving reaches the watcher at once, and
+   pauses its source while each classification is pending, so ticks stay ordered. Its four
+   behaviours are unchanged — an unscoped tick passes through; an ignore-source path forgets
+   the repository's verdicts; a classification error fails open; a wholly ignored tick is
+   dropped — and, having had no test at the provider level, get one each in
+   `test/repo_watch_ignore_filter_test.dart`. `repo_watch_provider_sharing_test.dart` gains
+   `a returning listener on a quiet repository gets a watcher at once`. MADR 0045 gains
+   amendment 0045.1.
+2. The kept test keeps its title and level, and asserts what the design guarantees: every
+   handle cancelled, never two live at once, and the budget back to zero.
+3. The doc comment names the admission budget.
+
+**Rejected.** A hand-rolled `StreamController` with an ordered processing chain does the
+same with more code to own. Retiring the service-level test would lose the only
+service-level check that a second, sequential watcher is torn down too. Deferring to
+phase 5 was not offered: that phase keeps the function as it is.
+
+**Scope added to phase 2:** `_withoutIgnoredPaths` in `lib/core/providers/app_providers.dart`;
+`lib/core/git/watch_diagnostics.dart`; `test/repo_watch_ignore_filter_test.dart`; one test in
+`test/repo_watch_provider_sharing_test.dart`; the 0045 catalogue entry
+`p2: leaving the ignored-path filter does not reach the watcher`.
+
+**Executed.**
+
+* `_withoutIgnoredPaths` is `raw.asyncMap<RepoWatchEvent?>(…)`, dropping the null results with
+  `.where(…).map(…)`; its doc comment gains the cancellation reason and cites amendment 0045.1.
+* `test/repo_watch_ignore_filter_test.dart`, eight tests through the real `repoWatchProvider`,
+  with a scripted service and a scripted oracle: the four behaviours, a partly ignored tick,
+  order while one tick waits on git, and leaving — both while quiet and while a tick waits on
+  git.
+* `repo_watch_provider_sharing_test.dart`: `a returning listener on a quiet repository gets a
+  watcher at once`.
+* The kept test asserts that no handle is left live and that the log alternates `arm` and
+  `teardown` — each watcher gone before the next arms — rather than a count of watchers.
+* `watch_diagnostics.dart:71` documents the field as `HostWatcherBudget.liveTotal`.
+* Two doc comments in the new admission files named retired identifiers as history; they were
+  reworded so the phase's acceptance grep is clean, rather than read as an exception to it.
+
+**Catalogue changes, as executed.** Every new anchor was asserted to match once before any
+catalogue was written; 0041, 0043, 0044 and 0045 were re-serialised in their committed styles,
+0039 and 0040 edited in place entry by entry.
+
+| Catalogue | Entry | Executed |
+| --- | --- | --- |
+| 0039 | `f4: the ceiling counts every host together again` | `host_watcher_budget.dart`: `final live = liveFor(host);` → `liveTotal` |
+| 0039 | `f4: a released slot is announced to every host` | `host_watcher_budget.dart`: the `where((h) => h == host)` filter removed |
+| 0039 | `f4: the release credits the current host, not the reserving one` | `host_watcher_budget.dart`: `_budget._release(host)` credits a host that never reserved — the slot no longer carries a "current host" to mis-credit, so the sabotage is crediting anyone but the reserver |
+| 0040 | `p1: the catch-all is removed, so four of five failures strand the slot` | the catch-all's `ticket.releaseBudget()` removed; the `rethrow` entry applied unchanged |
+| 0041 | `p2: teardown does not release the lease` | re-anchored onto the teardown tail, which now ends in `releaseExclusion()` |
+| 0041 | `p2: a failing lease removal escapes the teardown` | re-anchored at the closure's new indentation, outside the `try` |
+| 0041 | `p2: teardown removes the pid file, which is not the client's` | re-anchored at the new indentation |
+| 0041 | `p4: each service instance gets its own budget (per-session keying)` | `tabs_controller.dart`: the `hostWatcherBudgetProvider` override removed; tests `tab_watcher_budget_injection_test.dart`, `watch_ceiling_recovery_test.dart` |
+| 0043 | `p1: sharing removed — every watch() builds its own watcher` | **retired** |
+| 0043 | `p1: the last event is not replayed to a late subscriber` | **retired** |
+| 0043 | `p1: the factory is not refreshed, so a rebuild keeps a stale closure` | **retired** |
+| 0043 | `p1: the watcher is built eagerly, not on the first subscriber` | `watch()` arms a lifecycle before returning one |
+| 0043 | `p1: the shared map is static, so two tabs share one watcher` | `watch_admission.dart`: one process-wide `RepoExclusion` for every admission |
+| 0043 | `p2: teardown does not give the lock back` | the same teardown-tail re-anchor as 0041's |
+| 0043 | `p2: a new arm does not wait for a pending teardown` | `repo_exclusion.dart`: the wait loop's condition made never-true by an opaque `identical` test, which keeps null promotion |
+| 0044 | `p2: a refused arm keeps its slot` | the locked refusal's `ticket.releaseBudget()` removed |
+| 0045 | six `p2` entries from the table above | added |
+| 0045 | `p2: leaving the ignored-path filter does not reach the watcher` | added (deviation (d)): an `async*` pass-through in front of the `asyncMap` |
+
+**Verification, so far.**
+
+```text
+flutter analyze                                   No issues found!
+targeted: 6 new, 11 migrated, tabs_controller,
+          watch_lifecycle                         00:33 +126: All tests passed!
+flutter test                                      03:58 +4008 ~3: All tests passed!   (phase 1: +3979 ~3 -2)
+grep '_SharedWatch|_liveByHost|_slotReleases|
+      resetWatcherCount|sharedTeardownGrace' lib  exit 1, no output
+tool/mutate.py --check  0039 0040 0041 0043 0044 0045
+                                                  106 entries in 6 catalogue(s): 106 sound, 0 did not apply, 0 do not compile (7m 25s)
+```
+
+**Catalogue runs,** one at a time with no other test run in progress; each mirrored 34 paths,
+passed its baseline and recognised the compile canary:
+
+```text
+tool/mutate.py 0039-globals-and-heuristics  47 killed, 0 survived, 0 did not apply, 0 did not compile, 0 observed by no test
+tool/mutate.py 0040-watcher-ceiling          2 killed, 0 survived, 0 did not apply, 0 did not compile, 0 observed by no test
+tool/mutate.py 0041-watcher-teardown        27 killed, 0 survived, 0 did not apply, 0 did not compile, 0 observed by no test
+tool/mutate.py 0043-one-watcher-per-repo     7 killed, 0 survived, 0 did not apply, 0 did not compile, 0 observed by no test
+tool/mutate.py 0044-arm-readiness           10 killed, 0 survived, 0 did not apply, 0 did not compile, 0 observed by no test
+tool/mutate.py 0045-watch-stack             12 killed, 1 survived, 0 did not apply, 0 did not compile, 0 observed by no test
+  SURVIVOR : p2: exclusion is released before the host claims
+```
+
+#### Deviation (e) — no test observes that exclusion outlives the host claims (2026-09-10)
+
+**Found.** `p2: exclusion is released before the host claims` moves `ticket.releaseExclusion()`
+ahead of `await releaseHostClaims()` in the `WatchArmed` teardown, so this session's next
+watcher of the repository may arm while the host still holds the previous watcher's lock — the
+self-refusal MADR 0043 F3 and F4 describe. It survived. The table named
+`a new subscriber waits for a pending teardown before arming` as its killer, but that test's
+executor answers the release at once and logs `teardown` when the channel closes, which is
+before the release: nothing in it can see the order between the release and the exclusion.
+
+**Reproduced by hand,** in a scratch worktree mirroring the 34 uncommitted paths:
+
+```text
+entry-unmutated    exit=0 passed
+entry-mutated      exit=0 passed          (00:23 +11: All tests passed!)
+```
+
+**A test that observes it, seen to fail.** A scratch test whose executor holds the release open
+on a gate while the next subscriber arrives, run in the same worktree:
+
+```text
+probe-unmutated    exit=0 passed
+probe-mutated      exit=1 KILLED  -> the next watcher waits for the host claims, not just the channel
+  Expected: ['arm', 'teardown', 'release-start']
+    Actual: ['arm', 'teardown', 'release-start', 'arm']
+```
+
+**Decision: resolution 1.** The test joins `test/watch_shared_path_test.dart`, which is already
+the entry's test list, so the catalogue is unchanged; 0045 is run again.
+
+**Rejected.** Filing it in `watch_lease_release_test.dart` would have grouped it by lease rather
+than by exclusion, and changed the entry's test list.
+
+**Scope added to phase 2:** one test and its gated executor in `test/watch_shared_path_test.dart`.
+
+**Executed.** `watch_shared_path_test.dart` gained `_GatedRelease`, an executor that holds the
+lease-and-lock release open on a gate and logs around it, and
+`the next watcher waits for the host claims, not just the channel`, asserting
+`['arm', 'teardown', 'release-start']` while the release is held and
+`['arm', 'teardown', 'release-start', 'release-done', 'arm']` once it completes.
+
+**Final verification** (after deviations (d) and (e)):
+
+```text
+flutter analyze                          No issues found! (ran in 5.9s)
+flutter test test/watch_shared_path_test.dart
+                                         00:26 +12: All tests passed!
+tool/mutate.py 0045-watch-stack          baseline green: 10 test file(s); compile canary recognised
+                                         13 killed, 0 survived, 0 did not apply, 0 did not compile, 0 observed by no test
+                                         p2: exclusion is released before the host claims
+                                           -> the next watcher waits for the host claims, not just the channel
+flutter test                             03:50 +4009 ~3: All tests passed!   (phase 1: +3979 ~3 -2)
+```
+
+The other five catalogues were run before deviation (e), whose change is one test in a file
+none of them names.
 
 ## Verification
 
