@@ -596,6 +596,29 @@ loses its listener at the rebuild; a changed target's is disposed, and an unchan
 regains a listener before the dispose pass runs — section 1's mechanism, in force. The plan's
 deviation (m) holds the evidence and the execution.
 
+### 0045.4 — watchers release before the transport closes (2026-09-11)
+
+**What the design left out.** Section 3 gives the engine sequencing and section 2 gives admission the
+order a watcher releases in — budget, host claims, exclusion — but nothing ordered a watcher's
+release against the transport it releases over. Since the first commit, `disconnect()` has closed
+the SSH transport before invalidating the session, and `connectLocal()` does the same when leaving
+SSH. Phase 7's host verification found the consequence: after a disconnect the watcher's script
+removed its own pid file and lock as its channel closed, and the heartbeat the client owns stayed
+behind, 380 s later still, because the client's removal had no transport left to travel over. The
+connect sweep reclaims such a heartbeat only once it is stale, and only at a later connect.
+
+**Decision.** Watchers are released before the transport closes. The connection controller
+suspends watching — the facade then listens to no watcher, so each engine stops and gives back its
+host claims — and waits for the session's exclusion to hold no lock, bounded by the release timeout,
+before it disconnects, replaces or tears down a transport. The wait is skipped unless the session is
+connected and a lock is still held: a lost transport carries nothing, and an idle exclusion has nothing
+to give back — which also keeps every other connect and disconnect free of an extra asynchronous step.
+The next session resumes watching.
+
+Deciding this by the connection's phase — no watch target unless connected — was prototyped and
+rejected: a disconnected default state is what the provider tests build on, and 18 of them stopped
+arming. The plan's deviation (t) holds the evidence and the execution.
+
 ## More Information
 
 * **Records this changes.**

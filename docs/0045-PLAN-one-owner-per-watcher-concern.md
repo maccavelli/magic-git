@@ -1053,7 +1053,9 @@ watcher, one lock, one pid file and one heartbeat per armed repository, and no
 from MADR 0044's plan, read-only). The maintainer disconnects and reconnects the remote
 tab from the switcher. The sampler must show each armed repository torn down once and
 re-armed once. Five minutes after reconnecting, every heartbeat must have a pid file
-beside it, and every lock a live watcher.
+beside it, and every lock a live watcher. *(Deviation (t), 2026-09-11: the first run failed this —
+a disconnect stranded the watcher's heartbeat — and the fix is recorded below; 7.3 is re-run on a
+rebuild.)*
 
 7.4 **The foreign-lock refusal still refuses** — a repeat of MADR 0044's 4.4(b), the
 only step that writes to a host. Stage a foreign lock on a background repository using
@@ -2423,6 +2425,229 @@ grace`.
 
 **Commit.** Code `9dc567d`. Its message is the hook's and does not name the deviations; they are
 (o)–(s) above.
+
+### Phase 7 — host verification with the maintainer, then close the records
+
+In progress.
+
+**7.1.** The maintainer rebuilt and relaunched before the steps began: the installed bundle reads
+`1.7.0.1`, `git describe --tags` at `HEAD` reads `v1.7.0-1-gc89891d`, and the binary was written 98 s
+after that commit (a docs-only commit over the `v1.7.0` tag at `7eab2e2`). Three remote tabs, one per
+saved SSH connection and host, and two local tabs were open throughout.
+
+**7.2 — registry census**, read-only over SSH, 13:07 host time, one remote tab active:
+
+```text
+admdevops   armed: 1 of 21 repositories — percona-postgres: 1 lock, 1 pid (alive), 1 heartbeat, one token;
+            4 watcher processes (the script, its inotifywait, two lease-loop subshells)
+            stranded: one heartbeat, base36 token, 781 s old — written before this build was installed
+awsutility  armed: 0; watcher processes: 0
+wonder      armed: 0; watcher processes: 0
+```
+
+The stranded heartbeat's token is in the pre-phase-6 base36 form and predates the installed binary,
+so it came from the previous build being quit without a teardown; the connect sweep reclaimed it at
+the next connect, below.
+
+**7.3 — reconnect**, with a read-only 5 ms registry sampler on all three hosts. The maintainer
+disconnected and reconnected the admdevops tab, and during it clicked `lkq-eck-elastic`:
+
+```text
+13:13:08.539 - percona-postgres mg-watch.0471e57fea5d5e75.pid     disconnect: the watcher exits
+13:13:08.545 - percona-postgres mg-watch.lock                     ...and its script releases the lock
+13:13:09.145 + lkq-eck-elastic  mg-watch.372f6a023cd81701.hb      the maintainer's click
+13:13:09.368 + lkq-eck-elastic  mg-watch.372f6a023cd81701.pid
+13:13:09.368 + lkq-eck-elastic  mg-watch.lock
+13:13:25.515 - lkq-eck-elastic  mg-watch.372f6a023cd81701.pid     torn down with the transport up:
+13:13:25.521 - lkq-eck-elastic  mg-watch.lock                     pid, lock AND heartbeat removed
+13:13:25.682 - lkq-eck-elastic  mg-watch.372f6a023cd81701.hb
+13:13:27.746 + percona-postgres mg-watch.7d238872593d49a5.hb      re-armed once: heartbeat to lock 222 ms
+13:13:27.968 + percona-postgres mg-watch.7d238872593d49a5.pid
+13:13:27.968 + percona-postgres mg-watch.lock
+13:13:32.550 - percona-postgres mg-watch.hm726mnstwa.hb           the connect sweep reclaims 7.2's stale lease
+```
+
+Torn down once and re-armed once, as required. Five minutes after the re-arm, at 13:18:31:
+
+```text
+percona-postgres: lock 7d238872593d49a5 (303 s), pid 1323403 alive, heartbeat 7d238872593d49a5 (3 s)
+                  heartbeat 0471e57fea5d5e75, 380 s old, NO pid file beside it  <- stranded
+```
+
+Every lock has a live watcher; not every heartbeat has a pid file. **7.3 failed.**
+
+#### Deviation (t) — a disconnect strands every armed watcher's heartbeat (2026-09-11)
+
+**Found.** `ConnectionController.disconnect()` closes the SSH transport (`sshClientManager.disconnect()`)
+before `_invalidateRepoState()`; `connectLocal()` does the same when leaving an SSH session. The
+watcher is torn down after the transport is gone, so its client-owned heartbeat removal — issued
+through that transport — fails silently (the teardown is best-effort by design). The host script
+removes its own pid file and lock when its channel closes, which is exactly the sampler's picture:
+pid and lock gone at 13:13:08, heartbeat never. `lkq-eck-elastic`'s teardown, with the transport up,
+removed all three. The connect sweep reclaims a heartbeat with no pid only once it is older than the
+five-minute stale age — deliberately, because a fresh one is what an arm in flight looks like — and
+runs only at connect, so a disconnect's heartbeat waits for a connect to that host at least five
+minutes later, and forever if there is none.
+
+**Pre-existing.** The transport-first order dates from `2d8a357` (2026-07-06); MADR 0043's plan noted
+that "a teardown during a disconnect has no executor to talk to". MADR 0043 F6 treated stranded
+heartbeats as a defect when refusals left them.
+
+**Decision: resolution 1** (maintainer: "option 1"). Release the session's watchers before any
+transport close, bounded, within MADR 0045:
+
+* a `watchSuspensionProvider` the facade obeys: while suspended it listens to no watcher, so the
+  watcher's provider disposes and its engine releases its host claims;
+* `RepoExclusion.whenIdle()`, completing when the session holds no repository lock — which, because
+  the exclusion is released last, means every watcher's host claims have been given back;
+* `ConnectionController` suspends, then — only while the session is connected and a lock is still
+  held, since a lost transport carries nothing and an idle exclusion has nothing to give back —
+  awaits `whenIdle()` bounded by `WatchTimings.defaultReleaseTimeout`, before `disconnect()` closes
+  the transport, before `connect()` replaces it, and before `connectLocal()` tears it down;
+  `connect()` and `connectLocal()` resume watchers before the new session's transport work.
+
+**Rejected.**
+
+* *Gating the watch target on the connection being connected* — the first design. Prototyped in a
+  detached scratch worktree at `c89891d` before this record was written: 18 tests failed across
+  `repo_watch_facade_test.dart`, `repo_watch_ignore_filter_test.dart`,
+  `repo_watch_provider_sharing_test.dart` and `worktree_invalidation_test.dart`, every one because a
+  default `ConnectionState()` is disconnected and its watcher no longer armed — the provider tests'
+  contract, changed to fit the fix.
+* *Fixing it under a new record* (resolution 2): leaves the stranded heartbeats in place until then.
+
+**Scope added:** `repo_exclusion.dart`, `app_providers.dart` (the suspension provider, the facade, the
+controller's three transport-close paths), `repo_exclusion_test.dart`, a new ordering test, catalogue
+entries, MADR amendment 0045.4; then a rebuild and a re-run of 7.3.
+
+#### Deviation (t), executed
+
+**Created.** `test/watch_transport_release_test.dart`, in fake time, over a transport and a host that
+write to one log: `a disconnect releases each watcher before it closes the transport`, `a release that
+never answers holds the close only for its timeout`, `a lost connection closes without waiting on a
+release`, `switching hosts releases the watcher before replacing the transport` (which also asserts
+the new session resumes watching), `opening a local repository releases the remote watcher first`.
+
+**Modified.** `RepoExclusion` gains `isIdle` and `whenIdle()`, settled by the release of the last hold;
+`repo_exclusion_test.dart` gains `whenIdle is immediate when nothing is held` and `whenIdle waits
+until every hold is released`. `app_providers.dart` gains `watchSuspensionProvider`; the facade
+listens to its watcher only while not suspended; `ConnectionController` gains
+`_releaseWatchersBeforeTransportCloses()`, called by `disconnect()`, `connect()` and `connectLocal()`,
+each followed by a supersession check after the wait.
+
+**The first form broke 13 tests.** It awaited the helper unconditionally at the top of `connect()`.
+`connection_race_test.dart` failed 13 tests — `Expected: ConnectionPhase.connecting, Actual:
+ConnectionPhase.disconnected` among them — because even an already-completed future yields, so a
+connect no longer published its `connecting` state synchronously. The helper now suspends at once and
+returns null when there is nothing to wait for — not connected, or no lock held — so a caller yields
+only while a release is in flight; and in `connect()` the wait sits inside the existing `try`,
+immediately before the transport is replaced, so the `connecting` state is still published at once and
+a superseded attempt's forge gate is still completed by the `finally` (`app_providers.dart` 1646-1651).
+
+**Verification, so far.**
+
+```text
+flutter analyze                                   No issues found!
+flutter test <repo_exclusion, watch_transport_release, the facade, sharing and ignore-filter tests,
+  and every connection-lifecycle test: auto_reconnect, connection_race, connection_env_reset,
+  connection_provisioning, host_key_verification, host_key_dialog, connect_paths, local_backend,
+  tabs_controller, workspace_flow, connection_cycle_regression, auto_fetch>
+                                                  00:17 +129: All tests passed!
+```
+
+**Catalogue changes.** Nine entries added to 0045, each removing one guarantee: the disconnect, host
+switch and leaving-SSH releases, the resume, the lost-connection skip, the timeout, the facade's
+suspension check, `isIdle`, and the idle settle.
+
+#### Deviation (u) — the linear-time test is held to a bound its path has grown into (2026-09-11)
+
+**Found.** Deviation (t)'s gate passed format, analyze and its 132 targeted tests; the full suite then
+failed `record splitting a large burst costs linear time, not a copy per record`: `Expected: a value
+less than <50>, Actual: <53>`. Phases 3 and 6 had recorded the test as near its bound. A probe ran it
+five times at each commit, alone, in detached scratch worktrees, alongside the splitter's own
+`a large burst is linear` (milliseconds; `!` marks a run over 50):
+
+| commit | through the service | the splitter alone |
+| --- | --- | --- |
+| before MADR 0045 (`7898950`) | 23 23 22 23 23 | — (the test did not exist) |
+| phase 2 (`6defce4`) | 26 26 26 26 26 | 3 3 3 3 4 |
+| phase 3 (`d77e34a`) | 40 40 41 38 39 | 3 4 4 3 4 |
+| phase 4 (`360b846`) | 43 47 43 43 43 | 4 4 4 3 3 |
+| phase 5 (`806e90e`) | 43 44 43 61! 43 | 3 3 3 3 3 |
+| phase 6 (`9dc567d`) | 45 41 42 42 42 | 4 3 3 4 4 |
+| this tree | 44 42 44 42 55! | 3 4 4 4 4 |
+
+The splitter is still linear and cheap. What grew is the path around it — phase 3's source seam and
+phase 4's engine mailbox, about a microsecond per record — which took a 50 ms bound with a ~2x margin
+to a ~1.15x one: 2 of 35 probe runs failed it, and the gate. **Pre-existing** to deviation (t): this
+tree times as phase 6. The test's comment — "a cursor costs ~1 ms ... cannot flake" — was already
+wrong before MADR 0045.
+
+**Decision: resolution 1** (maintainer: "option 1"). Measure growth instead of a fixed time.
+Resolution 2 — delivering a chunk's paths as one signal to win the per-record cost back — is left
+for a follow-up: it changes the `SourceSignal` shape across both sources and the engine.
+
+**Corrected before executing.** The resolution as proposed grew the record count (10,000 against
+40,000). That cannot tell the defect apart: records arrive in ~32 KiB chunks, and per-record re-slicing
+copies the rest of its chunk, so its cost grows with the chunk, not the count — both forms scale ~4x
+with the count. The test instead splits the same 20,000 records in 4 KiB and in 128 KiB chunks and
+bounds the ratio; every per-record cost on the path is common to both and cancels. Prototyped in a
+detached scratch worktree first (fastest of three bursts after a warm-up):
+
+```text
+a cursor (this tree)            4 KiB vs 128 KiB: 0.86 0.88 0.85 0.92     8 KiB vs 64 KiB: 0.94 0.82 0.92 0.98
+re-slicing per record (0024 A1) 4 KiB vs 128 KiB: 15.74 15.61 15.76      8 KiB vs 64 KiB: 5.69 5.72 5.73
+```
+
+4 KiB against 128 KiB, bound 3x: more than 3x above the cursor and 5x below the defect.
+
+**Scope added:** `test/remote_watch_service_test.dart`, that one test.
+
+#### Deviation (u), executed
+
+The test keeps its name and measures `fastestOfThree(128 KiB) / fastestOfThree(4 KiB)` after one
+warm-up burst, bounded at 3x; its comment carries the measured numbers in place of the "~1 ms" claim.
+
+```text
+flutter analyze test/remote_watch_service_test.dart     No issues found!
+flutter test ... --plain-name "costs linear time"       run 1, 2, 3: 00:00 +1: All tests passed!
+```
+
+**Seen to fail**, in a detached scratch worktree mirroring this tree with `RecordSplitter.add`
+re-slicing its buffer per record (the 0024 A1 form), asserted in place before the run:
+
+```text
+Expected: a value less than <3>
+  Actual: <15.687367237286018>
+splitting must not copy the remaining buffer per record: 4 KiB chunks took 32012 us, 128 KiB chunks 502184 us
+```
+
+#### Deviations (t) and (u), gated and committed
+
+```text
+dart format --output=none --set-exit-if-changed <5 changed .dart files>   0 changed
+flutter analyze                                   No issues found!
+flutter test <the 20 affected watcher and connection-lifecycle files>
+                                                  00:17 +151: All tests passed!
+flutter test                                      03:34 +4058 ~3: All tests passed!   (phase 6: +4051 ~3)
+tool/mutate.py --check 0039 0040 0041 0043 0044 0045   132 entries in 6 catalogue(s): 132 sound, 0 did not apply, 0 do not compile (8m 42s)
+tool/mutate.py 0039-globals-and-heuristics       47 killed, 0 survived, 0 did not apply, 0 did not compile, 0 observed by no test
+tool/mutate.py 0040-watcher-ceiling               2 killed, 0 survived, 0 did not apply, 0 did not compile, 0 observed by no test
+tool/mutate.py 0041-watcher-teardown             27 killed, 0 survived, 0 did not apply, 0 did not compile, 0 observed by no test
+tool/mutate.py 0043-one-watcher-per-repo          7 killed, 0 survived, 0 did not apply, 0 did not compile, 0 observed by no test
+tool/mutate.py 0044-arm-readiness                10 killed, 0 survived, 0 did not apply, 0 did not compile, 0 observed by no test
+tool/mutate.py 0045-watch-stack                  39 killed, 0 survived, 0 did not apply, 0 did not compile, 0 observed by no test
+```
+
+The nine `p7` entries were each killed by the test written for them: the disconnect, host-switch and
+leaving-SSH releases by their ordering tests; the resume by `switching hosts releases the watcher
+before replacing the transport`; the lost-connection skip by `a lost connection closes without
+waiting on a release`; the timeout by `a release that never answers holds the close only for its
+timeout`; the facade's suspension check by all four release-ordering tests; `isIdle` and the idle
+settle by `whenIdle waits until every hold is released` and the ordering tests.
+
+**Commit.** Code `4ef6d73`. Its message is the hook's and does not name the deviations; they are (t)
+and (u) above. 7.3 is re-run on a rebuild of it.
 
 **Catalogue changes.** Four entries added to 0045: the plan's three, and `p5: the facade's watcher
 subscription outlives its build` (deviation (m)). One replaced: `p2: leaving the ignored-path filter does not reach the watcher` by
