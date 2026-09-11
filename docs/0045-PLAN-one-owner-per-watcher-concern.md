@@ -2649,6 +2649,117 @@ settle by `whenIdle waits until every hold is released` and the ordering tests.
 **Commit.** Code `4ef6d73`. Its message is the hook's and does not name the deviations; they are (t)
 and (u) above. 7.3 is re-run on a rebuild of it.
 
+#### 7.1 to 7.6 on the rebuild
+
+**7.1.** `./build_macos.sh --unsigned --install` at `ce26422`: the installed bundle reads `1.7.0.3`,
+`git describe --tags` reads `v1.7.0-3-gce26422`, the binary was written at 14:35:11, and the tree was
+clean after the build. The maintainer quit and reopened; the app process started at 14:38:42.
+
+**7.2 — census**, 14:40:56: admdevops holds exactly one watcher (`systems-workspace`: one lock, one
+live pid, one heartbeat, one token); the other two hosts hold nothing. One heartbeat with no pid beside
+it, last touched at 14:38:05 — before the running app started at 14:38:42 — so it is the previous
+build's, left by quitting it. A quit tears nothing down; that path is outside deviation (t).
+
+**7.3 — reconnect**, rerun. The maintainer disconnected and reconnected the admdevops tab; its
+`percona-postgres` tab took focus in between:
+
+```text
+15:10:15.663 - systems-workspace mg-watch.842d02cb1259cc85.pid     disconnect
+15:10:15.668 - systems-workspace mg-watch.lock
+15:10:15.833 - systems-workspace mg-watch.842d02cb1259cc85.hb      the heartbeat now goes too
+15:10:16.520 + percona-postgres  mg-watch.088fb1ccdae4398d.hb      the focused tab arms
+15:10:28.720 - percona-postgres  mg-watch.088fb1ccdae4398d.hb      ...and releases all three on return
+15:10:31.226 + systems-workspace mg-watch.c607ae4c79adb1c5.hb      re-armed once
+15:10:31.473 + systems-workspace mg-watch.c607ae4c79adb1c5.pid / mg-watch.lock
+15:10:35.892 - systems-workspace mg-watch.84b8af597d4abd07.hb      the sweep reclaims 7.2's stale heartbeat
+```
+
+Five minutes after the re-arm, 15:15:36: one repository armed, lock `c607ae4c79adb1c5`, pid 1381590
+alive, heartbeat 4 s, **no stranded heartbeat**. Every heartbeat has a pid file beside it and every
+lock a live watcher. **7.3 passes.**
+
+**7.6 — tab switches**, with the sampler running. The maintainer switched between the
+`systems-workspace` and `percona-postgres` tabs ten times; every teardown released pid, lock and
+heartbeat, one watcher was armed at a time, and heartbeat-to-lock per arm was:
+
+```text
+234 672 331 219 212 236 223 223 208 261 ms      median 228 ms (min 208, max 672)
+```
+
+Against MADR 0044's 250 ms acceptance: **the median passes**; the one slow arm (672 ms) was the first
+return to `systems-workspace`.
+
+**7.4 — the foreign-lock refusal.** A lock was staged on `percona-postgres` with `mkdir`, which refuses
+an existing lock, and token `f0e1gn0045c7`, its heartbeat refreshed every 5 s by a loop that ends when
+the lock is gone or no longer its token, bounded in time — it reached its first 15-minute bound before
+the maintainer's switch and was resumed, 21 s later, well inside the lease's five-minute staleness.
+The maintainer opened the tab; the Output pane:
+
+```text
+watcher: mg-watch: lock held by f0e1gn0045c7
+watcher: another live watcher already holds …/collections/percona-postgres (token f0e1gn0045c7) — polling here
+watcher: polling …/collections/percona-postgres — arm unavailable: heldByAnother; watchers held 0, restarts spent 0
+  after: stopped(stream cancelled) -> armed(arm succeeded) -> stopped(stream cancelled) -> armFailed(held by another watcher (token f0e1gn0045c7)) watcher 2/1
+```
+
+`restarts spent 0`, and the summary names its watcher (`2/1`, phase 6's identity). On the host the
+refused arm stamped its own lease at 16:16:46.355 and removed it at 16:16:46.819; the staged lock was
+never touched. Cleanup by exact path: the lock removed at 16:17:45.894, the refresher ended at
+16:17:48, the staged heartbeat removed at 16:18:16.440; nothing recreated either, and no process on
+the host carries the token. **7.4 passes.**
+
+**7.5 — a remote linked worktree.** No repository on the three hosts had one. With the maintainer's
+permission a throwaway worktree was created; `testrepo111`, first proposed, has no commit, and the
+maintainer chose `percona-postgres` instead: `…/collections/percona-postgres-mg-p7-wt` on a new
+branch `mg-p7-worktree-check` at `018b412`. Opened from the Worktrees page as a detached window, the
+main window armed its watcher:
+
+```text
+lock:    …/percona-postgres/.git/worktrees/percona-postgres-mg-p7-wt/mg-watch.lock   (token 46fad39a45ab8cad)
+pid:     1403785 alive; heartbeat 18 s; stranded: none
+cwd:     the script (1403785) and its inotifywait (1403838) both in …/collections/percona-postgres-mg-p7-wt
+```
+
+The lock is under the worktree's resolved git dir, not its `.git` file — F10's fix, live — and the
+watcher armed rather than being refused. **7.5's watcher checks pass.** The detached window itself
+could not run a command: deviation (v).
+
+#### Deviation (v) — a detached window on a linked worktree runs no command (2026-09-11, pre-existing)
+
+**Found.** Both detached windows the maintainer opened, pinned to `tab-2`, logged for every provider
+`The main window could not run this command: the window's tab has closed` (`~/hw-debug.log`, 21:34:15
+and 21:34:48 UTC). `WindowManagerBridge._execContainerFor` runs a window's command on its pinned tab
+only when `_sessionOwns` finds the path to be that connection's active repository or one of its saved
+ones, otherwise on a tab whose `repoPath` equals it (`TabsController.containerForRepo`), otherwise
+`RELAY_DOWN` — the "tab has closed" message. A linked worktree opened from the Worktrees page is
+none of those. **Pre-existing**: both functions date from `a4c03d7` (2026-07-12), and none of MADR
+0045's commits change them; established from history, not reproduced on an earlier build.
+
+**Decision: resolution 1** (maintainer: "1"). Fixed under its own record, 0047 — window routing, not
+the watcher stack: a window opened from a tab keeps routing to that tab while the tab's connection is
+the one that opened it, which is what `a4c03d7`'s check protects. MADR 0045 closes with 7.5's watcher
+checks passed and this finding linked.
+
+**Rejected.** The same fix inside this plan: window relay code outside the watcher stack, and another
+rebuild and re-run of Phase 7.
+
+**Scope added:** none to this plan.
+
+#### Deviation (w) — the guard omits one name its criterion says it enforces (2026-09-11)
+
+**Found** while checking the acceptance criteria for 7.7. Criterion 1 lists seven retired names —
+`_SharedWatch`, `_liveByHost`, `_slotReleases`, `resetWatcherCount`, `sharedTeardownGrace`,
+`watchLifecycle`, `_detectWatcher` — "enforced by `watch_stack_structure_test.dart`". Phase 6's step
+listed six, without `_slotReleases`, and the guard was built to the step. `_slotReleases` appears nowhere
+in `lib` or `test` today, so the criterion holds; nothing would stop it returning.
+
+**Decision: resolution 1** (maintainer: "resolution 1"). The guard's retired list gains `_slotReleases`,
+seen to fail in a scratch copy with the name reintroduced.
+
+**Rejected.** Recording the criterion as met by a search at closure: no enforcement for that name.
+
+**Scope added:** `test/watch_stack_structure_test.dart`, one list entry.
+
 **Catalogue changes.** Four entries added to 0045: the plan's three, and `p5: the facade's watcher
 subscription outlives its build` (deviation (m)). One replaced: `p2: leaving the ignored-path filter does not reach the watcher` by
 `p5: the watcher outlives its last listener` (deviation (n)).
