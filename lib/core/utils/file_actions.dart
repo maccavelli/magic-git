@@ -12,10 +12,11 @@ class FileActions {
   Future<void> revealInFinder(String absolutePath) =>
       Process.run('open', ['-R', absolutePath]);
 
-  /// Opens each of [absolutePaths] in its default application. Local-machine
-  /// only — see [revealInFinder].
+  /// Opens each of [absolutePaths] in VS Code. Local-machine only — see
+  /// [revealInFinder]. `-a` is pinned rather than relying on the OS default
+  /// app for the file's extension, which is not always VS Code.
   Future<void> openFiles(List<String> absolutePaths) =>
-      Process.run('open', absolutePaths);
+      Process.run('open', ['-a', 'Visual Studio Code', ...absolutePaths]);
 
   /// Copies [text] to the system clipboard.
   Future<void> copyToClipboard(String text) =>
