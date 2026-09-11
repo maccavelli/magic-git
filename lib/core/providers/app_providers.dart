@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:developer' as developer;
 import 'dart:isolate';
 import 'dart:typed_data';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -24,7 +23,6 @@ import '../forge/forge_repo_summary.dart';
 import '../forge/merge_plan.dart';
 import '../forge/namespace_history.dart';
 import '../forge/namespace_suggestions.dart';
-import '../git/bounded_watch.dart';
 import '../git/branch_comparison.dart';
 import '../git/git_service.dart';
 import '../git/host_fs_service.dart';
@@ -36,6 +34,8 @@ import '../git/repo_tree.dart';
 import '../git/watch/admission/host_watcher_budget.dart';
 import '../git/watch/admission/watch_admission.dart';
 import '../git/watch/source/remote/git_dir_resolver.dart';
+import '../git/watch/watch_runtime.dart';
+import '../git/watch/watch_target.dart';
 import '../git/watch_event.dart';
 import '../github/gh_service.dart';
 import '../github/models.dart';
@@ -1724,16 +1724,16 @@ class ConnectionController extends Notifier<ConnectionState> {
   /// for the session being usable.
   Future<void> _sweepStaleWatchers(int attempt, String repoPath) async {
     try {
-      final service = ref.read(remoteWatchServiceProvider);
       // Keyed by each repository's resolved git dir — where its watcher locks
       // and leases — not `<repo>/.git`, which is a file in a linked worktree
       // (MADR 0045 F10).
-      final repos = await service.resolveSweepTargets(
-        state.repoPaths.isEmpty ? [repoPath] : state.repoPaths,
-        state.scopedGitDirs,
-      );
-      if (attempt != _attempt || !ref.mounted) return;
-      await service.sweepStaleWatchers(repos);
+      await ref
+          .read(watchRuntimeProvider)
+          .sweepStaleWatchers(
+            state.repoPaths.isEmpty ? [repoPath] : state.repoPaths,
+            state.scopedGitDirs,
+            stillWanted: () => attempt == _attempt && ref.mounted,
+          );
     } catch (_) {
       // Best-effort by design.
     }
@@ -3756,67 +3756,96 @@ final repoFootprintProvider = FutureProvider.autoDispose
       return ref.watch(gitServiceProvider).repoFootprint(repoPath);
     }, retry: noProviderRetry);
 
-/// Event-driven "repo changed" ticks from the active backend's watcher.
-/// Auto-disposed so the remote fswatch/inotifywait process (or the native
-/// `Directory.watch()` subscription, for a local repo) is torn down when no
-/// view is listening. Emits a [RepoWatchEvent] per coalesced burst (with
+/// What [repoWatchProvider] watches for a repository: its backend and surface,
+/// as a value (MADR 0045 section 1).
+///
+/// Selected field by field, so a connection-state change that moves neither —
+/// a reconnect attempt, a warning — yields an equal target, and an equal target
+/// keeps its watcher.
+final watchTargetProvider = Provider.autoDispose.family<WatchTarget, String>((
+  ref,
+  repoPath,
+) {
+  final backend = ref.watch(connectionProvider.select((c) => c.backend));
+  // A scoped work-tree (dotfiles) repo can't be watched recursively — its work
+  // tree may be all of $HOME. Watch the bounded surface (git-dir points +
+  // tracked-file dirs) instead.
+  final scopedGitDir = ref.watch(
+    connectionProvider.select((c) => c.scopedGitDirFor(repoPath)),
+  );
+  return WatchTarget(
+    repoPath: repoPath,
+    surface: scopedGitDir != null && scopedGitDir.isNotEmpty
+        ? BoundedSurface(gitDir: scopedGitDir, workTree: repoPath)
+        : const RecursiveSurface(),
+    // Exhaustive switch (no default) so a new backend can't silently fall
+    // through to the SSH watcher.
+    backend: switch (backend) {
+      ConnectionBackend.local => WatchBackend.local,
+      ConnectionBackend.ssh => WatchBackend.ssh,
+    },
+  );
+});
+
+/// Builds this container's watchers.
+final watchRuntimeProvider = Provider<WatchRuntime>((ref) {
+  return WatchRuntime(
+    remote: ref.watch(remoteWatchServiceProvider),
+    local: ref.watch(localWatchServiceProvider),
+    // Read on each bounded arm rather than watched: watching the git service
+    // would restart every watcher, recursive ones too, whenever a commit
+    // timeout or the committer's name changed.
+    listTrackedFiles: (repoPath) =>
+        ref.read(gitServiceProvider).listTrackedFiles(repoPath),
+    sessionId: '${ref.watch(sessionScopeProvider).id}',
+  );
+});
+
+/// One watcher per [WatchTarget] per container, for as long as anything
+/// listens.
+///
+/// The target is the key, so a changed target is a different watcher: Riverpod
+/// disposes the old engine and builds the new one, with nothing inferred from
+/// the timing of rebuilds (MADR 0045 F3). A facade rebuilt with an equal target
+/// listens to this same instance again before its dispose runs, so the running
+/// watcher is kept — `repo_watch_facade_test.dart` pins that.
+final watcherProvider = StreamProvider.autoDispose
+    .family<RepoWatchEvent, WatchTarget>(
+      (ref, target) => ref.watch(watchRuntimeProvider).watch(target),
+      retry: noProviderRetry,
+    );
+
+/// Event-driven "repo changed" ticks from the active backend's watcher, less
+/// the paths git ignores. Emits a [RepoWatchEvent] per coalesced burst (with
 /// [WatchMode]).
+///
+/// A facade over [watcherProvider] (MADR 0045 section 1): the name every
+/// consumer and every override already uses. It derives the target and
+/// filters; the watcher is the family's. Auto-disposed, so when no view is
+/// listening the facade goes, its listen goes with it, and the watcher — the
+/// remote fswatch/inotifywait process or the native `Directory.watch()`
+/// subscription — is torn down by its own provider's disposal.
 final repoWatchProvider = StreamProvider.autoDispose
     .family<RepoWatchEvent, String>((ref, repoPath) {
-      final backend = ref.watch(connectionProvider.select((c) => c.backend));
-      // A scoped work-tree (dotfiles) repo can't be watched recursively — its
-      // work tree may be all of $HOME. Watch the bounded surface (git-dir points
-      // + tracked-file dirs) instead.
-      final scopedGitDir = ref.watch(
-        connectionProvider.select((c) => c.scopedGitDirFor(repoPath)),
-      );
-      final local = ref.watch(localWatchServiceProvider);
-      final remote = ref.watch(remoteWatchServiceProvider);
-
-      Stream<RepoWatchEvent> armed(
-        BoundedWatchSpecSource? bounded,
-      ) => switch (backend) {
-        // Keep the connection-scoped services alive while the watcher runs.
-        // Exhaustive switch (no default) so a new backend can't silently fall
-        // through to the SSH watcher.
-        ConnectionBackend.local => local.watch(repoPath, bounded: bounded),
-        ConnectionBackend.ssh => remote.watch(repoPath, bounded: bounded),
-      };
-
-      final Stream<RepoWatchEvent> raw;
-      if (scopedGitDir != null && scopedGitDir.isNotEmpty) {
-        final git = ref.watch(gitServiceProvider);
-        // A SUPPLIER, not a value: the service calls this on every arm, so a
-        // re-arm picks up files tracked since the watch started (0022 H5).
-        raw = armed(() async {
-          List<String> tracked;
-          try {
-            tracked = await git.listTrackedFiles(repoPath);
-          } catch (e) {
-            // Never let this kill the watcher. It used to run through
-            // Stream.fromFuture OUTSIDE the lifecycle engine, so a transport
-            // blip or a GitException errored the whole provider and the repo
-            // went unwatched with no polling fallback at all (0022 N1).
-            // Degrade instead: an empty tracked list still yields the git-dir
-            // watch points, so git-state changes are still seen, and the next
-            // re-arm can recover the full surface.
-            developer.log(
-              'listTrackedFiles failed for $repoPath; watching git-dir only: $e',
-              name: 'repoWatchProvider',
-            );
-            tracked = const [];
-          }
-          return computeBoundedWatchSpec(
-            gitDir: scopedGitDir,
-            workTree: repoPath,
-            trackedFiles: tracked,
-          );
-        });
-      } else {
-        raw = armed(null);
-      }
+      final target = ref.watch(watchTargetProvider(repoPath));
+      // Closed by the onDispose below, which the lint cannot see.
+      // ignore: close_sinks
+      final controller = StreamController<RepoWatchEvent>.broadcast();
+      ref.onDispose(controller.close);
+      // Listened, not watched: rebuilding this facade re-attaches to the
+      // watcher rather than rebuilding it.
+      final watching = ref.listen(watcherProvider(target), (_, next) {
+        final event = next.value;
+        if (event != null && !controller.isClosed) controller.add(event);
+      }, fireImmediately: true);
+      // Closed here, at the rebuild. Riverpod keeps a rebuilt provider's old
+      // subscriptions, paused, until its new stream is done, and a watcher's
+      // never is: the old watcher would outlive a changed target, running
+      // beside its replacement (MADR amendment 0045.3). An unchanged target
+      // regains its listener in the same rebuild, before the dispose pass.
+      ref.onDispose(watching.close);
       final oracle = ref.watch(ignoreOracleProvider);
-      return _withoutIgnoredPaths(oracle, repoPath, raw);
+      return _withoutIgnoredPaths(oracle, repoPath, controller.stream);
     }, retry: noProviderRetry);
 
 /// Drops the paths git ignores from each tick — and the tick itself when

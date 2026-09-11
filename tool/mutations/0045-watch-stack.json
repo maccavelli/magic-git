@@ -110,10 +110,10 @@
     ]
   },
   {
-    "label": "p2: leaving the ignored-path filter does not reach the watcher",
+    "label": "p5: the watcher outlives its last listener",
     "file": "lib/core/providers/app_providers.dart",
-    "find": ") => raw\n    .asyncMap<RepoWatchEvent?>((event) async {",
-    "replace": ") => (() async* {\n      await for (final passed in raw) {\n        yield passed;\n      }\n    })()\n    .asyncMap<RepoWatchEvent?>((event) async {",
+    "find": "final watcherProvider = StreamProvider.autoDispose\n    .family<RepoWatchEvent, WatchTarget>(\n",
+    "replace": "final watcherProvider = StreamProvider\n    .family<RepoWatchEvent, WatchTarget>(\n",
     "tests": [
       "test/repo_watch_ignore_filter_test.dart",
       "test/repo_watch_provider_sharing_test.dart"
@@ -211,6 +211,42 @@
     "replace": "          _pending.clear();\n",
     "tests": [
       "test/watch_engine_test.dart"
+    ]
+  },
+  {
+    "label": "p5: the facade family key includes a per-listen nonce",
+    "file": "lib/core/providers/app_providers.dart",
+    "find": "      final watching = ref.listen(watcherProvider(target), (_, next) {\n",
+    "replace": "      final watching = ref.listen(watcherProvider(WatchTarget(repoPath: '${target.repoPath}#${Object().hashCode}', surface: target.surface, backend: target.backend)), (_, next) {\n",
+    "tests": [
+      "test/repo_watch_facade_test.dart"
+    ]
+  },
+  {
+    "label": "p5: the target ignores the scoped git dir",
+    "file": "lib/core/providers/app_providers.dart",
+    "find": "    surface: scopedGitDir != null && scopedGitDir.isNotEmpty\n        ? BoundedSurface(gitDir: scopedGitDir, workTree: repoPath)\n        : const RecursiveSurface(),\n",
+    "replace": "    surface: const RecursiveSurface(),\n",
+    "tests": [
+      "test/repo_watch_facade_test.dart"
+    ]
+  },
+  {
+    "label": "p5: the facade forwards unfiltered events",
+    "file": "lib/core/providers/app_providers.dart",
+    "find": "      return _withoutIgnoredPaths(oracle, repoPath, controller.stream);\n",
+    "replace": "      identical(oracle, oracle);\n      return controller.stream;\n",
+    "tests": [
+      "test/repo_watch_facade_test.dart"
+    ]
+  },
+  {
+    "label": "p5: the facade's watcher subscription outlives its build",
+    "file": "lib/core/providers/app_providers.dart",
+    "find": "      ref.onDispose(watching.close);\n",
+    "replace": "      identical(watching, watching);\n",
+    "tests": [
+      "test/repo_watch_facade_test.dart"
     ]
   }
 ]
