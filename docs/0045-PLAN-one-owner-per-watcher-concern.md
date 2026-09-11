@@ -965,7 +965,8 @@ Then the catalogues, one at a time: `0039`, `0041`, `0043`, `0044`, `0045`.
   from `WatchRuntime`.
 * **Move logic tests onto `fakeAsync`.** Replace every `settleArm()`, `Future.delayed` and
   `Future<void>.delayed` in these files with `fakeAsync` and `async.elapse`/`flushMicrotasks`,
-  keeping every assertion value:
+  keeping every assertion value *(deviation (s), 2026-09-11: which needs `WatcherProcess` to stop
+  awaiting its output listeners' cancels)*:
   * `remote_watch_service_test.dart`, `watch_arm_signal_test.dart`,
     `watch_ceiling_derived_test.dart`, `watch_ceiling_per_host_test.dart`,
     `watch_ceiling_recovery_test.dart`, the remote half of
@@ -975,12 +976,16 @@ Then the catalogues, one at a time: `0039`, `0041`, `0043`, `0044`, `0045`.
   * Elapsed-time assertions in `watch_arm_signal_test.dart` (`lessThan(250 ms)` and
     `>= armSignalCeiling`) use fake elapsed time.
   * Delete `test/helpers/watch_settle.dart`.
+  * *(Deviation (q), 2026-09-11: `repo_watch_provider_sharing_test.dart` and
+    `repo_watch_facade_test.dart` join this list. Deviation (r): the remote half of
+    `watch_diagnostics_both_backends_test.dart` becomes `watch_diagnostics_remote_test.dart`.)*
 * **Allow-listed, keeping real time** because they drive real processes or real
   filesystem events: `watch_lease_teardown_exec_test.dart`, `watcher_sweep_exec_test.dart`,
   `worktree_lock_key_exec_test.dart`, `local_watch_bounded_test.dart`,
   `local_watch_service_test.dart`, `local_watch_worktree_test.dart`,
   `directory_watch_source_test.dart`, and the local half of
-  `watch_diagnostics_both_backends_test.dart`.
+  `watch_diagnostics_both_backends_test.dart`. *(Deviation (r): that half becomes
+  `watch_diagnostics_local_test.dart`, allow-listed as a whole file.)*
 
 **Create `test/watch_stack_structure_test.dart`:**
 
@@ -988,7 +993,8 @@ Then the catalogues, one at a time: `0039`, `0041`, `0043`, `0044`, `0045`.
   `remote_watch_service.dart`, `local_watch_service.dart`, `bounded_watch.dart` and
   `watch_diagnostics.dart` with
   `^\s*static\s+(?!const\b)(?:final\s+|late\s+|var\s+)?[\w<>?, ]+\s+\w+\s*(=|;)`, and
-  expects no matches.
+  expects no matches. *(Deviation (o): `RemoteWatchService._tokenSeq` matched; tokens now come
+  from `Random.secure()`.)*
 * `the retired machinery is gone` — none of `watchLifecycle(`, `_SharedWatch`,
   `_liveByHost`, `resetWatcherCount`, `sharedTeardownGrace`, `_detectWatcher` appears in
   `lib`.
@@ -1004,7 +1010,8 @@ tree in a temp directory with one violation injected — a `static var` in a wat
 recorded in the execution record.
 
 **Catalogue:** run every watcher catalogue, one at a time — `0039`, `0040`, `0041`,
-`0043`, `0044`, `0045` — and add to 0045:
+`0043`, `0044`, `0045` — and add to 0045 *(deviation (p): 0040's two entries are re-anchored onto
+`remote_watch_source.dart` first)*:
 
 | Label | Killed by |
 | --- | --- |
@@ -2212,6 +2219,210 @@ filtered`; `p5: the watcher outlives its last listener` → the four tests devia
 
 **Commit.** Code `806e90e`. Its message is the hook's and does not name the deviations; they are
 (m) and (n) above.
+
+### Phase 6 — identity on records, tests without sleeps, structural guards
+
+Landed in `9dc567d`, with deviations (o)–(s). None changes a decision or a fact MADR 0045
+asserts, so the MADR has no amendment for this phase.
+
+#### Deviation (o) — a mutable static the new guard rejects (2026-09-11)
+
+**Found.** Before any code, the guard's regex over its scanned files matched one line:
+`remote_watch_service.dart:309: static int _tokenSeq = 0;`, the counter `newWatchToken()` appends
+to a microsecond timestamp. Callers: `remote_watch_source.dart:71` and
+`watch_lease_identity_test.dart:115,125` (the latter draws 50 tokens).
+
+**Decision: resolution 1** (maintainer: "option 1"). Tokens come from a `Random.secure()` made in
+the call: no stored state, hex and so safe in file names and shell.
+
+**Rejected.** A per-instance counter: two services could issue the same token.
+
+**Scope added:** none beyond `remote_watch_service.dart`.
+
+#### Deviation (p) — catalogue 0040 has not applied since phase 3 (2026-09-11)
+
+**Found.** Phase 6 runs 0040. Both its entries anchor in `remote_watch_service.dart` on text that
+`d77e34a` moved into `remote_watch_source.dart`: each `find` occurs once at `d77e34a~1` and zero
+times at `d77e34a` and since. Phase 3 re-anchored 0041, 0043, 0044 and 0045 and did not run 0040;
+the untracked 0046 plan does not mention it. **Pre-existing**, and it disarmed the two slot-leak
+guards: the catch-all removed, and the catch swallowing.
+
+**Decision: resolution 1.** Re-anchor both, in place, onto `remote_watch_source.dart`'s catch-all: the
+first drops its `ticket.releaseBudget();`, the second turns its `rethrow;` into a `noTool`
+unavailability. Their tests are unchanged.
+
+**Scope added:** `tool/mutations/0040-watcher-ceiling.json`.
+
+#### Deviation (q) — two provider-level watcher tests are on neither list (2026-09-11)
+
+**Found.** The guard scans `test/*watch*_test.dart`. `repo_watch_provider_sharing_test.dart`
+(11 real-time waits) and `repo_watch_facade_test.dart` (6, added in phase 5) are neither migrated
+nor allow-listed; both drive a fake watcher handle through a Riverpod container, with no real
+process or file.
+
+**Decision: resolution 1.** Both move onto `fakeAsync`.
+
+**Rejected.** Narrowing the guard's glob to skip them, which would let a new watcher test sleep
+unnoticed.
+
+**Scope added:** those two test files.
+
+#### Deviation (r) — a per-file allow-list cannot allow half a file (2026-09-11)
+
+**Found.** `watch_diagnostics_both_backends_test.dart` holds one SSH test (line 70) and two local
+tests against real directories (lines 85, 112), with a real-time wait in its `tearDown` (line 66).
+The plan migrates the first and allow-lists the rest; the guard works per file.
+
+**Decision: resolution 1.** Split it: `watch_diagnostics_remote_test.dart` on `fakeAsync`, and
+`watch_diagnostics_local_test.dart`, allow-listed with its reason; each header names the other.
+
+**Rejected.** A guard that allows individual tests within a file: parsing test names makes the
+guard brittle.
+
+**Scope added:** the two new files, replacing `watch_diagnostics_both_backends_test.dart`.
+
+#### Deviation (s) — a watcher cannot finish tearing down under `fakeAsync` (2026-09-11)
+
+**Found.** A gitignored probe armed a real `RemoteWatchService` over `FakeWatcherHandle.armed()`
+inside `fakeAsync`, cancelled, and elapsed 30 s: `handles=1 live=1 kinds=[armed]`, then
+`cancelDone=false handleCancelled=false live=0 pendingTimers=0`. The budget was released and
+nothing after it ran: the source's teardown awaits `WatcherProcess.close()`, whose first statement
+is `await _stdout.cancel()` (`watcher_process.dart:218`), and a subscription's cancel on a
+controller without `onCancel` returns a future whose continuation runs outside the fake zone — the
+same stall phase 4's engine hit. `discard()` on a refusal awaits the same (`:132`). Every migrated
+test asserting past the budget release would fail: the handle's cancel, the lease release, the
+exclusion order, a refusal's cleanup.
+
+**In production those awaits wait on nothing.** dartssh2's session `stdout`/`stderr` controllers
+have `onPause`/`onResume` and no `onCancel` (`ssh_session.dart:69-77`), and
+`_SshSessionStreamHandle` only maps and decodes them (`ssh_command_executor.dart:187-199`).
+Cancelling a listener stops delivery at the call; the channel is released by `handle.cancel()`.
+
+**Decision: resolution 1** (maintainer: "yes"). `close()` and `discard()` cancel both output
+listeners unawaited and await only `handle.cancel()` — phase 4's engine fix, for one more file.
+
+**Rejected.** Migrated tests that stop asserting past the budget release: weakening the tests to
+fit the harness.
+
+**Scope added:** `lib/core/git/watch/source/remote/watcher_process.dart`, and a catalogue entry pinning
+that the channel's close is still awaited.
+
+#### Phase 6, executed
+
+**Created.** `test/watch_stack_structure_test.dart`, the three guards, with a written reason for each
+allow-listed file; `test/helpers/fake_arm_settle.dart`, whose `letArmsSettle()` elapses the 500 ms
+`settleArm` waited, in fake time; `test/watch_diagnostics_remote_test.dart` and
+`test/watch_diagnostics_local_test.dart` (deviation (r)).
+
+**Modified.**
+
+* `watch_diagnostics.dart`: `WatchTransitionRecord.watcher`, named in `toString` and at the end of
+  `degradationSummary`; `WatchTransitionSink` gains the attempt.
+* The engine reports its attempt; `RemoteWatchSource` files its own records with the request's
+  attempt and the token it stamped; both services take `sessionId` (empty outside a session) and
+  build a `WatcherId` per record; `WatchRuntime` passes its `sessionId` to both.
+* `RemoteWatchService.newWatchToken()` draws from `Random.secure()` (deviation (o));
+  `WatcherProcess.close()` and `discard()` await only the channel (deviation (s)).
+* Twelve test files on `fakeAsync`: the plan's ten less the split file, its remote half, and
+  deviation (q)'s two. `watch_diagnostics_test.dart` gains `a record names the watcher it came from`
+  and `the degradation summary names the watcher that degraded`;
+  `watch_transition_wiring_test.dart` gains `every record names the watcher that produced it`. The
+  engine test, `remote_watch_source_test.dart` and the two scripted services in
+  `repo_watch_facade_test.dart` and `repo_watch_ignore_filter_test.dart` follow the new signatures.
+* `tool/mutations/0040-watcher-ceiling.json` re-anchored (deviation (p)); three entries added to 0045.
+
+**Deleted.** `test/helpers/watch_settle.dart`, `test/watch_diagnostics_both_backends_test.dart`.
+
+**Implementation notes.**
+
+* *Five of the twelve migrations ran as parallel agents*, each confined to one file:
+  `watch_shared_path_test.dart`, `watch_ceiling_per_host_test.dart`, `remote_watch_service_test.dart`,
+  `repo_watch_provider_sharing_test.dart`, `watch_ceiling_recovery_test.dart`. Every migrated file was
+  held to an assertion-parity check: each `expect(` call as it is at HEAD against each now, with
+  whitespace, trailing commas and juxtaposed string literals normalised, compared as a multiset. Seen
+  to fail: on `watch_diagnostics_test.dart` it reported `DIFFERENT` with exactly the three expects
+  this phase added. Its first form counted a trailing comma before `]` as a difference — `dart
+  format` drops it at the deeper indent, in one expect of `watch_shared_path_test.dart` — and the
+  checker, not the test, was corrected. Result: the migrated files are `same`, the wiring test
+  differs by exactly its new test's four expects.
+* *`container.pump()` becomes `async.elapse(Duration.zero)`*, not a microtask flush: Riverpod 3.3.2
+  runs its dispose task on a zero-duration timer (`scheduler.dart:36-43`).
+* *`a large burst costs linear time, not a copy per record` now sits in `fakeAsync`*, its stopwatch
+  still on real time; it waited in real time, so it could not stay as it was. Measured 43–45 ms
+  against its 50 ms bound in both HEAD's form and the migrated one, with other test runs in progress.
+  Phase 3's note about its margin stands; the bound is unchanged.
+* *With `FakeWatcherHandle.armed()` an arm settles on microtasks alone*, so `letArmsSettle()`'s
+  500 ms is not what `watch_ceiling_per_host_test.dart` depends on; removing its settles entirely
+  fails all five tests.
+* *The guard's allow-list existence check* first looked for each entry among the scanned files, and
+  `worktree_lock_key_exec_test.dart` — on the plan's allow-list — has no `watch` in its name, so the
+  guard failed on the real tree. It now checks `test/`. The first injected sleep-guard run had failed
+  on that check rather than on the injection, so it was run again.
+
+**Seen to fail** — each guard against a detached scratch worktree mirroring the working tree, with one
+violation injected by an asserted edit:
+
+```text
+no mutable static in the watch stack    (static int injectedCounter = 0; in watch_timings.dart)
+  Actual: ['lib/core/git/watch/watch_timings.dart:57:   static int injectedCounter = 0;']
+the retired machinery is gone           (final _liveByHost = <String, int>{}; in host_watcher_budget.dart)
+  Actual: ['lib/core/git/watch/admission/host_watcher_budget.dart: _liveByHost']
+watcher logic tests do not sleep        (await settleArm(); in watch_lease_identity_test.dart)
+  Actual: ['test/watch_lease_identity_test.dart:90:       await settleArm();']
+```
+
+**Verification, so far.**
+
+```text
+flutter test test/watch_ceiling_derived_test.dart test/watch_arm_signal_test.dart \
+  test/watch_diagnostics_remote_test.dart test/watch_diagnostics_local_test.dart
+                                                  00:02 +18: All tests passed!
+flutter test test/watch_lease_identity_test.dart test/watch_lease_release_test.dart \
+  test/watch_transition_wiring_test.dart test/repo_watch_facade_test.dart
+                                                  00:00 +26: All tests passed!
+agents: watch_shared_path +12, watch_ceiling_per_host +5, remote_watch_service +14,
+        repo_watch_provider_sharing +6, watch_ceiling_recovery +3 — each analyzed clean, parity same
+flutter test test/watch_stack_structure_test.dart 00:00 +3: All tests passed!
+flutter analyze                                   No issues found!
+dart format --output=none --set-exit-if-changed <26 changed .dart files>
+                                                  exit 1 on watch_diagnostics_test.dart (edited by script); formatted, then 0 changed
+flutter test test/watch_stack_structure_test.dart test/watch_diagnostics_test.dart <the 12 migrated files>
+                                                  00:02 +92: All tests passed!
+flutter test                                      03:29 +4051 ~3: All tests passed!   (phase 5: +4045 ~3)
+```
+
+**Catalogue changes, continued.** The first `--check` over the six catalogues reported `121 sound, 2 did
+not apply`: 0043's `p1: the watcher is built eagerly, not on the first subscriber` and 0045's `p2: the
+lifecycle ignores the bounded parameter` both anchored on `_createLifecycle(repoPath, bounded: …)`, and
+this phase put `sessionId: sessionId,` between those lines. Both re-anchored onto the new call, each
+catalogue re-serialised in its committed style; 0043's mutant passes `sessionId` so it still builds.
+
+**Catalogue runs.** `--check`, then each catalogue one at a time with no other test run in progress;
+each mirrored 31 uncommitted paths and 2 deletions, passed its baseline and recognised the compile
+canary:
+
+```text
+tool/mutate.py --check 0039 0040 0041 0043 0044 0045   123 entries in 6 catalogue(s): 123 sound, 0 did not apply, 0 do not compile (7m 57s)
+tool/mutate.py 0039-globals-and-heuristics       47 killed, 0 survived, 0 did not apply, 0 did not compile, 0 observed by no test
+tool/mutate.py 0040-watcher-ceiling               2 killed, 0 survived, 0 did not apply, 0 did not compile, 0 observed by no test
+tool/mutate.py 0041-watcher-teardown             27 killed, 0 survived, 0 did not apply, 0 did not compile, 0 observed by no test
+tool/mutate.py 0043-one-watcher-per-repo          7 killed, 0 survived, 0 did not apply, 0 did not compile, 0 observed by no test
+tool/mutate.py 0044-arm-readiness                10 killed, 0 survived, 0 did not apply, 0 did not compile, 0 observed by no test
+tool/mutate.py 0045-watch-stack                  30 killed, 0 survived, 0 did not apply, 0 did not compile, 0 observed by no test
+```
+
+Killed by: 0040's re-anchored `p1: the catch-all is removed, so four of five failures strand the slot`
+→ the three `… while opening the stream does not leak the slot` tests, and `p1: the catch swallows,
+so a blip looks like a successful arm` → `repeated stream-open failures do not exhaust the host budget`
+and `a failed watcher start surfaces stopped immediately …`; `p6: records lose the watcher id` →
+`every record names the watcher that produced it`; `p6: the summary drops the watcher id` → `the
+degradation summary names the watcher that degraded`; `p6: the channel close is not awaited` → `a new
+subscriber waits for a pending teardown before arming`, `arriving, leaving and arriving during a
+teardown arms once, after it` and `a teardown that never settles holds the next arm only until the
+grace`.
+
+**Commit.** Code `9dc567d`. Its message is the hook's and does not name the deviations; they are
+(o)–(s) above.
 
 **Catalogue changes.** Four entries added to 0045: the plan's three, and `p5: the facade's watcher
 subscription outlives its build` (deviation (m)). One replaced: `p2: leaving the ignored-path filter does not reach the watcher` by
