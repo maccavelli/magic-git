@@ -56,8 +56,8 @@
   {
     "label": "p2: teardown does not release the lease",
     "file": "lib/core/git/remote_watch_service.dart",
-    "find": "            await releaseHostClaims();\n          });",
-    "replace": "          });",
+    "find": "            await releaseHostClaims();\n            // LAST. Only now may this session's next watcher of the repository\n            // ask the host for the lock this one has just given back.\n            ticket.releaseExclusion();\n          });",
+    "replace": "            // LAST. Only now may this session's next watcher of the repository\n            // ask the host for the lock this one has just given back.\n            ticket.releaseExclusion();\n          });",
     "tests": [
       "test/watch_lease_release_test.dart"
     ]
@@ -65,8 +65,8 @@
   {
     "label": "p2: a failing lease removal escapes the teardown",
     "file": "lib/core/git/remote_watch_service.dart",
-    "find": "            } catch (_) {\n              // See the doc comment: swallowing is the contract, not an\n              // oversight.\n            }",
-    "replace": "            } on FormatException catch (_) {\n            }",
+    "find": "          } catch (_) {\n            // See the doc comment: swallowing is the contract, not an\n            // oversight.\n          }",
+    "replace": "          } on FormatException catch (_) {\n          }",
     "tests": [
       "test/watch_lease_release_test.dart"
     ]
@@ -74,8 +74,8 @@
   {
     "label": "p2: teardown removes the pid file, which is not the client's",
     "file": "lib/core/git/remote_watch_service.dart",
-    "find": "                  'rm -f ${ShellEscaper.escape(heartbeat)}; '\n                      '${watchLockReleaseScript(lock)}',",
-    "replace": "                  'rm -f ${ShellEscaper.escape(watchPidFile(gitDir, token))}; '\n                      '${watchLockReleaseScript(lock)}',",
+    "find": "                'rm -f ${ShellEscaper.escape(heartbeat)}; '\n                    '${watchLockReleaseScript(lock)}',",
+    "replace": "                'rm -f ${ShellEscaper.escape(watchPidFile(gitDir, token))}; '\n                    '${watchLockReleaseScript(lock)}',",
     "tests": [
       "test/watch_lease_release_test.dart"
     ]
@@ -145,11 +145,12 @@
   },
   {
     "label": "p4: each service instance gets its own budget (per-session keying)",
-    "file": "lib/core/git/remote_watch_service.dart",
-    "find": "        final host = _hostKey();",
-    "replace": "        final host = '${_hostKey()}#${identityHashCode(this)}';",
+    "file": "lib/features/tabs/tabs_controller.dart",
+    "find": "              hostWatcherBudgetProvider.overrideWithValue(_watcherBudget),\n",
+    "replace": "",
     "tests": [
-      "test/watch_ceiling_derived_test.dart"
+      "test/tab_watcher_budget_injection_test.dart",
+      "test/watch_ceiling_recovery_test.dart"
     ]
   },
   {

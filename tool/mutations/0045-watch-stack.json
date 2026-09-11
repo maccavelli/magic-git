@@ -53,5 +53,70 @@
     "tests": [
       "test/surface_rearm_policy_test.dart"
     ]
+  },
+  {
+    "label": "p2: exclusion does not wait for a predecessor",
+    "file": "lib/core/git/watch/admission/watch_admission.dart",
+    "find": "    final hold = await exclusion.acquire(",
+    "replace": "    final hold = await RepoExclusion().acquire(",
+    "tests": [
+      "test/watch_shared_path_test.dart"
+    ]
+  },
+  {
+    "label": "p2: a cancelled exclusion wait still installs a hold",
+    "file": "lib/core/git/watch/admission/repo_exclusion.dart",
+    "find": "        if (wake == _Wake.cancelled) return null;\n        if (wake == _Wake.expired) {\n          graceExpired = true;\n          break;\n        }\n      }\n      // Cancelled in the same turn the predecessor released: the release won\n      // the race, but nobody is left to hold the lock for.\n      if (isCancelled) return null;\n",
+    "replace": "        if (wake == _Wake.cancelled) break;\n        if (wake == _Wake.expired) {\n          graceExpired = true;\n          break;\n        }\n      }\n      // Cancelled in the same turn the predecessor released: the release won\n      // the race, but nobody is left to hold the lock for.\n",
+    "tests": [
+      "test/repo_exclusion_test.dart",
+      "test/watch_shared_path_test.dart"
+    ]
+  },
+  {
+    "label": "p2: exclusion is released before the host claims",
+    "file": "lib/core/git/remote_watch_service.dart",
+    "find": "            await releaseHostClaims();\n            // LAST. Only now may this session's next watcher of the repository\n            // ask the host for the lock this one has just given back.\n            ticket.releaseExclusion();\n          });",
+    "replace": "            ticket.releaseExclusion();\n            await releaseHostClaims();\n          });",
+    "tests": [
+      "test/watch_shared_path_test.dart"
+    ]
+  },
+  {
+    "label": "p2: the stream-budget path strands its lease",
+    "file": "lib/core/git/remote_watch_service.dart",
+    "find": "            // Give it back here, or it is stranded until a sweep reclaims it.\n            await releaseHostClaims();\n",
+    "replace": "            // Give it back here, or it is stranded until a sweep reclaims it.\n",
+    "tests": [
+      "test/watch_lease_release_test.dart"
+    ]
+  },
+  {
+    "label": "p2: the admission grace is unbounded",
+    "file": "lib/core/git/remote_watch_service.dart",
+    "find": "          grace: WatchTimings.defaultAdmissionGrace,\n          cancelled: hooks.cancelled,",
+    "replace": "          grace: const Duration(days: 365),\n          cancelled: hooks.cancelled,",
+    "tests": [
+      "test/watch_shared_path_test.dart"
+    ]
+  },
+  {
+    "label": "p2: the lifecycle ignores the bounded parameter",
+    "file": "lib/core/git/remote_watch_service.dart",
+    "find": "    return _createLifecycle(\n      repoPath,\n      bounded: bounded,",
+    "replace": "    return _createLifecycle(\n      repoPath,\n      bounded: null,",
+    "tests": [
+      "test/watch_shared_path_test.dart"
+    ]
+  },
+  {
+    "label": "p2: leaving the ignored-path filter does not reach the watcher",
+    "file": "lib/core/providers/app_providers.dart",
+    "find": ") => raw\n    .asyncMap<RepoWatchEvent?>((event) async {",
+    "replace": ") => (() async* {\n      await for (final passed in raw) {\n        yield passed;\n      }\n    })()\n    .asyncMap<RepoWatchEvent?>((event) async {",
+    "tests": [
+      "test/repo_watch_ignore_filter_test.dart",
+      "test/repo_watch_provider_sharing_test.dart"
+    ]
   }
 ]

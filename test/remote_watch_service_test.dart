@@ -4,6 +4,8 @@ import 'dart:math' show min;
 import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:remote_magic_git/core/git/remote_watch_service.dart';
+import 'package:remote_magic_git/core/git/watch/admission/host_watcher_budget.dart';
+import 'package:remote_magic_git/core/git/watch/admission/watch_admission.dart';
 import 'package:remote_magic_git/core/git/watch_event.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
@@ -604,11 +606,13 @@ void main() {
     test(
       'arms past the ceiling degrade to polling with a diagnostic',
       () async {
-        RemoteWatchService.resetWatcherCount();
-        addTearDown(RemoteWatchService.resetWatcherCount);
         final exec = _MultiArmExecutor();
         final diagnostics = <String>[];
-        final service = RemoteWatchService(exec, onDiagnostic: diagnostics.add);
+        final service = RemoteWatchService(
+          exec,
+          onDiagnostic: diagnostics.add,
+          admission: WatchAdmission(budget: HostWatcherBudget()),
+        );
         // The cap is derived per service since MADR 0041 phase 4, so read it
         // from the service under test rather than from a static.
         final cap = service.maxConcurrentWatchers;
@@ -651,9 +655,10 @@ void main() {
       // test still passed. This is the assertion that would have caught it.
       final handle = FakeWatcherHandle.armed();
       final executor = _DrivableExecutor(tool: 'inotifywait', handle: handle);
-      final service = RemoteWatchService(executor);
-      RemoteWatchService.resetWatcherCount();
-      addTearDown(RemoteWatchService.resetWatcherCount);
+      final service = RemoteWatchService(
+        executor,
+        admission: WatchAdmission(budget: HostWatcherBudget()),
+      );
 
       final sub = service.watch('/repo').listen((_) {});
       await executor.armed.future;

@@ -13,6 +13,8 @@
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:remote_magic_git/core/git/remote_watch_service.dart';
+import 'package:remote_magic_git/core/git/watch/admission/host_watcher_budget.dart';
+import 'package:remote_magic_git/core/git/watch/admission/watch_admission.dart';
 import 'package:remote_magic_git/core/git/watch_event.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
@@ -53,10 +55,11 @@ class _ArmsAlways extends SSHCommandExecutor {
 }
 
 void main() {
-  setUp(RemoteWatchService.resetWatcherCount);
+  late HostWatcherBudget hostBudget;
+
+  setUp(() => hostBudget = HostWatcherBudget());
   tearDown(() async {
     await settleArm();
-    RemoteWatchService.resetWatcherCount();
   });
 
   RemoteWatchService serviceOn(String host, {required int budget}) =>
@@ -64,6 +67,7 @@ void main() {
         _ArmsAlways(),
         hostKey: () => host,
         streamBudget: () => budget,
+        admission: WatchAdmission(budget: hostBudget),
       );
 
   test('the cap is the stream budget less the reserved channels', () {
@@ -93,6 +97,7 @@ void main() {
       _ArmsAlways(),
       hostKey: () => 'h',
       streamBudget: () => budget,
+      admission: WatchAdmission(budget: hostBudget),
     );
     expect(service.maxConcurrentWatchers, 6);
 
@@ -118,7 +123,7 @@ void main() {
     final a = tabOne.watch('/a').listen((_) {});
     final b = tabOne.watch('/b').listen((_) {});
     await settleArm();
-    expect(RemoteWatchService.liveWatchersFor('same-host'), 2);
+    expect(hostBudget.liveFor('same-host'), 2);
 
     final events = <RepoWatchEvent>[];
     final c = tabTwo.watch('/c').listen(events.add);
@@ -133,7 +138,7 @@ void main() {
           'up to 48 watchers on one host with nothing bounding it',
     );
     expect(
-      RemoteWatchService.liveWatchersFor('same-host'),
+      hostBudget.liveFor('same-host'),
       2,
       reason: 'the host budget is spent, whoever spent it',
     );
@@ -152,7 +157,7 @@ void main() {
     final a1 = alpha.watch('/a1').listen((_) {});
     final a2 = alpha.watch('/a2').listen((_) {});
     await settleArm();
-    expect(RemoteWatchService.liveWatchersFor('alpha'), 2);
+    expect(hostBudget.liveFor('alpha'), 2);
 
     final events = <RepoWatchEvent>[];
     final b1 = beta.watch('/b1').listen(events.add);
@@ -163,7 +168,7 @@ void main() {
       WatchMode.eventDriven,
       reason: 'beta has spent nothing and must not be refused',
     );
-    expect(RemoteWatchService.liveWatchersFor('beta'), 1);
+    expect(hostBudget.liveFor('beta'), 1);
 
     await a1.cancel();
     await a2.cancel();
@@ -175,7 +180,10 @@ void main() {
     // failure mode of the wiring going missing is one watcher too few rather
     // than a host with no bound.
     expect(
-      RemoteWatchService(_ArmsAlways()).maxConcurrentWatchers,
+      RemoteWatchService(
+        _ArmsAlways(),
+        admission: WatchAdmission(budget: hostBudget),
+      ).maxConcurrentWatchers,
       1,
       reason: 'the default assumes the degraded single-client budget',
     );

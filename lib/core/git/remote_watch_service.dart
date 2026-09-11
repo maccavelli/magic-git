@@ -1,10 +1,11 @@
 import 'dart:async';
 import 'dart:developer' as developer;
 
-import 'package:flutter/foundation.dart' show visibleForTesting;
 import '../ssh/shell_escaper.dart';
 import '../ssh/ssh_command_executor.dart';
 import 'bounded_watch.dart';
+import 'watch/admission/host_watcher_budget.dart';
+import 'watch/admission/watch_admission.dart';
 import 'watch/source/remote/record_splitter.dart';
 import 'watch/source/remote/stderr_line_reader.dart';
 import 'watch/source/surface_rearm_policy.dart';
@@ -157,142 +158,6 @@ List<String> remoteWatcherArgs(
 /// it (MADR 0044).
 typedef _ArmProbe = ({int? exit, bool ready});
 
-/// One repository path's watcher, and every subscriber attached to it.
-///
-/// The refcount is not hand-rolled: a broadcast [StreamController] already
-/// calls `onListen` when its FIRST listener arrives and `onCancel` when its
-/// LAST one leaves, which is exactly "build on first subscriber, tear down on
-/// last". Counting by hand would mean getting the same thing right a second
-/// time, in a class whose whole purpose is that one watcher exists.
-///
-/// See [RemoteWatchService.watch] for why one watcher per path is a
-/// correctness requirement rather than a saving (MADR 0043).
-class _SharedWatch {
-  /// Builds a fresh watcher for this path. Replaced by every
-  /// [RemoteWatchService.watch] call so the next build uses the latest
-  /// caller's parameters — a rebuilt provider hands over a new `bounded`
-  /// closure over new dependencies, and building the next watcher from the
-  /// first caller's stale one would watch the wrong surface.
-  late Stream<RepoWatchEvent> Function() build;
-
-  /// Cancelled by [_detach] when the last subscriber leaves; the analyzer
-  /// cannot see a cancel that happens in a sibling method.
-  // ignore: cancel_subscriptions
-  StreamSubscription<RepoWatchEvent>? _source;
-
-  /// The most recent event, replayed to a subscriber that arrives after it.
-  ///
-  /// `watchLifecycle` emits once on arm and then only on real events or poll
-  /// ticks, so without this a subscriber attaching to an already-armed,
-  /// quiet repository would sit with no mode at all until something happened.
-  RepoWatchEvent? _last;
-
-  late final StreamController<RepoWatchEvent> _out =
-      StreamController<RepoWatchEvent>.broadcast(
-        onListen: _attach,
-        onCancel: _detach,
-      );
-
-  /// Builds the watcher. Called by [_out] when the first subscriber arrives —
-  /// never at construction, so a stream handed out by [RemoteWatchService.watch]
-  /// and never listened to arms nothing.
-  /// A teardown still settling, if the last subscriber left recently.
-  ///
-  /// Retained so the NEXT subscriber can wait for it. The host releases its
-  /// lock in well under a second (MADR 0043 F4), and an arm that reaches the
-  /// host inside that window is refused by its own predecessor — the whole
-  /// subject of MADR 0043.
-  Future<void>? _teardown;
-
-  void _attach() {
-    final pending = _teardown;
-    if (pending == null) {
-      _build();
-      return;
-    }
-    // Wait for the previous watcher to give its lock back before claiming it.
-    // Bounded: on expiry, arm anyway and take today's race rather than leave
-    // the repository permanently unwatchable.
-    unawaited(
-      pending
-          .timeout(RemoteWatchService.sharedTeardownGrace, onTimeout: () {})
-          .whenComplete(() {
-            // Everyone may have left again while we waited; if so there is
-            // nothing to build for, and _attach will run again if they return.
-            if (_out.hasListener) _build();
-          }),
-    );
-  }
-
-  void _build() {
-    final Stream<RepoWatchEvent> source;
-    try {
-      source = build();
-    } catch (e, st) {
-      // A throw here would escape through the controller's onListen and
-      // surface somewhere unrelated. Report it to the subscriber instead.
-      if (!_out.isClosed) _out.addError(e, st);
-      return;
-    }
-    _source = source.listen(
-      (event) {
-        _last = event;
-        if (!_out.isClosed) _out.add(event);
-      },
-      onError: (Object e, StackTrace st) {
-        if (!_out.isClosed) _out.addError(e, st);
-      },
-      // The underlying lifecycle closed its controller, which it does from
-      // `stop()` — i.e. because we cancelled. Drop the handle; do NOT close
-      // [_out], which outlives any one watcher and may get new subscribers.
-      onDone: () => _source = null,
-    );
-  }
-
-  /// Tears the watcher down. Called by [_out] when the last subscriber leaves.
-  void _detach() {
-    final source = _source;
-    _source = null;
-    // A stale event must never be replayed to the next subscriber as though it
-    // described a live watcher: by the time anyone attaches again, this
-    // watcher is gone and its mode is meaningless.
-    _last = null;
-    if (source == null) {
-      _teardown = null;
-      return;
-    }
-    // Cancelling reaches `watchLifecycle.stop()`, whose teardown now awaits the
-    // host giving back the lock — so this future settling is the signal the
-    // next arm needs.
-    final teardown = source.cancel();
-    _teardown = teardown;
-    unawaited(
-      teardown.whenComplete(() {
-        // Only clear it if no LATER teardown has replaced it in the meantime.
-        if (identical(_teardown, teardown)) _teardown = null;
-      }),
-    );
-  }
-
-  /// A stream for one subscriber: the retained event first, then the live feed.
-  ///
-  /// `Stream.multi` gives every subscriber its own controller, so each one's
-  /// cancellation is independent and only the last of them reaches [_detach].
-  Stream<RepoWatchEvent> subscribe() =>
-      Stream<RepoWatchEvent>.multi((controller) {
-        // Subscribe BEFORE replaying, so an event arriving in between is
-        // delivered rather than dropped in favour of the older retained one.
-        final sub = _out.stream.listen(
-          controller.add,
-          onError: controller.addError,
-          onDone: controller.close,
-        );
-        controller.onCancel = sub.cancel;
-        final last = _last;
-        if (last != null) controller.add(last);
-      });
-}
-
 /// Watches a remote repository for filesystem changes and emits a coalesced
 /// [RepoWatchEvent] per settled burst, carrying the active [WatchMode] so the UI
 /// can distinguish live events from polling fallback.
@@ -313,8 +178,20 @@ class RemoteWatchService {
     this.onDiagnostic,
     String Function()? hostKey,
     int Function()? streamBudget,
+    WatchAdmission? admission,
   }) : _hostKey = hostKey ?? _noHost,
-       _streamBudget = streamBudget ?? _defaultStreamBudget;
+       _streamBudget = streamBudget ?? _defaultStreamBudget,
+       admission = admission ?? WatchAdmission(budget: HostWatcherBudget());
+
+  /// Whether a watcher may arm: this session's exclusion per repository lock,
+  /// then the host's budget (MADR 0045 section 3).
+  ///
+  /// Production passes the tab container's `watchAdmissionProvider`, whose
+  /// budget every tab shares and whose exclusion outlives this service across a
+  /// reconnect. A service built without one gets a private budget and
+  /// exclusion — what a test that builds its own service wants, and never what
+  /// a process with several tabs wants.
+  final WatchAdmission admission;
 
   /// Where a watcher's own stderr goes.
   final void Function(String line)? onDiagnostic;
@@ -384,27 +261,6 @@ class RemoteWatchService {
     final derived = _streamBudget() - reservedStreams;
     return derived < 1 ? 1 : derived;
   }
-
-  /// How long a new arm waits for a previous watcher of the same repository to
-  /// finish giving back its host lock, before proceeding anyway.
-  ///
-  /// Three minutes, matching `recoveryInterval` — the cadence a degraded
-  /// repository already waits on, so this gate can never make one wait longer
-  /// than the system's existing worst case.
-  ///
-  /// **It should never be reached.** The teardown it waits on is bounded by its
-  /// own 15-second command timeout (`releaseHostClaims`), so a realistic
-  /// teardown settles in seconds. This is the backstop for a future that never
-  /// completes at all, and the cost of reaching it is a repository with no
-  /// watcher AND no polling for the duration — the lifecycle has not been built
-  /// yet, so nothing emits. That is why the two bounds are coupled, and why
-  /// removing the inner one turns this into a three-minute stall (MADR 0043).
-  ///
-  /// Proceeding anyway on expiry is deliberate: it yields today's behaviour — a
-  /// possible race with a dying watcher — and never a repository that cannot be
-  /// watched again because one teardown wedged.
-  static const Duration sharedTeardownGrace =
-      WatchTimings.defaultAdmissionGrace;
 
   /// Upper bound on how long an arm waits for either signal before giving up
   /// on both and treating the watcher as armed.
@@ -485,46 +341,10 @@ class RemoteWatchService {
     }
   }
 
-  /// Live watcher processes per host. Static because the ceiling is a property
-  /// of the *host* budget, not of any one service instance — several providers
-  /// construct their own service against the same host, and counting per
-  /// instance would hand each its own budget and multiply the ceiling (0028
-  /// amendment 0028.1). Keyed by host because the process now holds several
-  /// sessions at once (MADR 0039 F4).
-  static final Map<String, int> _liveByHost = {};
-
-  /// Broadcasts the host whose watcher slot was just released, so a repo that
-  /// was refused by the ceiling can take it immediately instead of polling
-  /// until its recovery timer fires (0028 H2). Broadcast and never closed: it
-  /// is a process-wide signal with the same lifetime as the counter it reports
-  /// on. It carries the host so a release on one host does not wake — and
-  /// pointlessly re-arm — a repo waiting on another.
-  static final StreamController<String> _slotReleases =
-      StreamController<String>.broadcast();
-
-  /// Fires once per released watcher slot, carrying that slot's host.
-  static Stream<String> get slotReleases => _slotReleases.stream;
-
-  /// Releases on [host] alone, in the shape `watchLifecycle` takes.
-  static Stream<void> slotReleasesForHost(String host) =>
-      _slotReleases.stream.where((h) => h == host).map((_) {});
-
-  /// Live watcher count across every host — for tests and diagnostics.
-  static int get liveWatchers =>
-      _liveByHost.values.fold(0, (sum, n) => sum + n);
-
-  /// Live watcher count for one host — for tests and diagnostics.
-  static int liveWatchersFor(String host) => _liveByHost[host] ?? 0;
-
-  /// Test seam: the counter is process-global, so a test that arms watchers
-  /// must be able to start from a known state.
-  @visibleForTesting
-  static void resetWatcherCount() => _liveByHost.clear();
-
   /// Files one transition against [repoPath], stamping it with the live watcher
   /// count — the field that separates a leaked **slot** (H1: refusals persist
   /// with no watcher process alive) from a leaked **process** (H3). MADR 0026.
-  static void _record(
+  void _record(
     String repoPath,
     WatchTransition kind,
     String cause,
@@ -537,31 +357,29 @@ class RemoteWatchService {
           kind: kind,
           repoPath: repoPath,
           cause: cause,
-          liveWatchers: liveWatchers,
+          liveWatchers: admission.budget.liveTotal,
           restarts: restarts,
         ),
       );
 
   /// Watches [repoPath] for changes.
   ///
-  /// **One watcher per repository path, however many callers ask for it.** The
-  /// first subscriber arms; every later subscriber is attached to that same
-  /// watcher and receives the same events, with the most recent one replayed
-  /// immediately so a late arrival's mode indicator is right without waiting
-  /// for the next tick. The watcher is torn down when the LAST subscriber
-  /// leaves.
+  /// **Every call builds its own watcher.** Sharing one watcher between callers
+  /// is Riverpod's job: `repoWatchProvider` is the only production caller, and a
+  /// provider already has one instance per repository per container. Doing it
+  /// here as well is what let a leave, an arrive and a leave inside one
+  /// teardown orphan a watcher (MADR 0043.1), and what let a rebuild keep the
+  /// first caller's parameters (MADR 0045 F1, F2).
   ///
-  /// This is a correctness guarantee, not an optimisation. Arming twice used to
-  /// be possible and the second arm was refused by this app's own host-side
-  /// lock — a healthy repository degraded to polling for three minutes because
-  /// it collided with itself, and the diagnostic blamed "another live watcher"
-  /// when there was no other session (MADR 0043 F1, F2). `heldByAnother` must
-  /// only ever mean another SESSION, and that is true only if one session
-  /// cannot arm a repository twice.
+  /// **One LIVE watcher per repository per session is still guaranteed** — by
+  /// [admission], not by sharing. A watcher arms only once this session's
+  /// previous watcher of the same repository has given its host lock back: an
+  /// arm reaching the host inside that window is refused by its own
+  /// predecessor, and `heldByAnother` must only ever mean another session
+  /// (MADR 0043 F1, F2).
   ///
-  /// Scoped to this service instance, which is one connection, which is one
-  /// tab. Two tabs watching one repository still meet at the host lock, and
-  /// that is correct — they are different sessions (MADR 0041 F12).
+  /// Two tabs watching one repository are two sessions with two exclusions, and
+  /// still meet at the host lock — which is correct (MADR 0041 F12).
   ///
   /// [bounded], when supplied, switches to the **scoped work-tree** surface for
   /// a dotfiles-style repo (git-dir + tracked-file dirs, non-recursive) instead
@@ -569,14 +387,6 @@ class RemoteWatchService {
   /// why a recursive `$HOME` watch is unacceptable. Only pass it when the repo's
   /// type toggle marks it as such; an ordinary repo leaves it null and gets the
   /// unchanged recursive behaviour.
-  ///
-  /// The timing parameters and [bounded] belong to whichever call most recently
-  /// asked for this path; they are used when the NEXT watcher for it is built.
-  /// A watcher already running keeps what it was built with. In production
-  /// `repoWatchProvider` is the only caller and passes only [bounded], derived
-  /// from the same connection state for the same path — but it passes a FRESH
-  /// closure on every rebuild, which is why the latest one has to win rather
-  /// than the first (MADR 0043 plan, deviation (a)).
   Stream<RepoWatchEvent> watch(
     String repoPath, {
     BoundedWatchSpecSource? bounded,
@@ -586,8 +396,7 @@ class RemoteWatchService {
     Duration pollInterval = WatchTimings.defaultPollInterval,
     Duration recoveryInterval = WatchTimings.defaultRecoveryInterval,
   }) {
-    final shared = _shared.putIfAbsent(repoPath, _SharedWatch.new);
-    shared.build = () => _createLifecycle(
+    return _createLifecycle(
       repoPath,
       bounded: bounded,
       trailing: trailing,
@@ -596,27 +405,10 @@ class RemoteWatchService {
       pollInterval: pollInterval,
       recoveryInterval: recoveryInterval,
     );
-    return shared.subscribe();
   }
 
-  /// The watchers this service has built, one per repository path.
-  ///
-  /// An INSTANCE field, deliberately. A static map would share one watcher
-  /// between two tabs, which are two connections with two independent
-  /// executors — and would re-create exactly the process-global coupling MADR
-  /// 0039 spent ten phases partitioning by session.
-  ///
-  /// Entries are never removed. One idle entry per path is a broadcast
-  /// controller and two null fields; the alternative — retiring an entry when
-  /// its last subscriber leaves — races a subscriber that has been handed a
-  /// stream by [watch] and has not listened to it yet, which would build a
-  /// watcher no map knows about. The service itself is rebuilt whenever the
-  /// executor is, so the map's lifetime is one connection's.
-  final Map<String, _SharedWatch> _shared = {};
-
-  /// Builds one watcher for [repoPath]. Everything below is per-watcher state,
-  /// which is why it lives in a factory rather than in [watch]: [watch] may be
-  /// called many times for one path and must not produce a second one.
+  /// Builds one watcher for [repoPath]. Everything below is that watcher's own
+  /// state; the next call builds the next watcher.
   Stream<RepoWatchEvent> _createLifecycle(
     String repoPath, {
     BoundedWatchSpecSource? bounded,
@@ -648,7 +440,7 @@ class RemoteWatchService {
       pollInterval: pollInterval,
       recoveryInterval: recoveryInterval,
       onPollingRecoveryAttempt: () => cachedTool = null,
-      slotReleased: slotReleasesForHost(_hostKey()),
+      slotReleased: admission.budget.releases(_hostKey()),
       onTransition: (kind, cause, restarts) {
         _record(repoPath, kind, cause, restarts);
         // Degradation is the expensive state and the one a maintainer needs
@@ -690,44 +482,100 @@ class RemoteWatchService {
         // connection that changes host mid-arm must not credit the slot back
         // to a host that never paid for it.
         final host = _hostKey();
-        final liveHere = _liveByHost[host] ?? 0;
-        if (liveHere >= maxConcurrentWatchers) {
-          onDiagnostic?.call(
-            'watcher ceiling reached for $host '
-            '($liveHere/$maxConcurrentWatchers) — polling $repoPath instead',
-          );
-          _record(
-            repoPath,
-            WatchTransition.armFailed,
-            'ceiling $liveHere/$maxConcurrentWatchers',
-            0,
-          );
-          return const WatchUnavailable(WatchUnavailableReason.ceiling);
-        }
-        // RESERVE the slot here, synchronously, rather than counting it once
-        // the arm succeeds. Arms are concurrent — several repos arm at once on
-        // connect — and every one of them awaits the tool probe before this
-        // point, so a check that did not reserve let all of them pass the
-        // ceiling together. Released on every path that does not end armed.
-        _liveByHost[host] = liveHere + 1;
-        var armCounted = true;
-        void releaseSlot() {
-          if (!armCounted) return;
-          armCounted = false;
-          final n = _liveByHost[host] ?? 0;
-          if (n > 1) {
-            _liveByHost[host] = n - 1;
-          } else {
-            _liveByHost.remove(host);
-          }
-          // Announce room on THIS host. Several waiting repos may wake
-          // together; the reserve-then-arm ceiling settles who gets it, and the
-          // losers are refused exactly as they were before.
-          if (!_slotReleases.isClosed) _slotReleases.add(host);
+        // The repository lock the host script claims, and so the key this
+        // session's exclusion waits on: one name for "the same repository" on
+        // both sides.
+        final gitDir = spec?.gitDir ?? '$repoPath/.git';
+        // ADMISSION: this session's previous watcher of this repository first,
+        // then the host's budget (MADR 0045 section 3). The lock is waited for
+        // before a slot is reserved, so a wait never holds one; the reservation
+        // itself is synchronous, so arms racing on connect cannot all pass the
+        // ceiling together (0028).
+        final AdmissionTicket ticket;
+        switch (await admission.admit(
+          host: host,
+          capacity: maxConcurrentWatchers,
+          lockKey: gitDir,
+          grace: WatchTimings.defaultAdmissionGrace,
+          cancelled: hooks.cancelled,
+        )) {
+          case RefusedCeiling(:final live, :final capacity):
+            onDiagnostic?.call(
+              'watcher ceiling reached for $host '
+              '($live/$capacity) — polling $repoPath instead',
+            );
+            _record(
+              repoPath,
+              WatchTransition.armFailed,
+              'ceiling $live/$capacity',
+              0,
+            );
+            return const WatchUnavailable(WatchUnavailableReason.ceiling);
+          case AdmissionCancelled():
+            return const WatchAborted();
+          case Admitted(ticket: final admitted):
+            ticket = admitted;
         }
 
-        // EVERY exit from here releases the slot. The four explicit releases
-        // below stay — each pairs its release with a distinct `_record` cause
+        final heartbeat = watchHeartbeatFile(gitDir, token);
+        // One watcher per repository, decided on the HOST. The client's slot
+        // counter is correct only while exactly one client exists, and this
+        // app has had up to eight tab containers since `11689cc` — plus any
+        // second copy of the app pointed at the same bastion (MADR 0041 F12).
+        final lock = (gitDir: gitDir, token: token);
+        Future<void> beat() async {
+          try {
+            await _executor.execute(
+              repoPath: repoPath,
+              gitArgs: ['sh', '-c', 'touch ${ShellEscaper.escape(heartbeat)}'],
+              lane: ExecLane.isolated,
+              timeout: WatchTimings.defaultReleaseTimeout,
+            );
+          } catch (_) {
+            // Best-effort once the watcher is up. A missed beat costs nothing
+            // until leaseStaleAfter — but see the AWAITED first beat below,
+            // which is not optional.
+          }
+        }
+
+        /// Gives back everything this arm claimed on the host: its lease,
+        /// and — while it still owns it — the repository lock.
+        ///
+        /// Best-effort by construction. The common failure is a disconnected
+        /// executor, which is also the case where the watcher has already
+        /// taken stdin EOF and released these itself; nothing to report and
+        /// nothing to retry.
+        ///
+        /// **The 15-second timeout is load-bearing and coupled to the
+        /// admission grace.** This session's next watcher of the repository
+        /// waits for the exclusion released after this call, bounded at
+        /// `WatchTimings.defaultAdmissionGrace`. Because this call cannot take
+        /// longer than its own timeout, that bound is a backstop that should
+        /// never be reached — `WatchTimings.coherenceErrors` asserts the pair.
+        /// Remove this timeout and a wedged release becomes a three-minute
+        /// stall on a repository with no watcher and no polling (MADR 0043
+        /// plan, decision 3).
+        Future<void> releaseHostClaims() async {
+          try {
+            await _executor.execute(
+              repoPath: repoPath,
+              gitArgs: [
+                'sh',
+                '-c',
+                'rm -f ${ShellEscaper.escape(heartbeat)}; '
+                    '${watchLockReleaseScript(lock)}',
+              ],
+              lane: ExecLane.isolated,
+              timeout: WatchTimings.defaultReleaseTimeout,
+            );
+          } catch (_) {
+            // See the doc comment: swallowing is the contract, not an
+            // oversight.
+          }
+        }
+
+        // EVERY exit from here releases the ticket. The explicit releases below
+        // stay — each pairs its release with a distinct `_record` cause
         // and `WatchUnavailable` reason, which is what makes
         // `degradationSummary` legible — but they are not the guarantee.
         //
@@ -739,67 +587,6 @@ class RemoteWatchService {
         // — MADR 0026's H1 exactly. Structural, so that a sixth failure type
         // added later cannot reintroduce it (MADR 0040 F8).
         try {
-          final gitDir = spec?.gitDir ?? '$repoPath/.git';
-          final heartbeat = watchHeartbeatFile(gitDir, token);
-          // One watcher per repository, decided on the HOST. The client's slot
-          // counter is correct only while exactly one client exists, and this
-          // app has had up to eight tab containers since `11689cc` — plus any
-          // second copy of the app pointed at the same bastion (MADR 0041 F12).
-          final lock = (gitDir: gitDir, token: token);
-          Future<void> beat() async {
-            try {
-              await _executor.execute(
-                repoPath: repoPath,
-                gitArgs: [
-                  'sh',
-                  '-c',
-                  'touch ${ShellEscaper.escape(heartbeat)}',
-                ],
-                lane: ExecLane.isolated,
-                timeout: WatchTimings.defaultReleaseTimeout,
-              );
-            } catch (_) {
-              // Best-effort once the watcher is up. A missed beat costs nothing
-              // until leaseStaleAfter — but see the AWAITED first beat below,
-              // which is not optional.
-            }
-          }
-
-          /// Gives back everything this arm claimed on the host: its lease,
-          /// and — while it still owns it — the repository lock.
-          ///
-          /// Best-effort by construction. The common failure is a disconnected
-          /// executor, which is also the case where the watcher has already
-          /// taken stdin EOF and released these itself; nothing to report and
-          /// nothing to retry.
-          ///
-          /// **The 15-second timeout is load-bearing and coupled to
-          /// `_SharedWatch`'s teardown gate.** That gate holds the next arm for
-          /// this path until this future settles, bounded at
-          /// [sharedTeardownGrace]. Because this call cannot take longer than
-          /// its own timeout, the gate's bound is a backstop that should never
-          /// be reached. Remove this timeout and the gate becomes a
-          /// three-minute stall on a repository with no watcher and no polling
-          /// (MADR 0043 plan, decision 3).
-          Future<void> releaseHostClaims() async {
-            try {
-              await _executor.execute(
-                repoPath: repoPath,
-                gitArgs: [
-                  'sh',
-                  '-c',
-                  'rm -f ${ShellEscaper.escape(heartbeat)}; '
-                      '${watchLockReleaseScript(lock)}',
-                ],
-                lane: ExecLane.isolated,
-                timeout: WatchTimings.defaultReleaseTimeout,
-              );
-            } catch (_) {
-              // See the doc comment: swallowing is the contract, not an
-              // oversight.
-            }
-          }
-
           // STAMP THE LEASE BEFORE ARMING, and wait for it.
           //
           // The watcher script's first action is `[ -f <heartbeat> ] || exit 0`.
@@ -828,7 +615,11 @@ class RemoteWatchService {
               ),
             );
           } on SSHStreamBudgetExhausted catch (e) {
-            releaseSlot();
+            ticket.releaseBudget();
+            // The lease was stamped above and no watcher will ever read it.
+            // Give it back here, or it is stranded until a sweep reclaims it.
+            await releaseHostClaims();
+            ticket.releaseExclusion();
             // Deterministic, not a blip: retrying just hits the same wall and
             // spends the restart budget doing it. Poll this repo instead, and
             // say why (0024 M2).
@@ -837,8 +628,10 @@ class RemoteWatchService {
             return const WatchUnavailable(WatchUnavailableReason.streamBudget);
           }
           if (hooks.isCancelled()) {
-            releaseSlot();
+            ticket.releaseBudget();
             await handle.cancel();
+            await releaseHostClaims();
+            ticket.releaseExclusion();
             return const WatchAborted();
           }
 
@@ -931,7 +724,7 @@ class RemoteWatchService {
               );
             }
             if (early == boundedWatchLockedExit) {
-              releaseSlot();
+              ticket.releaseBudget();
               // This arm stamped its lease before opening the stream — the
               // watcher's first act is to test for that file, so the client's
               // mark has to come first (0027 deviation (b)). A refusal never
@@ -962,12 +755,13 @@ class RemoteWatchService {
                 'held by another watcher$held',
                 0,
               );
+              ticket.releaseExclusion();
               return const WatchUnavailable(
                 WatchUnavailableReason.heldByAnother,
               );
             }
             if (spec != null && early == boundedWatchNoPathsExit) {
-              releaseSlot();
+              ticket.releaseBudget();
               await errSub.cancel();
               await handle.cancel();
               // Same stranded lease, same reason — this refusal also happens
@@ -979,6 +773,7 @@ class RemoteWatchService {
                 'no watched paths',
                 0,
               );
+              ticket.releaseExclusion();
               return const WatchUnavailable(
                 WatchUnavailableReason.noWatchedPaths,
               );
@@ -1052,7 +847,9 @@ class RemoteWatchService {
           heartbeatTimer = Timer.periodic(heartbeatInterval, (_) => beat());
 
           return WatchArmed(() async {
-            releaseSlot();
+            // FIRST: a repository refused by the ceiling can take the slot
+            // while this teardown is still talking to the host.
+            ticket.releaseBudget();
             heartbeatTimer?.cancel();
             heartbeatTimer = null;
             rearmPolicy.cancel();
@@ -1079,17 +876,23 @@ class RemoteWatchService {
             // command client. Unawaited and swallowing, because a teardown
             // during a disconnect has no executor to talk to and must not fail
             // or stall for it.
-            // AWAITED, where this used to be fire-and-forget. The next arm for
-            // this repository waits on this future before it opens its own
-            // stream, so "the teardown finished" has to mean "the host lock is
-            // gone" — otherwise the gate lets the arm through into exactly the
-            // window it exists to close (MADR 0043 F3, F4).
+            // AWAITED, where this used to be fire-and-forget: the exclusion is
+            // released only after it, so "this watcher is gone" has to mean "the
+            // host lock is gone" — otherwise the next arm for this repository
+            // goes through into exactly the window it waits to close (MADR 0043
+            // F3, F4).
             await releaseHostClaims();
+            // LAST. Only now may this session's next watcher of the repository
+            // ask the host for the lock this one has just given back.
+            ticket.releaseExclusion();
           });
         } catch (_) {
-          // Idempotent (`armCounted`), so this is safe even on the paths that
-          // already released explicitly.
-          releaseSlot();
+          // Idempotent, so this is safe even on the paths that already
+          // released explicitly. The host claims too: a failure past admission
+          // may have stamped a lease that no watcher will ever refresh.
+          ticket.releaseBudget();
+          await releaseHostClaims();
+          ticket.releaseExclusion();
           // Rethrow rather than degrade: the lifecycle engine turns a throw
           // into a scheduled restart, which is the right answer to a transport
           // blip. Converting it to `WatchUnavailable` here would spend the

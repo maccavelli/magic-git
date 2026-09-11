@@ -68,7 +68,8 @@ class WatchTransitionRecord {
   /// purpose: it is read by a maintainer, not matched by code.
   final String cause;
 
-  /// `RemoteWatchService.liveWatchers` at this instant.
+  /// The admission budget's live watchers across every host at this instant —
+  /// `HostWatcherBudget.liveTotal`; always 0 from the local backend.
   final int liveWatchers;
 
   /// The engine's spent restart budget at this instant.

@@ -81,6 +81,7 @@ class WatchHooks {
     required this.scheduleRestart,
     required this.rearm,
     required this.isCancelled,
+    required this.cancelled,
   });
 
   /// Report one changed path (already filtered by the caller — the engine
@@ -114,6 +115,12 @@ class WatchHooks {
   /// Whether the stream was cancelled — for checks between an arm callback's
   /// own awaits (the engine can only check before and after the whole call).
   final bool Function() isCancelled;
+
+  /// Completes when the stream is cancelled — for an arm that WAITS, where
+  /// [isCancelled] can only be polled. Admission races its wait for a
+  /// predecessor's lock against this, so a subscriber who leaves while waiting
+  /// installs nothing (MADR 0045 section 3).
+  final Future<void> cancelled;
 }
 
 /// The watcher lifecycle engine shared by `RemoteWatchService` and
@@ -176,6 +183,8 @@ Stream<RepoWatchEvent> watchLifecycle({
   WatchUnavailableReason? degradedReason;
   StreamSubscription<void>? slotSub;
   var cancelled = false;
+  // The same fact as [cancelled], as something an arm can await.
+  final cancelSignal = Completer<void>();
   var restarts = 0;
   late Future<void> Function() start;
   late Future<void> Function() startOnce;
@@ -294,6 +303,7 @@ Stream<RepoWatchEvent> watchLifecycle({
       start().catchError((_) => scheduleRestart());
     },
     isCancelled: () => cancelled,
+    cancelled: cancelSignal.future,
   );
 
   // ONE arm at a time. `startOnce` nulls `armedTeardown` before `await
@@ -373,6 +383,7 @@ Stream<RepoWatchEvent> watchLifecycle({
   Future<void> stop() async {
     onTransition?.call(WatchTransition.stopped, 'stream cancelled', restarts);
     cancelled = true;
+    if (!cancelSignal.isCompleted) cancelSignal.complete();
     await slotSub?.cancel();
     slotSub = null;
     restartTimer?.cancel();

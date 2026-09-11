@@ -8,6 +8,8 @@ import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:remote_magic_git/core/git/remote_watch_service.dart';
+import 'package:remote_magic_git/core/git/watch/admission/host_watcher_budget.dart';
+import 'package:remote_magic_git/core/git/watch/admission/watch_admission.dart';
 import 'package:remote_magic_git/core/git/watch_diagnostics.dart';
 import 'package:remote_magic_git/core/git/watch_event.dart';
 import 'package:remote_magic_git/core/git/watch_lifecycle.dart';
@@ -56,21 +58,20 @@ class _ArmsAlwaysExecutor extends SSHCommandExecutor {
 }
 
 void main() {
+  late HostWatcherBudget hostBudget;
+
   setUp(() {
     watchDiagnostics.clear();
-    RemoteWatchService.resetWatcherCount();
+    hostBudget = HostWatcherBudget();
   });
-  // Wait for in-flight arms before resetting the shared counter. Since MADR
-  // 0041 phase 3 an arm takes 250 ms of real time to decide (see [settleArm]),
-  // so a test can end with one still running; that arm then completes into the
-  // NEXT test and releases a slot it reserved under the previous one, leaving
-  // the counter below zero-adjusted. Isolated, every test here passes — it is
-  // only in sequence that the leak shows, which is exactly the kind of failure
-  // that gets rerun rather than read.
+  // Wait for in-flight arms before the next test starts: an arm takes real time
+  // to decide (see [settleArm]), so a test can end with one still running. Each
+  // test counts against its own budget (MADR 0045 phase 2), so a late release
+  // can no longer skew the next test's count as it did when the counter was
+  // process-wide.
   tearDown(() async {
     await settleArm();
     watchDiagnostics.clear();
-    RemoteWatchService.resetWatcherCount();
   });
 
   // ---- 2a: the instrument records the UNHEALTHY transitions ----------------
@@ -81,7 +82,11 @@ void main() {
       final executor = _ArmsAlwaysExecutor();
       // A budget of 4 leaves a ceiling of 2 once the CI trace and clone
       // progress channels are reserved — the two this test fills below.
-      final service = RemoteWatchService(executor, streamBudget: () => 4);
+      final service = RemoteWatchService(
+        executor,
+        streamBudget: () => 4,
+        admission: WatchAdmission(budget: hostBudget),
+      );
       final subs = <StreamSubscription<RepoWatchEvent>>[];
 
       // Fill the ceiling, then ask for one more.
@@ -89,7 +94,7 @@ void main() {
         subs.add(service.watch(repo).listen((_) {}));
       }
       await settleArm();
-      expect(RemoteWatchService.liveWatchers, service.maxConcurrentWatchers);
+      expect(hostBudget.liveTotal, service.maxConcurrentWatchers);
 
       subs.add(service.watch('/c').listen((_) {}));
       await settleArm();
@@ -129,7 +134,10 @@ void main() {
     // inotifywait" is not. The engine cannot tell them apart, so it cannot
     // treat them differently; carrying the reason is the prerequisite.
     final executor = _ArmsAlwaysExecutor();
-    final service = RemoteWatchService(executor);
+    final service = RemoteWatchService(
+      executor,
+      admission: WatchAdmission(budget: hostBudget),
+    );
     final subs = <StreamSubscription<RepoWatchEvent>>[];
     for (final repo in ['/a', '/b']) {
       subs.add(service.watch(repo).listen((_) {}));
@@ -156,7 +164,10 @@ void main() {
   });
 
   test('a healthy arm is recorded as armed, not as a failure', () async {
-    final service = RemoteWatchService(_ArmsAlwaysExecutor());
+    final service = RemoteWatchService(
+      _ArmsAlwaysExecutor(),
+      admission: WatchAdmission(budget: hostBudget),
+    );
     final sub = service.watch('/ok').listen((_) {});
     await settleArm();
 
@@ -176,6 +187,7 @@ void main() {
       // Budget 4 less the 2 reserved channels: a ceiling of two, which is what
       // the "watchers held 2" line below is about.
       streamBudget: () => 4,
+      admission: WatchAdmission(budget: hostBudget),
     );
     final subs = <StreamSubscription<RepoWatchEvent>>[];
     for (final repo in ['/a', '/b']) {

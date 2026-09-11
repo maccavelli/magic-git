@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:riverpod/misc.dart' show Override;
 
+import '../../core/git/watch/admission/host_watcher_budget.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/providers/provider_failure_observer.dart';
 import '../../core/providers/provider_retry_policy.dart';
@@ -107,6 +108,13 @@ class TabsController extends ChangeNotifier {
   static const int maxTabs = 8;
 
   final ProviderContainer Function(List<Override>) _containerFactory;
+
+  /// The host watcher budget every tab's session counts against.
+  ///
+  /// Owned HERE because this is the one object whose lifetime is the process's
+  /// set of tabs: each tab is its own root container, so nothing inside a
+  /// container can be shared with a sibling (MADR 0045 section 3).
+  final HostWatcherBudget _watcherBudget = HostWatcherBudget();
   final SavedWorkspaceStore _workspaceStore;
   final List<StreamSubscription<void>> _storeSubs = [];
   final List<RepoTab> _tabs = [];
@@ -381,7 +389,13 @@ class TabsController extends ChangeNotifier {
     List<Override> overrides = const [],
   }) {
     final tab =
-        RepoTab(id: 'tab-${_nextId++}', container: _containerFactory(overrides))
+        RepoTab(
+            id: 'tab-${_nextId++}',
+            container: _containerFactory([
+              hostWatcherBudgetProvider.overrideWithValue(_watcherBudget),
+              ...overrides,
+            ]),
+          )
           ..connectionId = connectionId
           ..repoPath = repoPath
           ..savedKind = savedKind

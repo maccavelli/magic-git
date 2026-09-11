@@ -33,6 +33,8 @@ import '../git/local_watch_service.dart';
 import '../git/log_search.dart';
 import '../git/remote_watch_service.dart';
 import '../git/repo_tree.dart';
+import '../git/watch/admission/host_watcher_budget.dart';
+import '../git/watch/admission/watch_admission.dart';
 import '../git/watch_event.dart';
 import '../github/gh_service.dart';
 import '../github/models.dart';
@@ -377,6 +379,29 @@ final installServiceProvider = Provider<InstallService>((ref) {
   return InstallService(ref.watch(activeExecutorProvider));
 });
 
+/// The host watcher budget — one per PROCESS, shared by every tab.
+///
+/// The budget belongs to the host, and this process holds one session per tab
+/// (MADR 0039 F4), so every tab container must count against ONE instance.
+/// `TabsController` overrides this in each container it creates with the
+/// instance it owns. A container built anywhere else — a test, a pop-out — gets
+/// its own, which is what scoping by injection rather than by a static means
+/// (MADR 0045 F5).
+final hostWatcherBudgetProvider = Provider<HostWatcherBudget>(
+  (ref) => HostWatcherBudget(),
+);
+
+/// Watcher admission for this container's session: the shared host budget, and
+/// this session's exclusion per repository lock.
+///
+/// Deliberately NOT rebuilt with the executor. A reconnect rebuilds
+/// [remoteWatchServiceProvider] while the dying service's watcher may still be
+/// giving its host lock back, and the new service's first arm must wait for
+/// it — which it can only do through the same exclusion (MADR 0043.1).
+final watchAdmissionProvider = Provider<WatchAdmission>(
+  (ref) => WatchAdmission(budget: ref.watch(hostWatcherBudgetProvider)),
+);
+
 final remoteWatchServiceProvider = Provider<RemoteWatchService>((ref) {
   return RemoteWatchService(
     ref.watch(executorProvider),
@@ -389,6 +414,10 @@ final remoteWatchServiceProvider = Provider<RemoteWatchService>((ref) {
     // when the dedicated stream client degrades or is re-dialled — so a
     // callback, read at arm time, never a watched value (MADR 0041 F7).
     streamBudget: () => ref.read(executorProvider).maxConcurrentStreams,
+    // This session's exclusion and the process's host budget. Watched, not
+    // read: both are stable for the container's life, and a service must never
+    // hold one it could outlive.
+    admission: ref.watch(watchAdmissionProvider),
     // The watcher's own stderr. `inotifywait` reports its per-directory
     // failures here — "upper limit on inotify watches reached" above all —
     // and dropping them left a silent polling fallback with nothing to chase
@@ -3796,38 +3825,43 @@ final repoWatchProvider = StreamProvider.autoDispose
 /// view of the repo would land last. Ticks are already coalesced, so the rate
 /// here is at most a few per second, and the oracle answers nearly all of them
 /// from memory.
+///
+/// And `asyncMap`, **not an `async*` generator**, for the watcher's sake. For
+/// its first two months this was `async* { await for … }`, and cancelling an
+/// `async*` stream takes effect only at its next `yield`. When the last view
+/// stopped listening, Riverpod disposed the provider and the watcher under it
+/// kept running — process, lease, host lock and budget slot — until the quiet
+/// repository next changed (MADR 0045 amendment 0045.1). `asyncMap` hands the
+/// cancel straight to its source.
 Stream<RepoWatchEvent> _withoutIgnoredPaths(
   GitIgnoreOracle oracle,
   String repoPath,
   Stream<RepoWatchEvent> raw,
-) async* {
-  await for (final event in raw) {
-    // Unknown scope (a poll, a watcher restart, an overflowing burst). There is
-    // nothing to filter and nothing may be assumed — pass it through as the
-    // "refresh everything" signal it is.
-    if (!event.isScoped) {
-      yield event;
-      continue;
-    }
-    // An edited `.gitignore` changes the answers themselves, so every verdict
-    // derived from the old one is void.
-    if (event.paths.any(GitIgnoreOracle.isIgnoreSource)) {
-      oracle.forgetRepo(repoPath);
-    }
-    Set<String> visible;
-    try {
-      visible = await oracle.visible(repoPath, event.paths);
-    } catch (_) {
-      // Fail open: a burst we could not classify is treated as a real change.
-      // Refreshing when we needn't is a wasted read; the converse is a pane
-      // that silently stops updating.
-      yield event;
-      continue;
-    }
-    if (visible.isEmpty) continue; // the whole burst was noise git can't see
-    yield event.withPaths(visible);
-  }
-}
+) => raw
+    .asyncMap<RepoWatchEvent?>((event) async {
+      // Unknown scope (a poll, a watcher restart, an overflowing burst). There
+      // is nothing to filter and nothing may be assumed — pass it through as
+      // the "refresh everything" signal it is.
+      if (!event.isScoped) return event;
+      // An edited `.gitignore` changes the answers themselves, so every verdict
+      // derived from the old one is void.
+      if (event.paths.any(GitIgnoreOracle.isIgnoreSource)) {
+        oracle.forgetRepo(repoPath);
+      }
+      final Set<String> visible;
+      try {
+        visible = await oracle.visible(repoPath, event.paths);
+      } catch (_) {
+        // Fail open: a burst we could not classify is treated as a real
+        // change. Refreshing when we needn't is a wasted read; the converse is
+        // a pane that silently stops updating.
+        return event;
+      }
+      // The whole burst was noise git can't see.
+      return visible.isEmpty ? null : event.withPaths(visible);
+    })
+    .where((event) => event != null)
+    .map((event) => event!);
 
 /// Branches + remote-tracking refs for a repo.
 /// Every worktree of this repository, main worktree first.

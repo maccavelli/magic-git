@@ -17,6 +17,8 @@ import 'dart:async';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:remote_magic_git/core/git/bounded_watch.dart';
 import 'package:remote_magic_git/core/git/remote_watch_service.dart';
+import 'package:remote_magic_git/core/git/watch/admission/host_watcher_budget.dart';
+import 'package:remote_magic_git/core/git/watch/admission/watch_admission.dart';
 import 'package:remote_magic_git/core/git/watch_diagnostics.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
@@ -81,16 +83,17 @@ typedef ArmOutcome = ({
 });
 
 void main() {
+  late HostWatcherBudget hostBudget;
+
   setUp(() {
-    RemoteWatchService.resetWatcherCount();
+    hostBudget = HostWatcherBudget();
     watchDiagnostics.clear();
   });
-  tearDown(RemoteWatchService.resetWatcherCount);
 
   /// Arms [handle], waits for the arm to commit either way, then tears down.
   ///
   /// The subscription is cancelled here rather than handed back, so a test can
-  /// never leave a watcher counted against the process-global ceiling.
+  /// never leave a watcher counted against the test's budget.
   Future<ArmOutcome> arm(FakeWatcherHandle handle) async {
     final executor = _ScriptedExecutor(handle);
     final diagnostics = <String>[];
@@ -98,6 +101,7 @@ void main() {
       executor,
       hostKey: () => 'host',
       onDiagnostic: diagnostics.add,
+      admission: WatchAdmission(budget: hostBudget),
     );
     // The transition log, not the live-watcher count. A slot is reserved
     // BEFORE the stream is opened and given back if the arm fails, so
@@ -199,11 +203,7 @@ void main() {
         ),
         isTrue,
       );
-      expect(
-        RemoteWatchService.liveWatchers,
-        0,
-        reason: 'a refused arm holds no slot',
-      );
+      expect(hostBudget.liveTotal, 0, reason: 'a refused arm holds no slot');
     },
   );
 
@@ -237,7 +237,7 @@ void main() {
       ),
     );
 
-    expect(RemoteWatchService.liveWatchers, 0);
+    expect(hostBudget.liveTotal, 0);
     expect(
       outcome.diagnostics.any(
         (d) => d.contains('another live watcher already holds'),
@@ -279,7 +279,11 @@ void main() {
   test('a marker arriving late does not re-settle a settled arm', () async {
     final handle = FakeWatcherHandle.armed();
     final executor = _ScriptedExecutor(handle);
-    final service = RemoteWatchService(executor, hostKey: () => 'host');
+    final service = RemoteWatchService(
+      executor,
+      hostKey: () => 'host',
+      admission: WatchAdmission(budget: hostBudget),
+    );
     final sub = service.watch('/repo').listen((_) {});
     await executor.armed.future;
     final log = watchDiagnostics.forRepo('/repo');
@@ -293,7 +297,7 @@ void main() {
     handle.emitStderr('$watchArmedMarker\n');
     await pumpEventQueue();
 
-    expect(RemoteWatchService.liveWatchers, 1);
+    expect(hostBudget.liveTotal, 1);
     await sub.cancel();
     await pumpEventQueue();
   });

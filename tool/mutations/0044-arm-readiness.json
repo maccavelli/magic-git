@@ -84,7 +84,7 @@
  {
   "label": "p2: a refused arm keeps its slot",
   "file": "lib/core/git/remote_watch_service.dart",
-  "find": "            if (early == boundedWatchLockedExit) {\n              releaseSlot();",
+  "find": "            if (early == boundedWatchLockedExit) {\n              ticket.releaseBudget();",
   "replace": "            if (early == boundedWatchLockedExit) {",
   "tests": [
    "test/watch_arm_signal_test.dart"

@@ -20,6 +20,8 @@
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:remote_magic_git/core/git/remote_watch_service.dart';
+import 'package:remote_magic_git/core/git/watch/admission/host_watcher_budget.dart';
+import 'package:remote_magic_git/core/git/watch/admission/watch_admission.dart';
 import 'package:remote_magic_git/core/git/watch_diagnostics.dart';
 import 'package:remote_magic_git/core/git/watch_event.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
@@ -68,10 +70,11 @@ class _StreamFails extends SSHCommandExecutor {
   }) async => throw error;
 }
 
-Future<void> _armAndFail(Object error) async {
+Future<void> _armAndFail(HostWatcherBudget budget, Object error) async {
   final service = RemoteWatchService(
     _StreamFails(error),
     hostKey: () => 'bastion',
+    admission: WatchAdmission(budget: budget),
   );
   final events = <RepoWatchEvent>[];
   final sub = service.watch('/repo').listen(events.add);
@@ -80,11 +83,12 @@ Future<void> _armAndFail(Object error) async {
 }
 
 void main() {
+  late HostWatcherBudget hostBudget;
+
   setUp(() {
-    RemoteWatchService.resetWatcherCount();
+    hostBudget = HostWatcherBudget();
     watchDiagnostics.clear();
   });
-  tearDown(RemoteWatchService.resetWatcherCount);
 
   // All five ways `executeStream` can fail. Four of them used to strand the
   // slot; `SSHStreamBudgetExhausted` was the one the arm caught, and it is here
@@ -96,10 +100,10 @@ void main() {
     ('SSHChannelOpenError', const _FakeChannelOpenError()),
   ]) {
     test('a $name while opening the stream does not leak the slot', () async {
-      await _armAndFail(error);
+      await _armAndFail(hostBudget, error);
 
       expect(
-        RemoteWatchService.liveWatchersFor('bastion'),
+        hostBudget.liveFor('bastion'),
         0,
         reason:
             'the slot was reserved before the stream open and must come '
@@ -117,18 +121,20 @@ void main() {
     final cap = RemoteWatchService(
       _StreamFails(const SSHCommandSuperseded('watch')),
       hostKey: () => 'bastion',
+      admission: WatchAdmission(budget: hostBudget),
     ).maxConcurrentWatchers;
     for (var i = 0; i < cap; i++) {
-      await _armAndFail(const SSHCommandSuperseded('watch'));
+      await _armAndFail(hostBudget, const SSHCommandSuperseded('watch'));
     }
 
-    expect(RemoteWatchService.liveWatchersFor('bastion'), 0);
+    expect(hostBudget.liveFor('bastion'), 0);
 
     // A repo arming afterwards must not be refused.
     final events = <RepoWatchEvent>[];
     final service = RemoteWatchService(
       _StreamFails(const SSHCommandSuperseded('watch')),
       hostKey: () => 'bastion',
+      admission: WatchAdmission(budget: hostBudget),
     );
     final sub = service.watch('/later').listen(events.add);
     await pumpEventQueue();
@@ -149,7 +155,7 @@ void main() {
       reason: 'the arm must have been attempted and failed',
     );
     expect(
-      RemoteWatchService.liveWatchersFor('bastion'),
+      hostBudget.liveFor('bastion'),
       lessThan(cap),
       reason: 'the budget must not be spent by arms that never armed',
     );

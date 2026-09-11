@@ -11,6 +11,8 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:remote_magic_git/core/git/local_watch_service.dart';
 import 'package:remote_magic_git/core/git/remote_watch_service.dart';
+import 'package:remote_magic_git/core/git/watch/admission/host_watcher_budget.dart';
+import 'package:remote_magic_git/core/git/watch/admission/watch_admission.dart';
 import 'package:remote_magic_git/core/git/watch_diagnostics.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
@@ -48,26 +50,26 @@ class _ArmsAlways extends SSHCommandExecutor {
 }
 
 void main() {
+  late HostWatcherBudget hostBudget;
+
   setUp(() {
     watchDiagnostics.clear();
-    RemoteWatchService.resetWatcherCount();
+    hostBudget = HostWatcherBudget();
   });
-  // Wait for in-flight arms before resetting the shared counter. Since MADR
-  // 0041 phase 3 an arm takes 250 ms of real time to decide (see [settleArm]),
-  // so a test can end with one still running; that arm then completes into the
-  // NEXT test and releases a slot it reserved under the previous one, leaving
-  // the counter below zero-adjusted. Isolated, every test here passes — it is
-  // only in sequence that the leak shows, which is exactly the kind of failure
-  // that gets rerun rather than read.
+  // Wait for in-flight arms before the next test starts: an arm takes real time
+  // to decide (see [settleArm]), so a test can end with one still running. Each
+  // test counts against its own budget (MADR 0045 phase 2), so a late release
+  // can no longer skew the next test's count as it did when the counter was
+  // process-wide.
   tearDown(() async {
     await settleArm();
     watchDiagnostics.clear();
-    RemoteWatchService.resetWatcherCount();
   });
 
   test('the SSH backend records its watch transitions', () async {
     final sub = RemoteWatchService(
       _ArmsAlways(),
+      admission: WatchAdmission(budget: hostBudget),
     ).watch('/srv/repo').listen((_) {});
     await settleArm();
     expect(

@@ -4,6 +4,8 @@
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:remote_magic_git/core/git/remote_watch_service.dart';
+import 'package:remote_magic_git/core/git/watch/admission/host_watcher_budget.dart';
+import 'package:remote_magic_git/core/git/watch/admission/watch_admission.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 import 'helpers/fake_watcher_handle.dart';
@@ -67,18 +69,21 @@ Set<String> leasePaths(List<String> scripts) {
 }
 
 void main() {
-  setUp(RemoteWatchService.resetWatcherCount);
+  late HostWatcherBudget hostBudget;
+
+  setUp(() => hostBudget = HostWatcherBudget());
   tearDown(() async {
-    // In-flight arms take 250 ms of real time to decide (see [settleArm]); let
-    // them finish and release before the shared counter is reset, or the next
-    // test starts with a slot that a previous test's arm is about to give back.
+    // In-flight arms take real time to decide (see [settleArm]); let them
+    // finish before the next test starts.
     await settleArm();
-    RemoteWatchService.resetWatcherCount();
   });
 
   test('two watcher instances own distinct lease files', () async {
     final exec = _Recording();
-    final service = RemoteWatchService(exec);
+    final service = RemoteWatchService(
+      exec,
+      admission: WatchAdmission(budget: hostBudget),
+    );
 
     // Two instances for the SAME repo — the production case, where one is a
     // re-arm of the other and the older may outlive it as an orphan.
@@ -132,7 +137,10 @@ void main() {
     // halves missed it. This asserts the SEAM: the order of the two host
     // operations, and that they name the same instance.
     final exec = _Recording();
-    final service = RemoteWatchService(exec);
+    final service = RemoteWatchService(
+      exec,
+      admission: WatchAdmission(budget: hostBudget),
+    );
     final sub = service.watch('/repo').listen((_) {});
     await settleArm();
     await sub.cancel();

@@ -12,6 +12,8 @@
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:remote_magic_git/core/git/remote_watch_service.dart';
+import 'package:remote_magic_git/core/git/watch/admission/host_watcher_budget.dart';
+import 'package:remote_magic_git/core/git/watch/admission/watch_admission.dart';
 import 'package:remote_magic_git/core/git/watch_diagnostics.dart';
 import 'package:remote_magic_git/core/git/watch_event.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
@@ -58,11 +60,13 @@ class _ArmsAlways extends SSHCommandExecutor {
 /// channels less the 2 reserved for the CI trace and clone progress. Every test
 /// in this file is about how a budget of two is shared BETWEEN hosts, so the
 /// number itself has to be deliberate.
-RemoteWatchService _serviceOn(String host) => RemoteWatchService(
-  _ArmsAlways(),
-  hostKey: () => host,
-  streamBudget: () => 4,
-);
+RemoteWatchService _serviceOn(String host, HostWatcherBudget budget) =>
+    RemoteWatchService(
+      _ArmsAlways(),
+      hostKey: () => host,
+      streamBudget: () => 4,
+      admission: WatchAdmission(budget: budget),
+    );
 
 /// Refused arms this repo has recorded. Every ceiling refusal files an
 /// `armFailed` transition, so this counts attempts that could only lose —
@@ -77,33 +81,32 @@ int _ceilingRefusals(String repoPath) => watchDiagnostics
     .length;
 
 void main() {
+  late HostWatcherBudget hostBudget;
+
   setUp(() {
-    RemoteWatchService.resetWatcherCount();
+    hostBudget = HostWatcherBudget();
     watchDiagnostics.clear();
   });
-  // Wait for in-flight arms before resetting the shared counter. Since MADR
-  // 0041 phase 3 an arm takes 250 ms of real time to decide (see [settleArm]),
-  // so a test can end with one still running; that arm then completes into the
-  // NEXT test and releases a slot it reserved under the previous one, leaving
-  // the counter below zero-adjusted. Isolated, every test here passes — it is
-  // only in sequence that the leak shows, which is exactly the kind of failure
-  // that gets rerun rather than read.
+  // Wait for in-flight arms before the next test starts: an arm takes real time
+  // to decide (see [settleArm]), so a test can end with one still running. Each
+  // test counts against its own budget (MADR 0045 phase 2), so a late release
+  // can no longer skew the next test's count as it did when the counter was
+  // process-wide.
   tearDown(() async {
     await settleArm();
-    RemoteWatchService.resetWatcherCount();
   });
 
   test('one host filling its budget does not starve another host', () async {
-    final alpha = _serviceOn('alpha');
-    final beta = _serviceOn('beta');
+    final alpha = _serviceOn('alpha', hostBudget);
+    final beta = _serviceOn('beta', hostBudget);
 
     // Tab 1 (host alpha) takes both of alpha's slots.
     final a1 = alpha.watch('/one').listen((_) {});
     final a2 = alpha.watch('/two').listen((_) {});
     await settleArm();
 
-    expect(RemoteWatchService.liveWatchersFor('alpha'), 2);
-    expect(RemoteWatchService.liveWatchersFor('beta'), 0);
+    expect(hostBudget.liveFor('alpha'), 2);
+    expect(hostBudget.liveFor('beta'), 0);
 
     // A third repo on alpha is correctly refused — the budget protects the host
     // from accumulating processes, and that has not changed.
@@ -123,8 +126,8 @@ void main() {
       WatchMode.eventDriven,
       reason: 'host beta has its own budget and has consumed none of it',
     );
-    expect(RemoteWatchService.liveWatchersFor('beta'), 1);
-    expect(RemoteWatchService.liveWatchers, 3, reason: 'alpha 2 + beta 1');
+    expect(hostBudget.liveFor('beta'), 1);
+    expect(hostBudget.liveTotal, 3, reason: 'alpha 2 + beta 1');
 
     await a1.cancel();
     await a2.cancel();
@@ -133,16 +136,16 @@ void main() {
   });
 
   test('a freed slot wakes a repo waiting on that host, not another', () async {
-    final alpha = _serviceOn('alpha');
-    final beta = _serviceOn('beta');
+    final alpha = _serviceOn('alpha', hostBudget);
+    final beta = _serviceOn('beta', hostBudget);
 
     final a1 = alpha.watch('/one').listen((_) {});
     final a2 = alpha.watch('/two').listen((_) {});
     final b1 = beta.watch('/one').listen((_) {});
     final b2 = beta.watch('/two').listen((_) {});
     await settleArm();
-    expect(RemoteWatchService.liveWatchersFor('alpha'), 2);
-    expect(RemoteWatchService.liveWatchersFor('beta'), 2);
+    expect(hostBudget.liveFor('alpha'), 2);
+    expect(hostBudget.liveFor('beta'), 2);
 
     // Both hosts now have a repo stuck on polling.
     final alphaWaiting = <RepoWatchEvent>[];
@@ -180,18 +183,18 @@ void main() {
   test(
     'releasing credits the host that reserved, and the map empties',
     () async {
-      final alpha = _serviceOn('alpha');
+      final alpha = _serviceOn('alpha', hostBudget);
 
       final a1 = alpha.watch('/one').listen((_) {});
       await settleArm();
-      expect(RemoteWatchService.liveWatchersFor('alpha'), 1);
+      expect(hostBudget.liveFor('alpha'), 1);
 
       await a1.cancel();
       await settleArm();
 
-      expect(RemoteWatchService.liveWatchersFor('alpha'), 0);
+      expect(hostBudget.liveFor('alpha'), 0);
       expect(
-        RemoteWatchService.liveWatchers,
+        hostBudget.liveTotal,
         0,
         reason:
             'a released slot must not linger as a zero entry that reads as '
@@ -208,8 +211,8 @@ void main() {
     // refusals are recorded, so they are what this counts. (Host commands are
     // NOT: the tool probe is cached for the stream's life, so a wake spends no
     // command and counting those would have proved nothing.)
-    final alpha = _serviceOn('alpha');
-    final beta = _serviceOn('beta');
+    final alpha = _serviceOn('alpha', hostBudget);
+    final beta = _serviceOn('beta', hostBudget);
 
     final a1 = alpha.watch('/one').listen((_) {});
     final a2 = alpha.watch('/two').listen((_) {});
@@ -257,11 +260,12 @@ void main() {
       exec,
       hostKey: () => host,
       streamBudget: () => 4,
+      admission: WatchAdmission(budget: hostBudget),
     );
 
     final sub = service.watch('/one').listen((_) {});
     await settleArm();
-    expect(RemoteWatchService.liveWatchersFor('alpha'), 1);
+    expect(hostBudget.liveFor('alpha'), 1);
 
     host = 'beta'; // the session moved while the watcher was live
 
@@ -269,12 +273,12 @@ void main() {
     await settleArm();
 
     expect(
-      RemoteWatchService.liveWatchersFor('alpha'),
+      hostBudget.liveFor('alpha'),
       0,
       reason: 'the slot must come back to alpha, which reserved it',
     );
     expect(
-      RemoteWatchService.liveWatchersFor('beta'),
+      hostBudget.liveFor('beta'),
       0,
       reason: 'beta never reserved anything and must not be credited',
     );

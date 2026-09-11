@@ -17,6 +17,8 @@ import 'dart:async';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:remote_magic_git/core/git/bounded_watch.dart';
 import 'package:remote_magic_git/core/git/remote_watch_service.dart';
+import 'package:remote_magic_git/core/git/watch/admission/host_watcher_budget.dart';
+import 'package:remote_magic_git/core/git/watch/admission/watch_admission.dart';
 import 'package:remote_magic_git/core/git/watch_diagnostics.dart';
 import 'package:remote_magic_git/core/git/watch_event.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
@@ -126,6 +128,51 @@ class _RecordingExecutor extends SSHCommandExecutor {
   }
 }
 
+/// Stamps the lease, then is refused a stream channel by the transport.
+class _BudgetSpentExecutor extends SSHCommandExecutor {
+  _BudgetSpentExecutor() : super(SSHClientManager());
+
+  final refused = Completer<void>();
+  final commands = <String>[];
+
+  @override
+  Future<SSHCommandResult> execute({
+    required String repoPath,
+    required List<String> gitArgs,
+    Map<String, String>? extraEnv,
+    String? stdin,
+    Duration timeout = SSHCommandExecutor.defaultTimeout,
+    int retries = 0,
+    ExecLane lane = ExecLane.exclusive,
+    bool compress = false,
+    Duration? activityIdle,
+    OperationDescriptor? operation,
+    OperationEventCallback? onOperationEvent,
+    CommandOutputCallback? onOutput,
+  }) async {
+    final joined = gitArgs.join(' ');
+    commands.add(joined);
+    return SSHCommandResult(
+      exitCode: 0,
+      stdout: joined.contains('command -v') ? 'inotifywait\n' : '',
+      stderr: '',
+    );
+  }
+
+  @override
+  Future<SSHStreamHandle> executeStream({
+    required String repoPath,
+    required List<String> gitArgs,
+    Map<String, String>? extraEnv,
+    Duration openTimeout = SSHCommandExecutor.defaultTimeout,
+    OperationDescriptor? operation,
+    OperationEventCallback? onOperationEvent,
+  }) async {
+    if (!refused.isCompleted) refused.complete();
+    throw const SSHStreamBudgetExhausted('watch', 8, 8);
+  }
+}
+
 /// The heartbeat token this arm chose, read back out of the arm's own commands.
 String? _leaseTouched(List<String> commands) {
   for (final c in commands) {
@@ -149,12 +196,17 @@ Future<void> pastEarlyExitRead() =>
     Future<void>.delayed(const Duration(milliseconds: 50));
 
 void main() {
-  setUp(RemoteWatchService.resetWatcherCount);
-  tearDown(RemoteWatchService.resetWatcherCount);
+  late HostWatcherBudget hostBudget;
+
+  setUp(() => hostBudget = HostWatcherBudget());
 
   Future<_RecordingExecutor> armThenCancel({bool throwOnRemove = false}) async {
     final executor = _RecordingExecutor(throwOnRemove: throwOnRemove);
-    final service = RemoteWatchService(executor, hostKey: () => 'host');
+    final service = RemoteWatchService(
+      executor,
+      hostKey: () => 'host',
+      admission: WatchAdmission(budget: hostBudget),
+    );
     final events = <RepoWatchEvent>[];
     final sub = service.watch('/repo').listen(events.add);
     await executor.armed.future;
@@ -254,7 +306,11 @@ void main() {
     () async {
       watchDiagnostics.clear();
       final executor = _RefusingExecutor(boundedWatchLockedExit);
-      final service = RemoteWatchService(executor, hostKey: () => 'host');
+      final service = RemoteWatchService(
+        executor,
+        hostKey: () => 'host',
+        admission: WatchAdmission(budget: hostBudget),
+      );
       final events = <RepoWatchEvent>[];
       final sub = service.watch('/repo').listen(events.add);
       await executor.armed.future;
@@ -286,7 +342,7 @@ void main() {
         reason: 'it degrades immediately, and the recovery timer retries later',
       );
       expect(
-        RemoteWatchService.liveWatchersFor('host'),
+        hostBudget.liveFor('host'),
         0,
         reason: 'a refused arm holds no slot',
       );
@@ -298,7 +354,11 @@ void main() {
     // did for bounded ones (0022 M6).
     watchDiagnostics.clear();
     final executor = _RefusingExecutor(boundedWatchNoPathsExit);
-    final service = RemoteWatchService(executor, hostKey: () => 'host');
+    final service = RemoteWatchService(
+      executor,
+      hostKey: () => 'host',
+      admission: WatchAdmission(budget: hostBudget),
+    );
     final sub = service
         .watch(
           '/repo',
@@ -321,7 +381,7 @@ void main() {
           .where((r) => r.cause == 'no watched paths'),
       isNotEmpty,
     );
-    expect(RemoteWatchService.liveWatchersFor('host'), 0);
+    expect(hostBudget.liveFor('host'), 0);
   });
 
   test('a recursive arm does not read 97 as a refusal', () async {
@@ -330,7 +390,11 @@ void main() {
     // keeps them apart is `spec != null`, and this is what fails if it goes.
     watchDiagnostics.clear();
     final executor = _RefusingExecutor(boundedWatchNoPathsExit);
-    final service = RemoteWatchService(executor, hostKey: () => 'host');
+    final service = RemoteWatchService(
+      executor,
+      hostKey: () => 'host',
+      admission: WatchAdmission(budget: hostBudget),
+    );
     final sub = service.watch('/repo').listen((_) {});
     await executor.armed.future;
     await pastEarlyExitRead();
@@ -355,7 +419,11 @@ void main() {
   test('a refused arm gives back the lease it stamped', () async {
     watchDiagnostics.clear();
     final executor = _RefusingExecutor(boundedWatchLockedExit);
-    final service = RemoteWatchService(executor, hostKey: () => 'host');
+    final service = RemoteWatchService(
+      executor,
+      hostKey: () => 'host',
+      admission: WatchAdmission(budget: hostBudget),
+    );
     final sub = service.watch('/repo').listen((_) {});
     await executor.armed.future;
     await pastEarlyExitRead();
@@ -378,7 +446,11 @@ void main() {
     // watcher.
     watchDiagnostics.clear();
     final executor = _RefusingExecutor(boundedWatchLockedExit);
-    final service = RemoteWatchService(executor, hostKey: () => 'host');
+    final service = RemoteWatchService(
+      executor,
+      hostKey: () => 'host',
+      admission: WatchAdmission(budget: hostBudget),
+    );
     final sub = service.watch('/repo').listen((_) {});
     await executor.armed.future;
     await pastEarlyExitRead();
@@ -395,5 +467,44 @@ void main() {
         reason: 'every lock removal this app issues is guarded by ownership',
       );
     }
+  });
+
+  test('a stream-budget refusal gives back the lease it stamped', () async {
+    // MADR 0045 phase 2. The arm stamps its lease BEFORE asking the transport
+    // for a channel (0027 deviation (b)), so a transport that refuses the
+    // channel leaves a lease no watcher will ever read. This path returned
+    // without releasing it — the one refusal that stranded its lease after MADR
+    // 0043 F6 fixed the others.
+    watchDiagnostics.clear();
+    final executor = _BudgetSpentExecutor();
+    final service = RemoteWatchService(
+      executor,
+      hostKey: () => 'host',
+      admission: WatchAdmission(budget: hostBudget),
+    );
+    final events = <RepoWatchEvent>[];
+    final sub = service.watch('/repo').listen(events.add);
+    addTearDown(sub.cancel);
+    await executor.refused.future;
+    await pastEarlyExitRead();
+
+    final stamped = _leaseTouched(executor.commands);
+    expect(stamped, isNotNull, reason: 'the lease was stamped before the open');
+    final token = RegExp(r'mg-watch\.(\w+)\.hb').firstMatch(stamped!)![1];
+    expect(
+      executor.commands.where(
+        (c) => c.contains('rm -f') && c.contains('mg-watch.$token.hb'),
+      ),
+      isNotEmpty,
+      reason:
+          'a refused channel reaches no WatchArmed teardown, so this path has to '
+          'give the lease back itself or leave it for a sweep',
+    );
+    expect(
+      events.last.mode,
+      WatchMode.polling,
+      reason: 'a spent stream budget still degrades to polling',
+    );
+    expect(hostBudget.liveFor('host'), 0, reason: 'and holds no slot');
   });
 }

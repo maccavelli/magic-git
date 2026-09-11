@@ -2,7 +2,7 @@
   {
     "label": "p1: the catch-all is removed, so four of five failures strand the slot",
     "file": "lib/core/git/remote_watch_service.dart",
-    "find": "        } catch (_) {\n          // Idempotent (`armCounted`), so this is safe even on the paths that\n          // already released explicitly.\n          releaseSlot();",
+    "find": "        } catch (_) {\n          // Idempotent, so this is safe even on the paths that already\n          // released explicitly. The host claims too: a failure past admission\n          // may have stamped a lease that no watcher will ever refresh.\n          ticket.releaseBudget();",
     "replace": "        } catch (_) {",
     "tests": [
       "test/watch_slot_leak_test.dart"

@@ -1,45 +1,18 @@
 [
  {
-  "label": "p1: sharing removed — every watch() builds its own watcher",
-  "file": "lib/core/git/remote_watch_service.dart",
-  "find": "    return shared.subscribe();",
-  "replace": "    return shared.build();",
-  "tests": [
-   "test/watch_shared_path_test.dart"
-  ]
- },
- {
   "label": "p1: the watcher is built eagerly, not on the first subscriber",
   "file": "lib/core/git/remote_watch_service.dart",
-  "find": "    return shared.subscribe();",
-  "replace": "    shared.build().listen((_) {});\n    return shared.subscribe();",
-  "tests": [
-   "test/watch_shared_path_test.dart"
-  ]
- },
- {
-  "label": "p1: the last event is not replayed to a late subscriber",
-  "file": "lib/core/git/remote_watch_service.dart",
-  "find": "        final last = _last;\n        if (last != null) controller.add(last);",
-  "replace": "",
+  "find": "    return _createLifecycle(\n      repoPath,\n      bounded: bounded,",
+  "replace": "    _createLifecycle(repoPath).listen((_) {});\n    return _createLifecycle(\n      repoPath,\n      bounded: bounded,",
   "tests": [
    "test/watch_shared_path_test.dart"
   ]
  },
  {
   "label": "p1: the shared map is static, so two tabs share one watcher",
-  "file": "lib/core/git/remote_watch_service.dart",
-  "find": "  final Map<String, _SharedWatch> _shared = {};",
-  "replace": "  static final Map<String, _SharedWatch> _shared = {};",
-  "tests": [
-   "test/watch_shared_path_test.dart"
-  ]
- },
- {
-  "label": "p1: the factory is not refreshed, so a rebuild keeps a stale closure",
-  "file": "lib/core/git/remote_watch_service.dart",
-  "find": "    shared.build = () => _createLifecycle(",
-  "replace": "    shared.buildOnce ??= () => _createLifecycle(",
+  "file": "lib/core/git/watch/admission/watch_admission.dart",
+  "find": "  final RepoExclusion exclusion = RepoExclusion();",
+  "replace": "  RepoExclusion get exclusion => _process;\n  static final RepoExclusion _process = RepoExclusion();",
   "tests": [
    "test/watch_shared_path_test.dart"
   ]
@@ -47,8 +20,8 @@
  {
   "label": "p2: teardown does not give the lock back",
   "file": "lib/core/git/remote_watch_service.dart",
-  "find": "            await releaseHostClaims();\n          });",
-  "replace": "          });",
+  "find": "            await releaseHostClaims();\n            // LAST. Only now may this session's next watcher of the repository\n            // ask the host for the lock this one has just given back.\n            ticket.releaseExclusion();\n          });",
+  "replace": "            // LAST. Only now may this session's next watcher of the repository\n            // ask the host for the lock this one has just given back.\n            ticket.releaseExclusion();\n          });",
   "tests": [
    "test/watch_lease_release_test.dart"
   ]
@@ -64,9 +37,9 @@
  },
  {
   "label": "p2: a new arm does not wait for a pending teardown",
-  "file": "lib/core/git/remote_watch_service.dart",
-  "find": "    final pending = _teardown;\n    if (pending == null) {",
-  "replace": "    final pending = null as Future<void>?;\n    if (pending == null) {",
+  "file": "lib/core/git/watch/admission/repo_exclusion.dart",
+  "find": "        current != null;\n        current = _holds[lockKey]",
+  "replace": "        current != null && identical(current, null);\n        current = _holds[lockKey]",
   "tests": [
    "test/watch_shared_path_test.dart"
   ]

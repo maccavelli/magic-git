@@ -106,9 +106,9 @@
   },
   {
     "label": "f4: the ceiling counts every host together again",
-    "file": "lib/core/git/remote_watch_service.dart",
-    "find": "        final liveHere = _liveByHost[host] ?? 0;",
-    "replace": "        final liveHere = liveWatchers;",
+    "file": "lib/core/git/watch/admission/host_watcher_budget.dart",
+    "find": "    final live = liveFor(host);",
+    "replace": "    final live = liveTotal;",
     "tests": [
       "test/watch_ceiling_per_host_test.dart",
       "test/watch_ceiling_recovery_test.dart"
@@ -116,18 +116,18 @@
   },
   {
     "label": "f4: a released slot is announced to every host",
-    "file": "lib/core/git/remote_watch_service.dart",
-    "find": "  static Stream<void> slotReleasesForHost(String host) =>\n      _slotReleases.stream.where((h) => h == host).map((_) {});",
-    "replace": "  static Stream<void> slotReleasesForHost(String host) =>\n      _slotReleases.stream.map((_) {});",
+    "file": "lib/core/git/watch/admission/host_watcher_budget.dart",
+    "find": "      _released.stream.where((h) => h == host).map((_) {});",
+    "replace": "      _released.stream.map((_) {});",
     "tests": [
       "test/watch_ceiling_per_host_test.dart"
     ]
   },
   {
     "label": "f4: the release credits the current host, not the reserving one",
-    "file": "lib/core/git/remote_watch_service.dart",
-    "find": "          final n = _liveByHost[host] ?? 0;\n          if (n > 1) {\n            _liveByHost[host] = n - 1;\n          } else {\n            _liveByHost.remove(host);\n          }",
-    "replace": "          final now = _hostKey();\n          final n = _liveByHost[now] ?? 0;\n          if (n > 1) {\n            _liveByHost[now] = n - 1;\n          } else {\n            _liveByHost.remove(now);\n          }",
+    "file": "lib/core/git/watch/admission/host_watcher_budget.dart",
+    "find": "    _budget._release(host);",
+    "replace": "    _budget._release('$host#elsewhere');",
     "tests": [
       "test/watch_ceiling_per_host_test.dart",
       "test/watch_ceiling_recovery_test.dart"

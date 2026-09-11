@@ -2,13 +2,16 @@
 // slot frees, not wait out a 3-minute recovery timer.
 //
 // The ceiling is a property of THIS process, not of the host: it resolves the
-// instant another watcher stops, and `releaseSlot()` already knows that moment.
+// instant another watcher stops, and the budget's release already knows that
+// moment.
 // Until now nothing listened, so a third watched repo polled at 48 host
 // processes per minute for up to three minutes after room appeared — and
 // indefinitely if the slots stayed occupied, which is the steady state.
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:remote_magic_git/core/git/remote_watch_service.dart';
+import 'package:remote_magic_git/core/git/watch/admission/host_watcher_budget.dart';
+import 'package:remote_magic_git/core/git/watch/admission/watch_admission.dart';
 import 'package:remote_magic_git/core/git/watch_event.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
@@ -48,31 +51,34 @@ class _ArmsAlways extends SSHCommandExecutor {
 }
 
 void main() {
-  setUp(RemoteWatchService.resetWatcherCount);
-  // Wait for in-flight arms before resetting the shared counter. Since MADR
-  // 0041 phase 3 an arm takes 250 ms of real time to decide (see [settleArm]),
-  // so a test can end with one still running; that arm then completes into the
-  // NEXT test and releases a slot it reserved under the previous one, leaving
-  // the counter below zero-adjusted. Isolated, every test here passes — it is
-  // only in sequence that the leak shows, which is exactly the kind of failure
-  // that gets rerun rather than read.
+  late HostWatcherBudget hostBudget;
+
+  setUp(() => hostBudget = HostWatcherBudget());
+  // Wait for in-flight arms before the next test starts: an arm takes real time
+  // to decide (see [settleArm]), so a test can end with one still running. Each
+  // test counts against its own budget (MADR 0045 phase 2), so a late release
+  // can no longer skew the next test's count as it did when the counter was
+  // process-wide.
   tearDown(() async {
     await settleArm();
-    RemoteWatchService.resetWatcherCount();
   });
 
   test('a repo refused by the ceiling arms as soon as a slot frees', () async {
     // The cap is derived from the transport's stream budget since MADR 0041
     // phase 4, so a test that wants a ceiling of two says which budget produces
     // it rather than relying on a constant.
-    final service = RemoteWatchService(_ArmsAlways(), streamBudget: () => 4);
+    final service = RemoteWatchService(
+      _ArmsAlways(),
+      streamBudget: () => 4,
+      admission: WatchAdmission(budget: hostBudget),
+    );
     final events = <RepoWatchEvent>[];
 
     final a = service.watch('/a').listen((_) {});
     final b = service.watch('/b').listen((_) {});
     await settleArm();
     expect(
-      RemoteWatchService.liveWatchers,
+      hostBudget.liveTotal,
       service.maxConcurrentWatchers,
       reason: 'the ceiling is full',
     );
@@ -103,11 +109,12 @@ void main() {
   test(
     'two service instances share one ceiling, they do not each get one',
     () async {
-      // 0028 deviation (a). `_liveWatchers` is static because several providers
-      // construct their own RemoteWatchService against the same host, and the
-      // budget belongs to the host, not to a service object. Counting per
-      // instance would hand each one its own two slots and multiply the ceiling
-      // — the opposite of enforcing it.
+      // 0028 deviation (a). Several sessions construct their own
+      // RemoteWatchService against the same host, and the budget belongs to the
+      // host, not to a service object — so both services here are handed the
+      // same budget, as every tab container is (MADR 0045 phase 2). Counting
+      // per instance would hand each one its own two slots and multiply the
+      // ceiling — the opposite of enforcing it.
       //
       // This also pins the assumption the "one connection may hold" wording
       // rests on: the app holds ONE connection at a time, so process-global and
@@ -117,14 +124,22 @@ void main() {
       // Both on a budget yielding a ceiling of two, which is what makes
       // "one budget across both services" a statement about the counter
       // rather than about the default.
-      final first = RemoteWatchService(_ArmsAlways(), streamBudget: () => 4);
-      final second = RemoteWatchService(_ArmsAlways(), streamBudget: () => 4);
+      final first = RemoteWatchService(
+        _ArmsAlways(),
+        streamBudget: () => 4,
+        admission: WatchAdmission(budget: hostBudget),
+      );
+      final second = RemoteWatchService(
+        _ArmsAlways(),
+        streamBudget: () => 4,
+        admission: WatchAdmission(budget: hostBudget),
+      );
 
       final a = first.watch('/a').listen((_) {});
       final b = second.watch('/b').listen((_) {});
       await settleArm();
       expect(
-        RemoteWatchService.liveWatchers,
+        hostBudget.liveTotal,
         2,
         reason: 'one budget across both services, not two budgets of two',
       );
@@ -153,9 +168,14 @@ void main() {
       final service = RemoteWatchService(
         _ArmsAlways(tool: ''),
         streamBudget: () => 4,
+        admission: WatchAdmission(budget: hostBudget),
       );
       final events = <RepoWatchEvent>[];
-      final held = RemoteWatchService(_ArmsAlways(), streamBudget: () => 4);
+      final held = RemoteWatchService(
+        _ArmsAlways(),
+        streamBudget: () => 4,
+        admission: WatchAdmission(budget: hostBudget),
+      );
 
       final x = held.watch('/x').listen((_) {});
       await settleArm();
