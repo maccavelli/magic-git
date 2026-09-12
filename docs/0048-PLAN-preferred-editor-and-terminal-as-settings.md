@@ -671,6 +671,35 @@ still fails for the terminal that prompted it).
 **Scope:** remove the terminal setting — field, keys, setter parameter, Settings row — and the
 `bundleId` parameter of `openInTerminal`, with the tests and catalogue entries that assert them.
 
+#### Deviation (d), executed
+
+**Removed.** `preferredTerminalBundleId` / `preferredTerminalName` and their prefs keys, the `terminal`
+parameter of `setPreferredApps`, the "Open terminal with" Settings row, and the `bundleId` parameter of
+`openInTerminal`, which now always launches Terminal.app with the reason recorded at the call.
+`worktrees_view` no longer reads settings to open a terminal at all.
+
+**Kept.** The editor preference, unchanged — a file has a registered handler and `open <file>` is the
+contract Launch Services exists to provide.
+
+**Tests and catalogue.** `Open in Terminal always uses Terminal.app` replaces the two chosen-terminal
+cases; the worktrees routing test now asserts only that the launch goes through `FileActions` (where
+the exit status is checked); the Settings test asserts the terminal row is **absent**. Catalogue 0048
+was rebuilt against the current code — nine entries, each `find` asserted unique before writing —
+covering the editor chain, the terminal exit-status check, bundle refusal, and both halves of
+deviation (c): readiness release and the re-applied load.
+
+```text
+tool/mutate.py --check   9 entries in 1 catalogue(s): 9 sound, 0 did not apply, 0 do not compile
+tool/mutate.py           9 killed, 0 survived, 0 did not apply, 0 did not compile, 0 observed by no test
+```
+
+**Gate.** `dart format` clean, `flutter analyze` No issues, affected tests `00:07 +50`, full suite
+`03:30 +4092 ~3`. **Commit** `b8c54be`.
+
+**What the maintainer still owes**, now smaller: 5.4(b) — a chosen editor opens a file whose system
+default is something else — and 5.4(d), a chosen editor that has been deleted falls back and says so
+once. The terminal checks (5.4(c)) are retired with the setting.
+
 ### Phase 6, executed
 
 **Created.** `tool/mutations/0048-preferred-apps.json`, eight entries. Every `find` string was
