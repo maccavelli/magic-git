@@ -12,6 +12,7 @@ import '../../core/providers/provider_retry_policy.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/file_actions.dart';
 import '../viewer/remote_edit_service.dart';
+import 'actions.dart';
 import 'buttons.dart';
 import 'inline_action_button.dart';
 
@@ -418,7 +419,10 @@ class _ImageDiffViewState extends ConsumerState<ImageDiffView> {
   void _openExternally() {
     final isLocal = ref.read(connectionProvider).isLocal;
     if (isLocal) {
-      openFiles(['${widget.repoPath}/${widget.displayPath}']);
+      runAction(
+        context,
+        () => openFiles(['${widget.repoPath}/${widget.displayPath}']),
+      );
     } else {
       ref
           .read(remoteEditServiceProvider.notifier)

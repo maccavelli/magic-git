@@ -265,7 +265,7 @@ class _FileViewState extends ConsumerState<FileView> {
         label: 'Open file',
         onTap: () {
           if (ref.read(connectionProvider).isLocal) {
-            openFiles(['$repoPath/${node.path}']);
+            runAction(context, () => openFiles(['$repoPath/${node.path}']));
           } else {
             ref
                 .read(remoteEditServiceProvider.notifier)

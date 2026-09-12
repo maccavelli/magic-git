@@ -7,6 +7,7 @@ import '../../core/providers/app_providers.dart';
 import '../../core/settings/keymap.dart';
 import '../../core/utils/display_error.dart';
 import '../../core/utils/file_actions.dart';
+import '../common/actions.dart';
 import '../common/buttons.dart';
 import '../common/escape_dismissible.dart';
 
@@ -586,7 +587,10 @@ class _FileViewerWindowState extends ConsumerState<FileViewerWindow> {
       secondary: true,
       onPressed: () {
         if (isLocal) {
-          openFiles(['${widget.repoPath}/${widget.path}']);
+          runAction(
+            context,
+            () => openFiles(['${widget.repoPath}/${widget.path}']),
+          );
         } else {
           ref
               .read(remoteEditServiceProvider.notifier)

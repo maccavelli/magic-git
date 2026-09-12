@@ -20,6 +20,15 @@ class MockFileActions extends FileActions {
   }
 }
 
+/// No application would take the file — what `FileActions.openFiles` throws
+/// when neither the default application for the type nor the default text
+/// editor accepts it.
+class ThrowingFileActions extends FileActions {
+  @override
+  Future<void> openFiles(List<String> absolutePaths) async =>
+      throw FileOpenException(absolutePaths, 'no application could open it');
+}
+
 class FakeExecutor implements ScopedCommandExecutor {
   final Map<String, String> remoteHashes;
   final Map<String, List<int>> uploads = {};
@@ -150,6 +159,47 @@ void main() {
     expect(notice.message, contains('file.txt'));
     expect(container.read(remoteEditServiceProvider), isEmpty);
   });
+
+  // The launch itself can fail: on a Mac with no application registered for the
+  // type, `openFiles` throws rather than opening nothing in silence. Both calls
+  // here used to be fire-and-forget, so that throw escaped the `try` and
+  // reached nobody — an unhandled async error instead of a notice.
+  test(
+    'an editor that will not launch is reported, on both open paths',
+    () async {
+      final container = ProviderContainer(
+        overrides: [
+          fileActionsProvider.overrideWithValue(ThrowingFileActions()),
+          activeExecutorProvider.overrideWithValue(
+            FakeExecutor({'file.txt': 'hash1'}),
+          ),
+          gitServiceProvider.overrideWithValue(
+            FakeGitService({'file.txt': 'hello world'}),
+          ),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      final manager = container.read(remoteEditServiceProvider.notifier);
+      await manager.openRemoteFile('repo1', 'file.txt'); // must not throw
+
+      final notice = container.read(remoteEditNoticeProvider);
+      expect(notice, isNotNull);
+      expect(notice!.title, 'Remote Edit Open Failed');
+      expect(notice.message, contains('file.txt'));
+      expect(
+        container.read(remoteEditServiceProvider),
+        hasLength(1),
+        reason:
+            'the file downloaded and its scratch dir is watched; only the '
+            'launch failed, so the session — and the save-back watch — stays',
+      );
+
+      // The already-editing path takes the other branch, and must be as quiet.
+      await manager.openRemoteFile('repo1', 'file.txt'); // must not throw
+      expect(container.read(remoteEditServiceProvider), hasLength(1));
+    },
+  );
 
   // 0009 M24: atomic saves (temp + rename) must still sync — the watch is on
   // the scratch directory, not the original inode — and a conflict the user

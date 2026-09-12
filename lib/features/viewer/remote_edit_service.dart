@@ -107,12 +107,17 @@ class RemoteEditManager extends Notifier<Map<String, RemoteEditSession>> {
   Future<void> openRemoteFile(String repoPath, String path) async {
     final sessionKey = '$repoPath/$path';
     if (state.containsKey(sessionKey)) {
-      // Already editing, just bring it to front or re-open
-      unawaited(
-        ref.read(fileActionsProvider).openFiles([
+      // Already editing, just bring it to front or re-open. Awaited rather
+      // than fire-and-forget: `openFiles` reports "no editor would take this"
+      // by throwing, and an unawaited throw reaches nobody — precisely the
+      // silence this method's contract rules out.
+      try {
+        await ref.read(fileActionsProvider).openFiles([
           state[sessionKey]!.tempFile.absolute.path,
-        ]),
-      );
+        ]);
+      } catch (e) {
+        _reportOpenFailure(path, e);
+      }
       return;
     }
 
@@ -164,27 +169,36 @@ class RemoteEditManager extends Notifier<Map<String, RemoteEditSession>> {
       _sessions = {...state, sessionKey: session};
       state = _sessions;
 
-      // 5. Open in editor
-      unawaited(
-        ref.read(fileActionsProvider).openFiles([tempFile.absolute.path]),
-      );
+      // 5. Open in editor. Reported on its own rather than through the catch
+      // below: by this point the file is downloaded, the session registered
+      // and the scratch directory watched, so a launch failure must not unwind
+      // any of that — the user can still open the file by hand, and tearing
+      // the session down would lose the save-back watch.
+      try {
+        await ref.read(fileActionsProvider).openFiles([tempFile.absolute.path]);
+      } catch (e) {
+        _reportOpenFailure(path, e);
+      }
     } catch (e) {
       try {
         tempDir?.deleteSync(recursive: true);
       } catch (_) {}
-      final message = 'Failed to open "$path": ${displayError(e)}';
-      ref
-          .read(outputLogProvider.notifier)
-          .logError('Remote Edit Open Failed', message);
-      ref
-          .read(remoteEditNoticeProvider.notifier)
-          .show(
-            RemoteEditNotice(
-              title: 'Remote Edit Open Failed',
-              message: message,
-            ),
-          );
+      _reportOpenFailure(path, e);
     }
+  }
+
+  /// Puts a failed open on the notice provider and in the Output pane — the one
+  /// place [openRemoteFile]'s "never throws" contract is actually honoured.
+  void _reportOpenFailure(String path, Object e) {
+    final message = 'Failed to open "$path": ${displayError(e)}';
+    ref
+        .read(outputLogProvider.notifier)
+        .logError('Remote Edit Open Failed', message);
+    ref
+        .read(remoteEditNoticeProvider.notifier)
+        .show(
+          RemoteEditNotice(title: 'Remote Edit Open Failed', message: message),
+        );
   }
 
   /// User dismissed a conflict without overwriting — remember the declined

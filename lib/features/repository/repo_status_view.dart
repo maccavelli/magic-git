@@ -3039,7 +3039,10 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
         label: many ? 'Open $n Files' : 'Open file',
         onTap: () {
           if (ref.read(connectionProvider).isLocal) {
-            openFiles(paths.map(_absolutePath).toList());
+            runAction(
+              context,
+              () => openFiles(paths.map(_absolutePath).toList()),
+            );
           } else {
             for (final path in paths) {
               ref
