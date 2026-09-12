@@ -1,10 +1,10 @@
 ---
-status: "proposed"
-date: 2026-09-11
+status: "accepted"
+date: 2026-09-12
 decision-makers: [Maintainer]
 consulted: []
 informed: [Magic Git contributors]
-verified: 2026-09-11
+verified: 2026-09-12
 ---
 
 # Preferred editor and preferred terminal are settings, stored by bundle identifier — and the system default stays the default

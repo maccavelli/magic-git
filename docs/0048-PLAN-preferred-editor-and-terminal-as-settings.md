@@ -1,5 +1,5 @@
 ---
-status: "proposed"
+status: "in-progress"
 date: 2026-09-12
 associated-madr: "0048-MADR-preferred-editor-and-terminal-as-settings.md"
 ---
