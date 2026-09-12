@@ -245,12 +245,12 @@ class _SettingsSheetState extends ConsumerState<SettingsSheet> {
               _section(
                 context,
                 'Opening files',
-                'Which application "Open file" and "Open in Terminal" use. '
-                    'Left as the system default, a file opens in whatever macOS '
-                    'already opens that kind of file with — the same as '
-                    'double-clicking it in Finder. macOS has no default terminal, '
-                    'so Terminal is used until you choose one. Both save '
-                    'immediately.',
+                'Which application "Open file" uses. Left as the system '
+                    'default, a file opens in whatever macOS already opens that '
+                    'kind of file with — the same as double-clicking it in '
+                    'Finder. Saves immediately. ("Open in Terminal" always uses '
+                    'Terminal.app: handing a directory to another terminal is '
+                    'not something macOS can promise.)',
               ),
               _rowLabelled(
                 'Open files with',
@@ -261,18 +261,6 @@ class _SettingsSheetState extends ConsumerState<SettingsSheet> {
                   onChosen: (bundle) => ref
                       .read(appSettingsProvider.notifier)
                       .setPreferredApps(editor: bundle),
-                ),
-              ),
-              const SizedBox(height: 10),
-              _rowLabelled(
-                'Open terminal with',
-                _appChooser(
-                  context,
-                  chosenName: apps.preferredTerminalName,
-                  fallbackLabel: 'Terminal',
-                  onChosen: (bundle) => ref
-                      .read(appSettingsProvider.notifier)
-                      .setPreferredApps(terminal: bundle),
                 ),
               ),
 

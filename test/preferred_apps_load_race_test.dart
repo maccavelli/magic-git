@@ -1,16 +1,17 @@
-import 'dart:io';
-
 // A launch must act on the user's stored choice, not on whatever has loaded so
-// far.
+// far, and the load must not throw that choice away.
 //
 // `AppSettingsNotifier.build()` returns defaults and reads disk
-// fire-and-forget, and every tab is its own container with its own load. The
-// launch paths ("Open file", "Open in Terminal") therefore cannot read `state`
-// at click time: the first read in a freshly built tab returns defaults, and
-// the launch falls through to the system default — which is how Open in
-// Terminal opened Terminal.app with WezTerm chosen (plan 0048 deviation (b)).
+// fire-and-forget, and every tab is its own container with its own load. So
+// "Open file" cannot read `state` at click time: the first read in a freshly
+// built tab returns defaults and the launch silently uses the system default
+// (plan 0048 deviation (b)). It reads `loaded` instead.
 //
-// They read `loaded` instead, which waits for that first load.
+// And the load itself used to abort on a sticky "any setter ran" flag,
+// discarding the WHOLE stored snapshot — one pane-width write moments after a
+// tab mounted left that tab on defaults for every setting (deviation (c)).
+
+import 'dart:io';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -36,7 +37,6 @@ void main() {
         );
 
     expect(apps.preferredEditorBundleId, isEmpty);
-    expect(apps.preferredTerminalBundleId, isEmpty);
   });
 
   test(
@@ -45,8 +45,6 @@ void main() {
       SharedPreferences.setMockInitialValues({
         'preferredEditorBundleId': 'com.apple.TextEdit',
         'preferredEditorName': 'TextEdit',
-        'preferredTerminalBundleId': 'com.github.wez.wezterm',
-        'preferredTerminalName': 'WezTerm',
       });
 
       final container = ProviderContainer();
@@ -56,35 +54,39 @@ void main() {
       final apps = await container.read(appSettingsProvider.notifier).loaded;
 
       expect(
-        apps.preferredTerminalBundleId,
-        'com.github.wez.wezterm',
+        apps.preferredEditorBundleId,
+        'com.apple.TextEdit',
         reason: 'reading state directly here returns the empty default',
       );
-      expect(apps.preferredEditorBundleId, 'com.apple.TextEdit');
+      expect(apps.preferredEditorName, 'TextEdit');
     },
   );
 
-  test('a later read still sees the stored choice', () async {
+  test('an early local write does not discard the stored settings', () async {
     SharedPreferences.setMockInitialValues({
-      'preferredTerminalBundleId': 'com.github.wez.wezterm',
-      'preferredTerminalName': 'WezTerm',
+      'preferredEditorBundleId': 'com.apple.TextEdit',
+      'preferredEditorName': 'TextEdit',
     });
 
     final container = ProviderContainer();
     addTearDown(container.dispose);
+    final notifier = container.read(appSettingsProvider.notifier);
 
-    await container.read(appSettingsProvider.notifier).loaded;
-    await Future<void>.delayed(const Duration(milliseconds: 50));
+    // Exactly what a workspace does moments after a tab mounts.
+    await notifier.setPaneWidth(PaneId.filesTree, 300);
 
+    final apps = await notifier.loaded;
+    expect(apps.preferredEditorBundleId, 'com.apple.TextEdit');
     expect(
-      container.read(appSettingsProvider).preferredTerminalBundleId,
-      'com.github.wez.wezterm',
+      apps.paneWidth(PaneId.filesTree),
+      300,
+      reason: 'and the edit that raced the load is still there',
     );
   });
 
-  // The widget-level test cannot reproduce this race — pumping settles the
-  // load before any tap — so the shape is enforced structurally instead, the
-  // way `provider_retry_policy_test.dart` enforces its own rule.
+  // The widget-level test cannot reproduce the click-time race — pumping
+  // settles the load before any tap — so the shape is enforced structurally,
+  // the way `provider_retry_policy_test.dart` enforces its own rule.
   test('no launch path reads a preferred application from state', () {
     final offenders = <String>[];
 
@@ -104,38 +106,6 @@ void main() {
           'that container has finished its first disk load, so a launch can use '
           'the system default while the user has chosen otherwise. Read '
           'appSettingsProvider.notifier.loaded instead.',
-    );
-  });
-
-  // Plan 0048 deviation (c): the first load used to abort on a sticky "any
-  // setter ran" flag and discard the WHOLE stored snapshot. A workspace
-  // persists a pane width moments after a tab mounts, so that tab kept
-  // defaults for every setting — including the chosen terminal, which is how
-  // Open in Terminal kept using Terminal.app with WezTerm stored.
-  //
-  // Both directions are asserted: the stored values survive an early write,
-  // and the early write survives the load.
-  test('an early local write does not discard the stored settings', () async {
-    SharedPreferences.setMockInitialValues({
-      'preferredTerminalBundleId': 'com.github.wez.wezterm',
-      'preferredTerminalName': 'WezTerm',
-      'preferredEditorBundleId': 'com.apple.TextEdit',
-    });
-
-    final container = ProviderContainer();
-    addTearDown(container.dispose);
-    final notifier = container.read(appSettingsProvider.notifier);
-
-    // Exactly what a workspace does moments after a tab mounts.
-    await notifier.setPaneWidth(PaneId.filesTree, 300);
-
-    final apps = await notifier.loaded;
-    expect(apps.preferredTerminalBundleId, 'com.github.wez.wezterm');
-    expect(apps.preferredEditorBundleId, 'com.apple.TextEdit');
-    expect(
-      apps.paneWidth(PaneId.filesTree),
-      300,
-      reason: 'and the edit that raced the load is still there',
     );
   });
 }

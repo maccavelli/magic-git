@@ -21,7 +21,7 @@ class _Settings extends AppSettingsNotifier {
   _Settings(this._initial);
 
   final AppSettings _initial;
-  final List<({AppBundle? editor, AppBundle? terminal})> calls = [];
+  final List<AppBundle?> calls = [];
 
   @override
   AppSettings build() {
@@ -30,16 +30,11 @@ class _Settings extends AppSettingsNotifier {
   }
 
   @override
-  Future<void> setPreferredApps({
-    AppBundle? editor,
-    AppBundle? terminal,
-  }) async {
-    calls.add((editor: editor, terminal: terminal));
+  Future<void> setPreferredApps({AppBundle? editor}) async {
+    calls.add(editor);
     state = state.copyWith(
       preferredEditorBundleId: editor?.bundleId,
       preferredEditorName: editor?.name,
-      preferredTerminalBundleId: terminal?.bundleId,
-      preferredTerminalName: terminal?.name,
     );
   }
 }
@@ -65,17 +60,17 @@ Future<_Settings> _pump(WidgetTester tester, AppSettings initial) async {
 }
 
 void main() {
-  testWidgets('the rows read System default and Terminal when nothing is '
-      'chosen', (tester) async {
+  testWidgets('the row reads System default when nothing is chosen', (
+    tester,
+  ) async {
     await _pump(tester, const AppSettings());
 
     expect(find.text('Open files with'), findsOneWidget);
-    expect(find.text('Open terminal with'), findsOneWidget);
     expect(find.text('System default'), findsOneWidget);
     expect(
-      find.text('Terminal'),
-      findsOneWidget,
-      reason: 'macOS has no default terminal, so this is the stated fallback',
+      find.text('Open terminal with'),
+      findsNothing,
+      reason: 'the terminal is fixed to Terminal.app (amendment 0048.1)',
     );
   });
 
@@ -121,7 +116,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(settings.calls, hasLength(1));
-    expect(settings.calls.single.editor?.bundleId, isEmpty);
+    expect(settings.calls.single?.bundleId, isEmpty);
     expect(find.text('System default'), findsOneWidget);
   });
 }

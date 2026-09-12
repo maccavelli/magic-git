@@ -8,7 +8,6 @@ import 'package:macos_ui/macos_ui.dart';
 import '../../core/git/git_service.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/providers/window_manager_bridge.dart';
-import '../../core/settings/app_settings.dart';
 import '../../core/settings/keymap.dart';
 import '../../core/settings/repository_workspace_prefs.dart';
 import '../../core/utils/display_error.dart';
@@ -484,10 +483,7 @@ class _WorktreesViewState extends ConsumerState<WorktreesView>
 
   Future<void> _openInTerminal(String path) async {
     try {
-      final apps = await ref.read(appSettingsProvider.notifier).loaded;
-      await ref
-          .read(fileActionsProvider)
-          .openInTerminal(path, bundleId: apps.preferredTerminalBundleId);
+      await ref.read(fileActionsProvider).openInTerminal(path);
     } catch (e) {
       if (mounted) {
         await showErrorDialog(context, 'Could not open Terminal: $e');

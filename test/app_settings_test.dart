@@ -326,17 +326,13 @@ void main() {
       final s = c.read(appSettingsProvider);
       expect(s.preferredEditorBundleId, isEmpty);
       expect(s.preferredEditorName, isEmpty);
-      expect(s.preferredTerminalBundleId, isEmpty);
-      expect(s.preferredTerminalName, isEmpty);
     },
   );
 
-  test('a stored preferred editor and terminal load from prefs', () async {
+  test('a stored preferred editor loads from prefs', () async {
     SharedPreferences.setMockInitialValues({
       'preferredEditorBundleId': 'com.todesktop.230313mzl4w4u92',
       'preferredEditorName': 'Cursor',
-      'preferredTerminalBundleId': 'com.googlecode.iterm2',
-      'preferredTerminalName': 'iTerm',
     });
     final c = ProviderContainer();
     addTearDown(c.dispose);
@@ -352,12 +348,10 @@ void main() {
 
     expect(s.preferredEditorBundleId, 'com.todesktop.230313mzl4w4u92');
     expect(s.preferredEditorName, 'Cursor');
-    expect(s.preferredTerminalBundleId, 'com.googlecode.iterm2');
-    expect(s.preferredTerminalName, 'iTerm');
   });
 
   test(
-    'setPreferredApps persists both, and clearing one leaves the other',
+    'setPreferredApps persists the choice, and an empty id clears it',
     () async {
       SharedPreferences.setMockInitialValues({});
       final c = ProviderContainer();
@@ -366,7 +360,6 @@ void main() {
 
       await notifier.setPreferredApps(
         editor: const AppBundle(bundleId: 'com.example.editor', name: 'Editor'),
-        terminal: const AppBundle(bundleId: 'com.example.term', name: 'Term'),
       );
       expect(
         c.read(appSettingsProvider).preferredEditorBundleId,
@@ -383,15 +376,9 @@ void main() {
         isEmpty,
         reason: 'an empty identifier means the system default again',
       );
-      expect(
-        s.preferredTerminalBundleId,
-        'com.example.term',
-        reason: 'clearing one choice must not disturb the other',
-      );
-
       final prefs = await SharedPreferences.getInstance();
-      expect(prefs.getString('preferredTerminalName'), 'Term');
       expect(prefs.getString('preferredEditorBundleId'), isEmpty);
+      expect(prefs.getString('preferredEditorName'), isEmpty);
     },
   );
 }

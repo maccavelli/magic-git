@@ -119,14 +119,6 @@ class AppSettings {
   /// used to launch: a name is not an identity.
   final String preferredEditorName;
 
-  /// Bundle identifier of the application "Open in Terminal" launches, or `''`
-  /// for Terminal.app. macOS has no default terminal to defer to, so unlike the
-  /// editor this setting is the only way the choice can be expressed at all.
-  final String preferredTerminalBundleId;
-
-  /// Display name for [preferredTerminalBundleId].
-  final String preferredTerminalName;
-
   const AppSettings({
     this.networkTimeout = GitService.defaultNetworkTimeout,
     this.commitTimeout = GitService.defaultCommitTimeout,
@@ -150,8 +142,6 @@ class AppSettings {
     this.workspaceHighContrast = false,
     this.preferredEditorBundleId = '',
     this.preferredEditorName = '',
-    this.preferredTerminalBundleId = '',
-    this.preferredTerminalName = '',
   });
 
   /// The effective width for [id]: the stored value, else the spec default.
@@ -185,8 +175,6 @@ class AppSettings {
     bool? workspaceHighContrast,
     String? preferredEditorBundleId,
     String? preferredEditorName,
-    String? preferredTerminalBundleId,
-    String? preferredTerminalName,
   }) => AppSettings(
     networkTimeout: networkTimeout ?? this.networkTimeout,
     commitTimeout: commitTimeout ?? this.commitTimeout,
@@ -212,9 +200,6 @@ class AppSettings {
     preferredEditorBundleId:
         preferredEditorBundleId ?? this.preferredEditorBundleId,
     preferredEditorName: preferredEditorName ?? this.preferredEditorName,
-    preferredTerminalBundleId:
-        preferredTerminalBundleId ?? this.preferredTerminalBundleId,
-    preferredTerminalName: preferredTerminalName ?? this.preferredTerminalName,
   );
 
   // Value equality so a cross-tab [reloadFromDisk] that re-reads the same value
@@ -243,8 +228,6 @@ class AppSettings {
       other.workspaceHighContrast == workspaceHighContrast &&
       other.preferredEditorBundleId == preferredEditorBundleId &&
       other.preferredEditorName == preferredEditorName &&
-      other.preferredTerminalBundleId == preferredTerminalBundleId &&
-      other.preferredTerminalName == preferredTerminalName &&
       _mapEquals(other.binaryOverrides, binaryOverrides) &&
       _mapEquals(other.paneWidths, paneWidths);
 
@@ -279,8 +262,6 @@ class AppSettings {
       ),
       preferredEditorBundleId,
       preferredEditorName,
-      preferredTerminalBundleId,
-      preferredTerminalName,
     ),
   );
 
@@ -320,8 +301,6 @@ class AppSettingsNotifier extends Notifier<AppSettings> {
   static const _workspaceHighContrastKey = 'workspaceHighContrast';
   static const _editorBundleIdKey = 'preferredEditorBundleId';
   static const _editorNameKey = 'preferredEditorName';
-  static const _terminalBundleIdKey = 'preferredTerminalBundleId';
-  static const _terminalNameKey = 'preferredTerminalName';
 
   /// Per-pane width keys: `paneWidth_<PaneId.name>` (mirrors [_binPrefix]).
   /// Enum names are part of the on-disk format — see pane_layout.dart.
@@ -484,8 +463,6 @@ class AppSettingsNotifier extends Notifier<AppSettings> {
       workspaceHighContrast: prefs.getBool(_workspaceHighContrastKey),
       preferredEditorBundleId: prefs.getString(_editorBundleIdKey),
       preferredEditorName: prefs.getString(_editorNameKey),
-      preferredTerminalBundleId: prefs.getString(_terminalBundleIdKey),
-      preferredTerminalName: prefs.getString(_terminalNameKey),
     );
   }
 
@@ -712,29 +689,22 @@ class AppSettingsNotifier extends Notifier<AppSettings> {
     });
   }
 
-  /// Persists which applications "Open file" and "Open in Terminal" launch.
+  /// Persists which application "Open file" launches.
   ///
-  /// A null argument leaves that choice alone; an [AppBundle] whose
+  /// A null argument leaves the choice alone; an [AppBundle] whose
   /// [AppBundle.bundleId] is empty clears it, which means "use the system
   /// default" — the unconfigured behaviour every install starts with.
-  Future<void> setPreferredApps({
-    AppBundle? editor,
-    AppBundle? terminal,
-  }) async {
+  ///
+  /// There is deliberately no terminal counterpart: handing a directory to an
+  /// arbitrary terminal is not a contract (MADR 0048 amendment 0048.1).
+  Future<void> setPreferredApps({AppBundle? editor}) async {
     state = state.copyWith(
       preferredEditorBundleId: editor?.bundleId,
       preferredEditorName: editor?.name,
-      preferredTerminalBundleId: terminal?.bundleId,
-      preferredTerminalName: terminal?.name,
     );
     await _persist((prefs) async {
       await prefs.setString(_editorBundleIdKey, state.preferredEditorBundleId);
       await prefs.setString(_editorNameKey, state.preferredEditorName);
-      await prefs.setString(
-        _terminalBundleIdKey,
-        state.preferredTerminalBundleId,
-      );
-      await prefs.setString(_terminalNameKey, state.preferredTerminalName);
     });
   }
 

@@ -36,16 +36,6 @@
     ]
   },
   {
-    "label": "p2: the terminal ignores the chosen application",
-    "file": "lib/core/utils/file_actions.dart",
-    "find": "      if (bundleId.isNotEmpty) ...['-b', bundleId] else ...['-a', 'Terminal'],",
-    "replace": "      ...['-a', 'Terminal'],",
-    "tests": [
-      "test/file_actions_test.dart",
-      "test/worktrees_view_test.dart"
-    ]
-  },
-  {
     "label": "p1: a bundle without an identifier is accepted",
     "file": "lib/core/utils/app_bundle.dart",
     "find": "  if (id.isEmpty) return null;\n",
@@ -55,21 +45,40 @@
     ]
   },
   {
-    "label": "p3: the preferred applications never load from prefs",
+    "label": "p3: the preferred editor never loads from prefs",
     "file": "lib/core/settings/app_settings.dart",
-    "find": "      preferredEditorBundleId: prefs.getString(_editorBundleIdKey),\n      preferredEditorName: prefs.getString(_editorNameKey),\n      preferredTerminalBundleId: prefs.getString(_terminalBundleIdKey),\n      preferredTerminalName: prefs.getString(_terminalNameKey),\n",
+    "find": "      preferredEditorBundleId: prefs.getString(_editorBundleIdKey),\n      preferredEditorName: prefs.getString(_editorNameKey),\n",
     "replace": "",
     "tests": [
-      "test/app_settings_test.dart"
+      "test/app_settings_test.dart",
+      "test/preferred_apps_load_race_test.dart"
     ]
   },
   {
     "label": "p3: setPreferredApps changes state without persisting it",
     "file": "lib/core/settings/app_settings.dart",
-    "find": "    await _persist((prefs) async {\n      await prefs.setString(_editorBundleIdKey, state.preferredEditorBundleId);\n      await prefs.setString(_editorNameKey, state.preferredEditorName);\n      await prefs.setString(\n        _terminalBundleIdKey,\n        state.preferredTerminalBundleId,\n      );\n      await prefs.setString(_terminalNameKey, state.preferredTerminalName);\n    });",
+    "find": "    await _persist((prefs) async {\n      await prefs.setString(_editorBundleIdKey, state.preferredEditorBundleId);\n      await prefs.setString(_editorNameKey, state.preferredEditorName);\n    });",
     "replace": "    return;",
     "tests": [
       "test/app_settings_test.dart"
+    ]
+  },
+  {
+    "label": "p3: readiness is never released, so a launch waits forever",
+    "file": "lib/core/settings/app_settings.dart",
+    "find": "    _applyFromPrefs(prefs, abort: () => !ref.mounted);\n    _storedApplied = true;\n    markSettingsLoaded();",
+    "replace": "    _applyFromPrefs(prefs, abort: () => !ref.mounted);\n    _storedApplied = true;",
+    "tests": [
+      "test/preferred_apps_load_race_test.dart"
+    ]
+  },
+  {
+    "label": "p3: an in-flight write is never re-applied, so the load is lost",
+    "file": "lib/core/settings/app_settings.dart",
+    "find": "    if (!_storedApplied && ref.mounted) unawaited(_load());\n",
+    "replace": "",
+    "tests": [
+      "test/preferred_apps_load_race_test.dart"
     ]
   }
 ]

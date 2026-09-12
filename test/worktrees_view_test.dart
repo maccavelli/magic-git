@@ -22,7 +22,6 @@ import 'package:remote_magic_git/core/exec/local_command_executor.dart';
 import 'package:remote_magic_git/core/git/git_service.dart';
 import 'package:remote_magic_git/core/git/watch_event.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
-import 'package:remote_magic_git/core/settings/app_settings.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 import 'package:remote_magic_git/core/utils/file_actions.dart';
@@ -34,7 +33,6 @@ import 'package:remote_magic_git/features/worktrees/worktree_access.dart';
 import 'package:remote_magic_git/features/worktrees/worktree_tabs.dart';
 import 'package:remote_magic_git/features/worktrees/worktrees_view.dart';
 import 'package:riverpod/misc.dart' show Override;
-import 'package:shared_preferences/shared_preferences.dart';
 
 /// Records grant releases instead of touching the real ScopedAccess.
 class _RecordingAccess extends WorktreeAccess {
@@ -79,12 +77,10 @@ List<Override> _tabOverrides(String path) => [
 
 /// Records what would be launched, instead of launching it.
 class _RecordingFileActions extends FileActions {
-  final List<({String path, String bundleId})> terminals = [];
+  final List<String> terminals = [];
 
   @override
-  Future<void> openInTerminal(String path, {String bundleId = ''}) async {
-    terminals.add((path: path, bundleId: bundleId));
-  }
+  Future<void> openInTerminal(String path) async => terminals.add(path);
 }
 
 /// A connection pinned local, so the local-only menu items are on screen
@@ -94,21 +90,6 @@ class _StubConnection extends ConnectionController {
   final ConnectionState _state;
   @override
   ConnectionState build() => _state;
-}
-
-/// Settings carrying a chosen terminal, built directly rather than loaded, so
-/// the test never waits on an asynchronous SharedPreferences read.
-class _SettingsWithTerminal extends AppSettingsNotifier {
-  @override
-  AppSettings build() {
-    // No disk read here, so this double declares itself loaded — otherwise
-    // every launch path that waits on `loaded` waits forever.
-    markSettingsLoaded();
-    return const AppSettings(
-      preferredTerminalBundleId: 'com.googlecode.iterm2',
-      preferredTerminalName: 'iTerm',
-    );
-  }
 }
 
 void main() {
@@ -526,55 +507,10 @@ void main() {
     expect(find.text('Add Worktree…'), findsOneWidget);
   });
 
-  // MADR 0048: the terminal is the user's choice, and the launch lives in
-  // FileActions where the exit status is checked — `worktrees_view` used to
-  // call `Process.run('open', ['-a', 'Terminal', path])` and ignore the result.
-  testWidgets('Open in Terminal routes through FileActions with the chosen '
-      'terminal', (tester) async {
-    final actions = _RecordingFileActions();
-    await pump(
-      tester,
-      extraOverrides: [
-        fileActionsProvider.overrideWithValue(actions),
-        appSettingsProvider.overrideWith(_SettingsWithTerminal.new),
-        connectionProvider.overrideWith(
-          () => _StubConnection(
-            const ConnectionState(
-              backend: ConnectionBackend.local,
-              phase: ConnectionPhase.connected,
-            ),
-          ),
-        ),
-      ],
-    );
-
-    await tester.tap(find.text('app-feature'), buttons: kSecondaryButton);
-    await tester.pump(const Duration(milliseconds: 400));
-    await tester.pumpAndSettle();
-
-    await tester.tap(find.text('Open in Terminal'));
-    await tester.pumpAndSettle();
-
-    expect(actions.terminals, hasLength(1));
-    expect(
-      actions.terminals.single.bundleId,
-      'com.googlecode.iterm2',
-      reason: 'the stored choice reaches the launch',
-    );
-    expect(actions.terminals.single.path, endsWith('app-feature'));
-  });
-
-  // Plan 0048 deviation (b): the settings notifier loads from disk
-  // fire-and-forget, and every tab is its own container — so a launch that read
-  // `state` at click time got an empty id and fell back to Terminal.app while
-  // the user's choice sat on disk. Here the REAL notifier is used (no double),
-  // loading from mock prefs, and the row is clicked as soon as it is on screen.
-  testWidgets('the stored terminal is used even on a container that has just '
-      'loaded', (tester) async {
-    SharedPreferences.setMockInitialValues({
-      'preferredTerminalBundleId': 'com.github.wez.wezterm',
-      'preferredTerminalName': 'WezTerm',
-    });
+  // The launch lives in FileActions, where the exit status is checked —
+  // `worktrees_view` used to call `Process.run` and ignore the result.
+  // Terminal.app itself is fixed (MADR 0048 amendment 0048.1).
+  testWidgets('Open in Terminal routes through FileActions', (tester) async {
     final actions = _RecordingFileActions();
     await pump(
       tester,
@@ -598,10 +534,6 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(actions.terminals, hasLength(1));
-    expect(
-      actions.terminals.single.bundleId,
-      'com.github.wez.wezterm',
-      reason: 'reading the setting at click time yields the empty default',
-    );
+    expect(actions.terminals.single, endsWith('app-feature'));
   });
 }

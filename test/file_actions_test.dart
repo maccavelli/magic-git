@@ -173,24 +173,17 @@ void main() {
     },
   );
 
-  test('a chosen terminal is launched by bundle id', () async {
-    final launcher = _Launcher();
-    await FileActions(
-      launch: launcher.call,
-    ).openInTerminal('/repo/wt', bundleId: 'com.googlecode.iterm2');
-
-    expect(launcher.calls, [
-      ['open', '-b', 'com.googlecode.iterm2', '/repo/wt'],
-    ]);
-  });
-
-  test('with no terminal chosen Terminal.app is used', () async {
+  // Fixed, not chosen (MADR 0048 amendment 0048.1): `open` hands a directory
+  // to an app as a trailing argument, and a terminal that reads trailing
+  // arguments as a command — WezTerm does — rejects it and exits. Terminal.app
+  // accepts a directory and is always present.
+  test('Open in Terminal always uses Terminal.app', () async {
     final launcher = _Launcher();
     await FileActions(launch: launcher.call).openInTerminal('/repo/wt');
 
     expect(launcher.calls, [
       ['open', '-a', 'Terminal', '/repo/wt'],
-    ], reason: 'macOS has no default terminal, so this is a fallback');
+    ]);
   });
 
   test('a terminal that will not launch is reported, not swallowed', () async {

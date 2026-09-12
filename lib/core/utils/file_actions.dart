@@ -101,22 +101,22 @@ class FileActions {
     throw FileOpenException(absolutePaths, _detail(byType, asText));
   }
 
-  /// Opens a terminal at [path] — the chosen one when [bundleId] is set, else
-  /// Terminal.app.
+  /// Opens Terminal.app at [path].
   ///
-  /// Terminal.app is a *fallback*, not a preference: macOS has no default
-  /// terminal the way it has a default application per file type, so there is
-  /// nothing to defer to and Terminal.app is the one terminal guaranteed to be
-  /// present (MADR 0048 F2).
+  /// **Deliberately not configurable** (MADR 0048 amendment 0048.1). Handing a
+  /// directory to an arbitrary terminal is not a contract: `open` passes it as
+  /// a trailing argument, and a terminal that reads trailing arguments as a
+  /// command — WezTerm does — rejects it and exits, which looks like a window
+  /// flashing open and closing. Terminal.app accepts a directory and is the one
+  /// terminal macOS guarantees is present.
   ///
   /// The exit status is checked, unlike the `Process.run` this replaces:
   /// `open` reports "no such application" by exiting non-zero rather than by
   /// throwing, so the old form could fail in complete silence (MADR 0048 F3).
-  Future<void> openInTerminal(String path, {String bundleId = ''}) async {
-    final result = await launch('open', [
-      if (bundleId.isNotEmpty) ...['-b', bundleId] else ...['-a', 'Terminal'],
-      path,
-    ]);
+  /// Note it reports only that Launch Services *dispatched* — an application
+  /// that starts and then exits still yields 0.
+  Future<void> openInTerminal(String path) async {
+    final result = await launch('open', ['-a', 'Terminal', path]);
     if (result.exitCode == 0) return;
     throw FileOpenException([path], '${result.stderr}'.trim());
   }
