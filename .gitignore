@@ -18,8 +18,12 @@ migrate_working_dir/
 *.iws
 .idea/
 
-# Local agent / editor state (never commit)
-.claude/
+# Local agent / editor state (never commit) — except the skills, which are
+# project documentation an agent reads before touching this codebase. A
+# directory exclusion cannot be undone by a negation on its children, so the
+# pattern excludes the CONTENTS and re-includes the one tracked subtree.
+.claude/*
+!.claude/skills/
 
 # The .vscode folder contains launch configuration and tasks you configure in
 # VS Code which you may wish to be included in version control, so this line
