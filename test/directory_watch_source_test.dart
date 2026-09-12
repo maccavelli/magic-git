@@ -29,6 +29,59 @@ bool _gitState(String path) => RepoWatchEvent(
   paths: {path},
 ).touchesGitState;
 
+/// Every path the source has reported since it went quiet.
+///
+/// Recording rather than handing back the broadcast stream, because each test
+/// mutates the repository BEFORE it subscribes, and a broadcast stream delivers
+/// only to whoever is listening at that instant and keeps nothing. On a loaded
+/// machine the `git` commands take long enough that the events land in exactly
+/// that gap; nothing touches the repository afterwards, so the wait then sits
+/// on a silent watcher until its ceiling expires. That was the flake recorded
+/// as plan 0048 deviation (a) — reproduced deterministically, with no load at
+/// all, by delaying three seconds before subscribing.
+///
+/// The timeout below is a backstop for a watcher that never reports, not the
+/// mechanism by which a report is caught.
+class _Reported {
+  _Reported(Stream<String> paths) {
+    _subscription = paths.listen((path) {
+      _seen.add(path);
+      final waiting = _waiting;
+      final test = _test;
+      if (waiting != null &&
+          test != null &&
+          !waiting.isCompleted &&
+          test(path)) {
+        waiting.complete(path);
+      }
+    });
+  }
+
+  final List<String> _seen = [];
+  late final StreamSubscription<String> _subscription;
+  Completer<String>? _waiting;
+  bool Function(String)? _test;
+
+  /// The first recorded-or-future path satisfying [test]. Already-delivered
+  /// paths count: that is the whole point.
+  Future<String> firstMatching(
+    bool Function(String) test, {
+    Duration timeout = const Duration(seconds: 15),
+  }) {
+    for (final path in _seen) {
+      if (test(path)) return Future<String>.value(path);
+    }
+    _test = test;
+    final waiting = _waiting = Completer<String>();
+    return waiting.future.timeout(
+      timeout,
+      onTimeout: () => fail('no matching path within $timeout'),
+    );
+  }
+
+  Future<void> cancel() => _subscription.cancel();
+}
+
 void main() {
   late Directory tmp;
   late String main;
@@ -41,19 +94,6 @@ void main() {
     }
   }
 
-  /// Waits for the first reported path satisfying [test], or fails.
-  Future<String> waitFor(
-    Stream<String> paths,
-    bool Function(String) test, {
-    Duration timeout = const Duration(seconds: 15),
-  }) => paths
-      .where(test)
-      .first
-      .timeout(
-        timeout,
-        onTimeout: () => fail('no matching path within $timeout'),
-      );
-
   /// Arms the source for [path] and waits until it stops reporting anything.
   ///
   /// `setUp` does real git work, and FSEvents delivers those writes
@@ -61,7 +101,7 @@ void main() {
   /// source legitimately observes. Without draining them first, a test
   /// asserting on its OWN change can be handed the tail of the setup. Bounded,
   /// because a loaded machine may never go a second without an event.
-  Future<Stream<String>> quietSource(String path) async {
+  Future<_Reported> quietSource(String path) async {
     final cancelled = Completer<void>();
     final outcome = await DirectoryWatchSource().arm(
       ArmRequest(repoPath: path, cancelled: cancelled.future, attempt: 1),
@@ -88,7 +128,9 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 100));
     }
     await probe.cancel();
-    return paths;
+    final reported = _Reported(paths);
+    addTearDown(reported.cancel);
+    return reported;
   }
 
   setUp(() async {
@@ -127,7 +169,7 @@ void main() {
       await git(['add', 'a.txt'], wt);
       await git(['commit', '-q', '-m', 'from the worktree'], wt);
 
-      final path = await waitFor(paths, _gitState);
+      final path = await paths.firstMatching(_gitState);
       expect(
         path,
         startsWith('.git/'),
@@ -147,7 +189,7 @@ void main() {
     await git(['add', 'a.txt'], main);
     await git(['commit', '-q', '-m', 'from the main repo'], main);
 
-    expect(await waitFor(paths, _gitState), startsWith('.git/'));
+    expect(await paths.firstMatching(_gitState), startsWith('.git/'));
   });
 
   test(
@@ -159,7 +201,7 @@ void main() {
 
       File('$wt/scratch.txt').writeAsStringSync('just a file\n');
 
-      final path = await waitFor(paths, (p) => p == 'scratch.txt');
+      final path = await paths.firstMatching((p) => p == 'scratch.txt');
       expect(
         _gitState(path),
         isFalse,
@@ -184,7 +226,7 @@ void main() {
     await git(['add', 'a.txt'], bareWt);
     await git(['commit', '-q', '-m', 'from the bare worktree'], bareWt);
 
-    expect(await waitFor(paths, _gitState), startsWith('.git/'));
+    expect(await paths.firstMatching(_gitState), startsWith('.git/'));
   });
 
   test('an ordinary repo watches exactly one root, as before', () async {
@@ -196,6 +238,6 @@ void main() {
     await git(['add', 'a.txt'], main);
     await git(['commit', '-q', '-m', 'in main'], main);
 
-    expect(await waitFor(paths, _gitState), startsWith('.git/'));
+    expect(await paths.firstMatching(_gitState), startsWith('.git/'));
   });
 }
