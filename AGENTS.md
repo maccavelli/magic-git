@@ -131,6 +131,13 @@ place to see live state.
   verify against real git behavior — no symptom guards, retries-as-bandaids, or
   special-casing around a bug you haven't understood.
 - Analyze/test run on any platform; the `.app` builds only on a Mac.
+- **Diagnosing a defect?** Read
+  [`.claude/skills/troubleshooting-magic-git/SKILL.md`](.claude/skills/troubleshooting-magic-git/SKILL.md)
+  first. It carries the reproduction-before-theory discipline this repository
+  works by, the places errors actually surface in a release build, and the
+  traps that have already cost real time here — per-tab provider containers,
+  `ref` after an `await`, a `SizedBox` that bounds layout but not painting, and
+  a `grep` that returns zero matches rather than an error.
 
 ## Architecture
 
