@@ -240,6 +240,61 @@ string is asserted to occur exactly once in its file before the catalogue is wri
 measured answer. This plan → `status: complete` with its execution record. README rows for 0049.
 **Commit (docs).**
 
+## Execution Record
+
+### Phase 0, executed
+
+`Flutter 3.47.2` matches `build_macos.sh`; `pub get --enforce-lockfile` clean; tree clean; baseline
+suite `03:34 +4091 ~3`.
+
+**The reproduction, before any fix** — `test/worktree_row_overflow_test.dart` run against unmodified
+code, two overflows per render, both naming `worktrees_view.dart:1064` (the row's inner `Row`):
+
+| Navigator width | Overflow |
+| --- | --- |
+| 240 pt (minimum) | 179 px and 1224 px |
+| 320 pt (default) | 99 px and 1144 px |
+| 720 pt (maximum) | 744 px |
+
+It overflows at the **maximum** width too: the content is intrinsically wider than any pane, so no
+default width would have hidden this.
+
+### Phase 1, executed
+
+`LabelChip` gained `maxWidth` (160) and an ellipsizing label; the row's name became `Flexible(flex: 2)`
+with a tooltip; the branch chip `Flexible(flex: 1)` with a tooltip; the lock chip a tooltip. The lock
+chip then had to flex as well — holding a fixed 160 pt while name and branch flexed left 18 px of
+overflow at 240 pt. All four guard cases passed; gate `03:33 +4095 ~3`; commit `a84122f`.
+
+### Deviation (a) — the name is squeezed, so the capped strip is adopted (2026-09-12)
+
+**Found** by step 1.6's measurement, with the ordinary chip set:
+
+| Pane | Name box | ≈ chars (test font) |
+| --- | --- | --- |
+| 240 pt | 97 pt | ~7 |
+| 320 pt | 151 pt | ~11 |
+| 720 pt | 417 pt | ~32 |
+
+Below the ~12 the step set as the escalation threshold — in test-font units, where every glyph is one
+em wide and real text fits roughly twice as many characters, so the number understates what a person
+sees. Reported rather than absorbed, as 1.6 requires.
+
+**Decision** (maintainer: "the history strip works. Adopt it here"). MADR 0049's option C is taken:
+the row's chips become a capped strip that collapses the remainder into `+N`, exactly as
+`RefChipStrip` does for History.
+
+**And the discovery is generalised rather than copied.** History's strip already encodes the rule this
+plan learned the hard way — *the subject flexes; the chips do not, because a flex child of a
+min-sized strip can collapse to zero width* — so the strip logic is **extracted** into a shared
+`ChipStrip` that both surfaces use, instead of a second implementation that will drift. Phase 1's
+per-chip `Flexible` was a workaround for not having a strip, and it goes.
+
+**Scope added:** `lib/features/common/chip_strip.dart` (new), `ref_chip.dart` delegating to it,
+`worktrees_view.dart`'s chip cluster, tests for the cap and the `+N` tooltip, catalogue entries. The
+History overflow guard must stay green untouched — it is what proves the extraction preserved
+behaviour.
+
 ## Verification
 
 The whole-plan gate:
