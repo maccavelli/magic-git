@@ -1063,16 +1063,35 @@ class _WorktreesViewState extends ConsumerState<WorktreesView>
                 children: [
                   Row(
                     children: [
-                      Text(
-                        wt.name,
-                        style: typography.body.copyWith(
-                          fontWeight: FontWeight.w600,
+                      // 2:1 — the name is the row's subject and the branch
+                      // qualifies it, so under pressure the name keeps twice
+                      // the remainder. Both ellipsize; neither overflows.
+                      Flexible(
+                        flex: 2,
+                        child: MacosTooltip(
+                          message: wt.name,
+                          child: Text(
+                            wt.name,
+                            maxLines: 1,
+                            softWrap: false,
+                            overflow: TextOverflow.ellipsis,
+                            style: typography.body.copyWith(
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
                         ),
                       ),
                       const SizedBox(width: 6),
-                      LabelChip(
-                        wt.branchLabel,
-                        color: MacosColors.systemBlueColor,
+                      // The branch label appears nowhere else in the row, so a
+                      // truncated one keeps its full text on hover.
+                      Flexible(
+                        child: MacosTooltip(
+                          message: wt.branchLabel,
+                          child: LabelChip(
+                            wt.branchLabel,
+                            color: MacosColors.systemBlueColor,
+                          ),
+                        ),
                       ),
                       if (wt.isMain) ...[
                         const SizedBox(width: 4),
@@ -1090,11 +1109,23 @@ class _WorktreesViewState extends ConsumerState<WorktreesView>
                       ],
                       if (wt.isLocked) ...[
                         const SizedBox(width: 4),
-                        LabelChip(
-                          wt.lockReason?.isNotEmpty ?? false
-                              ? 'locked: ${wt.lockReason}'
-                              : 'locked',
-                          color: MacosColors.systemGrayColor,
+                        // A lock reason is free text the user typed, so it
+                        // flexes like the branch label rather than holding a
+                        // fixed 160 pt while the name is squeezed out. The
+                        // fixed-vocabulary chips below ('main worktree',
+                        // 'open', 'missing') stay rigid: they cannot grow.
+                        Flexible(
+                          child: MacosTooltip(
+                            message: wt.lockReason?.isNotEmpty ?? false
+                                ? 'Locked: ${wt.lockReason}'
+                                : 'Locked',
+                            child: LabelChip(
+                              wt.lockReason?.isNotEmpty ?? false
+                                  ? 'locked: ${wt.lockReason}'
+                                  : 'locked',
+                              color: MacosColors.systemGrayColor,
+                            ),
+                          ),
                         ),
                       ],
                       if (wt.isPrunable) ...[
