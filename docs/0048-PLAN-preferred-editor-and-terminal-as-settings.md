@@ -277,6 +277,185 @@ directory path and feeds `readAppBundle` unchanged. Do not ship a hand-typed bun
 7.1 MADR 0048 → `status: accepted`, `verified:` today. This plan → `status: complete` with its
 execution record. README rows for 0048. **Commit (docs).**
 
+## Execution Record
+
+Approved and executed 2026-09-12. Seven commits, code and docs never mixed.
+
+### Phase 0 — preconditions
+
+`Flutter 3.47.2` matches `FLUTTER_VERSION` in `build_macos.sh`; `flutter pub get
+--enforce-lockfile` resolved clean; the tree was clean at `5ae0b62`.
+
+The **first** baseline run failed one test — `directory_watch_source_test.dart: an ordinary repo
+watches exactly one root, as before`, `no matching path within 0:00:15.000000`. It passes alone. The
+second full run was green: `03:35 +4065 ~3`. See deviation (a).
+
+#### Deviation (a) — a pre-existing flaky test makes every gate a coin flip (2026-09-12, open)
+
+**Found.** `test/directory_watch_source_test.dart` failed twice today under full-suite load, in two
+*different* tests of that file (`an ordinary repo watches exactly one root, as before`, then `a commit
+made IN the linked worktree is seen as a git-state change`), both with `no matching path within
+0:00:15.000000` at its `waitFor` helper (lines 52-54). Run alone it passed every time: 5/5, three
+separate runs. Its `waitFor` waits on a real `Directory.watch` event with a fixed 15-second ceiling
+while roughly four thousand other tests compete for the same filesystem.
+
+**Pre-existing.** Nothing in this plan touches that file, the watch source it exercises, or anything
+it imports; the same flake appeared before the first line of Phase 1 was written.
+
+**Resolutions.**
+
+1. *Fix the wait under its own record.* The ceiling is a fixed clock where the test needs a signal —
+   the same class of defect MADR 0044 removed from the watcher's arm. Cost: a record and a plan for a
+   file outside this one's scope.
+2. *Leave it, and re-run the gate when it trips*, recording each occurrence. Cost: nothing to build,
+   but a green suite stops meaning "the code is good" and starts meaning "the dice were kind" — and a
+   real regression in that file would be indistinguishable from the flake.
+
+**The consequence of doing nothing:** every phase gate in this plan, and every one after it, carries a
+false-failure rate nobody has measured. Two failures in five full runs today is the only data.
+
+### Phase 1, executed
+
+**Created.** `lib/core/utils/app_bundle.dart` — `AppBundle` (identifier plus display name) and
+`readAppBundle`, which refuses a path that is not a bundle, an `Info.plist` without a
+`CFBundleIdentifier`, and a **binary** plist rather than guessing at one. `test/app_bundle_test.dart`,
+five tests.
+
+**Seen to fail**, in a detached scratch worktree with only the refusal removed:
+
+```text
+Expected: null
+  Actual: AppBundle:<AppBundle(Nameless, )>
+without an identifier there is nothing `open -b` could use
+```
+
+**Gate.** `dart format` 0 changed, `flutter analyze` No issues, 5 targeted tests, full suite
+`03:35 +4070 ~3`. **Commit** `9eda3e6`.
+
+### Phase 2, executed
+
+**Modified.** `FileActions.openFiles(paths, {bundleId})` runs the chain `open -b <id>` → `open` →
+`open -t` → `FileOpenException`; `openInTerminal(path, {bundleId})` launches the chosen terminal or
+Terminal.app and **checks the exit status**, which the `Process.run` it replaces did not.
+
+*Made precise while executing:* step 2.2 says the notice fires when the chosen application failed. It
+is emitted only once a **later step has succeeded** — emitted earlier it would claim "used the system
+default instead" in the case where nothing opened at all and an exception is already the whole story.
+
+*Carried along:* the two `FileActions` doubles in `test/remote_edit_service_test.dart` had to take the
+new named parameter — a mechanical consequence of the signature, not new scope. `MockFileActions` now
+also records the bundle id each open was asked for.
+
+**Seen to fail** twice, each in a scratch worktree with one sabotage applied to an otherwise current copy:
+
+```text
+(a) the -b branch removed      Expected: [['open', '-b', 'com.example.editor', '/repo/a.dart']]
+                               3 tests failed
+(b) openInTerminal ignores exitCode
+                               Expected: throws <Instance of 'FileOpenException'> …
+                                 Actual: <Instance of 'Future<void>'>  Which: emitted <null>
+```
+
+**Gate.** analyze clean, 17 targeted tests, full suite `03:34 +4077 ~3`. **Commit** `b98b5ef`.
+
+### Phase 3, executed — and a defect the guard caught
+
+**Modified.** `AppSettings` gains the four fields, their four prefs keys, the `copyWith` parameters,
+the four `_applyFromPrefs` reads and `setPreferredApps({editor, terminal})`, shaped like
+`setWorktreeDefaults`. `test/app_settings_test.dart` gains three guards.
+
+**The guard failed before it passed, and it was right to.** `AppSettings` overrides `==` and
+`hashCode`, and four new fields added without extending them make a state that differs *only* in the
+preferred applications compare **equal** to its predecessor — so Riverpod suppresses the notification
+and every listener, the Settings rows included, never learns the choice changed. The load guard timed
+out (`TimeoutException after 0:00:02.000000: Future not completed`) until both were extended.
+`Object.hash` was already at its 20-argument ceiling, so the two map digests and the four new fields
+are combined in one nested hash, commented as such.
+
+**Seen to fail**, with only the four `_applyFromPrefs` reads removed: the same `TimeoutException`.
+
+**Gate.** analyze clean, 19 targeted tests, full suite `03:34 +4080 ~3`. **Commit** `39eb4b8`.
+
+### Phase 4, executed
+
+**Modified.** The five call sites (`file_view.dart`, `repo_status_view.dart`, `image_diff_view.dart`,
+`viewer_window.dart`, and both opens in `remote_edit_service.dart`) read
+`preferredEditorBundleId` and go through `fileActionsProvider`. `worktrees_view.dart` delegates
+`_revealInFinder` and `_openInTerminal` to `FileActions` — passing `preferredTerminalBundleId` — and
+no longer imports `dart:io`, because it no longer runs a process of its own. `fileActionsProvider`
+wires `onNotice` to the Output pane.
+
+**Created.** `Open in Terminal routes through FileActions with the chosen terminal` in
+`worktrees_view_test.dart`, over a recording `FileActions`, a connection pinned local, and settings
+built directly rather than loaded.
+
+**Seen to fail**, with only the chosen terminal dropped from the call:
+
+```text
+Expected: 'com.googlecode.iterm2'
+  Actual: ''
+the stored choice reaches the launch
+```
+
+**Gate.** analyze clean, 148 targeted tests, full suite `03:31 +4081 ~3`. **Commit** `b79eb4c`.
+
+### Phase 5, executed — except 5.4
+
+**Created.** An "Opening files" section in `settings_sheet.dart` with two rows built on the existing
+`_rowLabelled`, each showing the chosen application's **name** (or `System default` / `Terminal`),
+with Choose… and Reset; Reset is disabled while nothing is chosen. The picker is
+`openFile(acceptedTypeGroups: [XTypeGroup(uniformTypeIdentifiers: ['com.apple.application-bundle'])],
+initialDirectory: '/Applications')`, and a pick whose bundle has no identifier is refused with a
+message and stores nothing. `build` now *watches* the settings, so a fresh choice shows without
+closing the sheet. `test/settings_preferred_apps_test.dart`, three tests.
+
+**Seen to fail**, with only the fallback labelling dropped:
+
+```text
+Expected: exactly one matching candidate
+  Actual: _TextWidgetFinder:<Found 0 widgets with text "System default": []>
+```
+
+**Gate.** analyze clean, 8 targeted tests, full suite `03:35 +4084 ~3`. **Commit** `99fab68`.
+
+**5.4 is outstanding.** The manual checks are the maintainer's: that the panel lets an `.app` be
+selected rather than traversed, that an unset editor opens the per-type default and a chosen one opens
+the choice, that the chosen terminal opens at the worktree directory, and that a deleted chosen
+application falls back and says so once. Acceptance criterion 11 waits on them, and with it this
+plan's status.
+
+### Phase 6, executed
+
+**Created.** `tool/mutations/0048-preferred-apps.json`, eight entries. Every `find` string was
+asserted to occur exactly once in its file before the catalogue was written.
+
+```text
+tool/mutate.py --check tool/mutations/0048-preferred-apps.json
+                                 8 entries in 1 catalogue(s): 8 sound, 0 did not apply, 0 do not compile (0m 46s)
+tool/mutate.py tool/mutations/0048-preferred-apps.json
+                                 8 killed, 0 survived, 0 did not apply, 0 did not compile, 0 observed by no test
+```
+
+No Dart changed in this commit, so the suite was not re-run for it; the catalogue itself ran the
+affected test files eight times, each in its own isolated worktree. **Commit** `aed271c`.
+
+### Acceptance criteria
+
+| # | Result |
+| --- | --- |
+| 1 | **Met.** `grep -rn "open', \['-a'" lib` returns one line: `openInTerminal`'s Terminal.app fallback, with its comment |
+| 2 | **Met.** `with no editor chosen the launch is exactly the system default chain`, which also asserts no notice is emitted |
+| 3 | **Met.** `a chosen editor is launched by bundle id` |
+| 4 | **Met.** the fallback and the once-only notice, both guarded and both seen to fail |
+| 5 | **Met.** `openInTerminal` lives in `FileActions`, checks `exitCode`, and `worktrees_view.dart` contains no `Process.run` — nor `dart:io` |
+| 6 | **Met.** the round-trip guard passes, and `settings_bus_sync_test.dart` passes unchanged |
+| 7 | **Met.** both refusals guarded in `app_bundle_test.dart`, and the sheet refuses the pick with a message |
+| 8 | **Met.** `the rows read System default and Terminal when nothing is chosen` and `a stored choice is shown by name, not by bundle id` |
+| 9 | **Met.** catalogue 0048: 8 killed, 0 survived, 0 did not apply |
+| 10 | **Met.** analyze clean and the full suite green at every phase commit — with deviation (a)'s caveat on what a green suite currently proves |
+| 11 | **Outstanding** — step 5.4 is the maintainer's to run |
+
+
 ## Verification
 
 The whole-plan gate:
