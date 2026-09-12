@@ -14,9 +14,17 @@ import 'package:remote_magic_git/features/viewer/remote_edit_service.dart';
 class MockFileActions extends FileActions {
   final List<String> openedPaths = [];
 
+  /// The bundle id each open was asked for — '' when the user has chosen no
+  /// editor, which is what the unconfigured default must keep sending.
+  final List<String> bundleIds = [];
+
   @override
-  Future<void> openFiles(List<String> absolutePaths) async {
+  Future<void> openFiles(
+    List<String> absolutePaths, {
+    String bundleId = '',
+  }) async {
     openedPaths.addAll(absolutePaths);
+    bundleIds.add(bundleId);
   }
 }
 
@@ -25,7 +33,10 @@ class MockFileActions extends FileActions {
 /// editor accepts it.
 class ThrowingFileActions extends FileActions {
   @override
-  Future<void> openFiles(List<String> absolutePaths) async =>
+  Future<void> openFiles(
+    List<String> absolutePaths, {
+    String bundleId = '',
+  }) async =>
       throw FileOpenException(absolutePaths, 'no application could open it');
 }
 

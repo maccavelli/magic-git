@@ -104,4 +104,108 @@ void main() {
       ['open', '-R', '/repo/a.dart'],
     ]);
   });
+
+  // ---- a chosen application (MADR 0048) ----
+
+  test('a chosen editor is launched by bundle id', () async {
+    final launcher = _Launcher();
+    await FileActions(
+      launch: launcher.call,
+    ).openFiles(['/repo/a.dart'], bundleId: 'com.example.editor');
+
+    expect(launcher.calls, [
+      ['open', '-b', 'com.example.editor', '/repo/a.dart'],
+    ]);
+  });
+
+  test('a chosen editor that no longer resolves falls back to the default '
+      'application', () async {
+    final launcher = _Launcher([1, 0]);
+    await FileActions(
+      launch: launcher.call,
+    ).openFiles(['/repo/a.dart'], bundleId: 'com.example.uninstalled');
+
+    expect(launcher.calls, [
+      ['open', '-b', 'com.example.uninstalled', '/repo/a.dart'],
+      ['open', '/repo/a.dart'],
+    ]);
+  });
+
+  test(
+    'a chosen editor that no longer resolves reports once, naming it',
+    () async {
+      final launcher = _Launcher([1, 0]);
+      final notices = <String>[];
+      await FileActions(
+        launch: launcher.call,
+        onNotice: notices.add,
+      ).openFiles(['/repo/a.dart'], bundleId: 'com.example.uninstalled');
+
+      expect(notices, hasLength(1));
+      expect(notices.single, contains('com.example.uninstalled'));
+    },
+  );
+
+  test(
+    'with no editor chosen the launch is exactly the system default chain',
+    () async {
+      final launcher = _Launcher([1, 0]);
+      final notices = <String>[];
+      await FileActions(
+        launch: launcher.call,
+        onNotice: notices.add,
+      ).openFiles(['/repo/LICENSE']);
+
+      expect(
+        launcher.calls,
+        [
+          ['open', '/repo/LICENSE'],
+          ['open', '-t', '/repo/LICENSE'],
+        ],
+        reason:
+            'the behaviour 11f9ed7 restored: no -a, no -b, text as fallback',
+      );
+      expect(
+        notices,
+        isEmpty,
+        reason: 'nothing was chosen, so nothing was unused',
+      );
+    },
+  );
+
+  test('a chosen terminal is launched by bundle id', () async {
+    final launcher = _Launcher();
+    await FileActions(
+      launch: launcher.call,
+    ).openInTerminal('/repo/wt', bundleId: 'com.googlecode.iterm2');
+
+    expect(launcher.calls, [
+      ['open', '-b', 'com.googlecode.iterm2', '/repo/wt'],
+    ]);
+  });
+
+  test('with no terminal chosen Terminal.app is used', () async {
+    final launcher = _Launcher();
+    await FileActions(launch: launcher.call).openInTerminal('/repo/wt');
+
+    expect(launcher.calls, [
+      ['open', '-a', 'Terminal', '/repo/wt'],
+    ], reason: 'macOS has no default terminal, so this is a fallback');
+  });
+
+  test('a terminal that will not launch is reported, not swallowed', () async {
+    final launcher = _Launcher([1]);
+
+    await expectLater(
+      FileActions(launch: launcher.call).openInTerminal('/repo/wt'),
+      throwsA(
+        isA<FileOpenException>().having(
+          (e) => e.toString(),
+          'message',
+          contains('/repo/wt'),
+        ),
+      ),
+      reason: '`open` reports a missing application by exit code, not a throw',
+    );
+  });
 }
