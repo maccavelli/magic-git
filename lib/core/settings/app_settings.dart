@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../git/git_service.dart';
+import '../utils/app_bundle.dart';
 import 'pane_layout.dart';
 import 'settings_bus.dart';
 import 'tool_catalog.dart';
@@ -105,6 +106,24 @@ class AppSettings {
   /// introducing a second (light) color scheme.
   final bool workspaceHighContrast;
 
+  /// Bundle identifier of the application "Open file" launches, or `''` for
+  /// the user's own per-type default. An identifier rather than a name or a
+  /// path, so the choice survives the application being moved or renamed —
+  /// `open -a 'Visual Studio Code'` did not (MADR 0048).
+  final String preferredEditorBundleId;
+
+  /// Display name for [preferredEditorBundleId]. Shown in Settings and never
+  /// used to launch: a name is not an identity.
+  final String preferredEditorName;
+
+  /// Bundle identifier of the application "Open in Terminal" launches, or `''`
+  /// for Terminal.app. macOS has no default terminal to defer to, so unlike the
+  /// editor this setting is the only way the choice can be expressed at all.
+  final String preferredTerminalBundleId;
+
+  /// Display name for [preferredTerminalBundleId].
+  final String preferredTerminalName;
+
   const AppSettings({
     this.networkTimeout = GitService.defaultNetworkTimeout,
     this.commitTimeout = GitService.defaultCommitTimeout,
@@ -126,6 +145,10 @@ class AppSettings {
     this.paneWidths = const {},
     this.workspaceDensity = WorkspaceDensity.comfortable,
     this.workspaceHighContrast = false,
+    this.preferredEditorBundleId = '',
+    this.preferredEditorName = '',
+    this.preferredTerminalBundleId = '',
+    this.preferredTerminalName = '',
   });
 
   /// The effective width for [id]: the stored value, else the spec default.
@@ -157,6 +180,10 @@ class AppSettings {
     Map<PaneId, double>? paneWidths,
     WorkspaceDensity? workspaceDensity,
     bool? workspaceHighContrast,
+    String? preferredEditorBundleId,
+    String? preferredEditorName,
+    String? preferredTerminalBundleId,
+    String? preferredTerminalName,
   }) => AppSettings(
     networkTimeout: networkTimeout ?? this.networkTimeout,
     commitTimeout: commitTimeout ?? this.commitTimeout,
@@ -179,6 +206,12 @@ class AppSettings {
     paneWidths: paneWidths ?? this.paneWidths,
     workspaceDensity: workspaceDensity ?? this.workspaceDensity,
     workspaceHighContrast: workspaceHighContrast ?? this.workspaceHighContrast,
+    preferredEditorBundleId:
+        preferredEditorBundleId ?? this.preferredEditorBundleId,
+    preferredEditorName: preferredEditorName ?? this.preferredEditorName,
+    preferredTerminalBundleId:
+        preferredTerminalBundleId ?? this.preferredTerminalBundleId,
+    preferredTerminalName: preferredTerminalName ?? this.preferredTerminalName,
   );
 
   // Value equality so a cross-tab [reloadFromDisk] that re-reads the same value
@@ -205,6 +238,10 @@ class AppSettings {
       other.tagPushAfterCreate == tagPushAfterCreate &&
       other.workspaceDensity == workspaceDensity &&
       other.workspaceHighContrast == workspaceHighContrast &&
+      other.preferredEditorBundleId == preferredEditorBundleId &&
+      other.preferredEditorName == preferredEditorName &&
+      other.preferredTerminalBundleId == preferredTerminalBundleId &&
+      other.preferredTerminalName == preferredTerminalName &&
       _mapEquals(other.binaryOverrides, binaryOverrides) &&
       _mapEquals(other.paneWidths, paneWidths);
 
@@ -228,11 +265,19 @@ class AppSettings {
     tagPushAfterCreate,
     workspaceDensity,
     workspaceHighContrast,
-    Object.hashAllUnordered(
-      binaryOverrides.entries.map((e) => Object.hash(e.key, e.value)),
-    ),
-    Object.hashAllUnordered(
-      paneWidths.entries.map((e) => Object.hash(e.key, e.value)),
+    // Nested because `Object.hash` takes at most 20 arguments and the list
+    // above already reaches it.
+    Object.hash(
+      Object.hashAllUnordered(
+        binaryOverrides.entries.map((e) => Object.hash(e.key, e.value)),
+      ),
+      Object.hashAllUnordered(
+        paneWidths.entries.map((e) => Object.hash(e.key, e.value)),
+      ),
+      preferredEditorBundleId,
+      preferredEditorName,
+      preferredTerminalBundleId,
+      preferredTerminalName,
     ),
   );
 
@@ -270,6 +315,10 @@ class AppSettingsNotifier extends Notifier<AppSettings> {
   static const _tagPushAfterCreateKey = 'tagPushAfterCreate';
   static const _workspaceDensityKey = 'workspaceDensity';
   static const _workspaceHighContrastKey = 'workspaceHighContrast';
+  static const _editorBundleIdKey = 'preferredEditorBundleId';
+  static const _editorNameKey = 'preferredEditorName';
+  static const _terminalBundleIdKey = 'preferredTerminalBundleId';
+  static const _terminalNameKey = 'preferredTerminalName';
 
   /// Per-pane width keys: `paneWidth_<PaneId.name>` (mirrors [_binPrefix]).
   /// Enum names are part of the on-disk format — see pane_layout.dart.
@@ -385,6 +434,10 @@ class AppSettingsNotifier extends Notifier<AppSettings> {
           ? WorkspaceDensity.values[workspaceDensity]
           : null,
       workspaceHighContrast: prefs.getBool(_workspaceHighContrastKey),
+      preferredEditorBundleId: prefs.getString(_editorBundleIdKey),
+      preferredEditorName: prefs.getString(_editorNameKey),
+      preferredTerminalBundleId: prefs.getString(_terminalBundleIdKey),
+      preferredTerminalName: prefs.getString(_terminalNameKey),
     );
   }
 
@@ -615,6 +668,33 @@ class AppSettingsNotifier extends Notifier<AppSettings> {
     await _persist((prefs) async {
       await prefs.setBool(_tagAnnotatedKey, state.tagAnnotatedByDefault);
       await prefs.setBool(_tagPushAfterCreateKey, state.tagPushAfterCreate);
+    });
+  }
+
+  /// Persists which applications "Open file" and "Open in Terminal" launch.
+  ///
+  /// A null argument leaves that choice alone; an [AppBundle] whose
+  /// [AppBundle.bundleId] is empty clears it, which means "use the system
+  /// default" — the unconfigured behaviour every install starts with.
+  Future<void> setPreferredApps({
+    AppBundle? editor,
+    AppBundle? terminal,
+  }) async {
+    _userEdited = true;
+    state = state.copyWith(
+      preferredEditorBundleId: editor?.bundleId,
+      preferredEditorName: editor?.name,
+      preferredTerminalBundleId: terminal?.bundleId,
+      preferredTerminalName: terminal?.name,
+    );
+    await _persist((prefs) async {
+      await prefs.setString(_editorBundleIdKey, state.preferredEditorBundleId);
+      await prefs.setString(_editorNameKey, state.preferredEditorName);
+      await prefs.setString(
+        _terminalBundleIdKey,
+        state.preferredTerminalBundleId,
+      );
+      await prefs.setString(_terminalNameKey, state.preferredTerminalName);
     });
   }
 

@@ -9,6 +9,7 @@ import 'package:remote_magic_git/core/git/git_service.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/core/settings/app_settings.dart';
 import 'package:remote_magic_git/core/settings/pane_layout.dart';
+import 'package:remote_magic_git/core/utils/app_bundle.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
@@ -310,4 +311,87 @@ void main() {
     final prefs = await SharedPreferences.getInstance();
     expect(prefs.getBool('historyAllBranches'), isFalse);
   });
+
+  // MADR 0048: which application opens a file, and which opens a terminal, are
+  // the user's to choose — stored as a bundle identifier, with "unset" meaning
+  // the system default that 11f9ed7 restored.
+
+  test(
+    'preferred applications default to empty, meaning the system default',
+    () async {
+      SharedPreferences.setMockInitialValues({});
+      final c = ProviderContainer();
+      addTearDown(c.dispose);
+
+      final s = c.read(appSettingsProvider);
+      expect(s.preferredEditorBundleId, isEmpty);
+      expect(s.preferredEditorName, isEmpty);
+      expect(s.preferredTerminalBundleId, isEmpty);
+      expect(s.preferredTerminalName, isEmpty);
+    },
+  );
+
+  test('a stored preferred editor and terminal load from prefs', () async {
+    SharedPreferences.setMockInitialValues({
+      'preferredEditorBundleId': 'com.todesktop.230313mzl4w4u92',
+      'preferredEditorName': 'Cursor',
+      'preferredTerminalBundleId': 'com.googlecode.iterm2',
+      'preferredTerminalName': 'iTerm',
+    });
+    final c = ProviderContainer();
+    addTearDown(c.dispose);
+
+    final loaded = Completer<AppSettings>();
+    c.listen(appSettingsProvider, (_, next) {
+      if (next.preferredEditorBundleId.isNotEmpty && !loaded.isCompleted) {
+        loaded.complete(next);
+      }
+    });
+    c.read(appSettingsProvider);
+    final s = await loaded.future.timeout(const Duration(seconds: 2));
+
+    expect(s.preferredEditorBundleId, 'com.todesktop.230313mzl4w4u92');
+    expect(s.preferredEditorName, 'Cursor');
+    expect(s.preferredTerminalBundleId, 'com.googlecode.iterm2');
+    expect(s.preferredTerminalName, 'iTerm');
+  });
+
+  test(
+    'setPreferredApps persists both, and clearing one leaves the other',
+    () async {
+      SharedPreferences.setMockInitialValues({});
+      final c = ProviderContainer();
+      addTearDown(c.dispose);
+      final notifier = c.read(appSettingsProvider.notifier);
+
+      await notifier.setPreferredApps(
+        editor: const AppBundle(bundleId: 'com.example.editor', name: 'Editor'),
+        terminal: const AppBundle(bundleId: 'com.example.term', name: 'Term'),
+      );
+      expect(
+        c.read(appSettingsProvider).preferredEditorBundleId,
+        'com.example.editor',
+      );
+
+      await notifier.setPreferredApps(
+        editor: const AppBundle(bundleId: '', name: ''),
+      );
+
+      final s = c.read(appSettingsProvider);
+      expect(
+        s.preferredEditorBundleId,
+        isEmpty,
+        reason: 'an empty identifier means the system default again',
+      );
+      expect(
+        s.preferredTerminalBundleId,
+        'com.example.term',
+        reason: 'clearing one choice must not disturb the other',
+      );
+
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getString('preferredTerminalName'), 'Term');
+      expect(prefs.getString('preferredEditorBundleId'), isEmpty);
+    },
+  );
 }
