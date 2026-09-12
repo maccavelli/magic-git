@@ -327,16 +327,6 @@ class AppSettingsNotifier extends Notifier<AppSettings> {
   /// Enum names are part of the on-disk format — see pane_layout.dart.
   static const _paneWidthPrefix = 'paneWidth_';
 
-  /// Set true by any setter the moment the user explicitly changes a setting.
-  /// [build] kicks [_load] fire-and-forget and returns defaults immediately, so
-  /// a user mutation can land before the async on-disk read resolves; when that
-  /// happens [_load] must not clobber the just-made edit with the stale stored
-  /// value. Sticky (never reset), so every disk read [_load] issues defers to a
-  /// prior edit. Guards ONLY the initial-load race — cross-isolate syncs use
-  /// [_pendingWrites] instead so a once-edited isolate still accepts later
-  /// disk updates.
-  bool _userEdited = false;
-
   /// Count of setter disk writes currently in flight. A [reloadFromDisk] (an
   /// explicit cross-isolate sync) reads the on-disk snapshot, which is stale
   /// for the value a local write hasn't yet flushed — so while any write is
@@ -409,12 +399,29 @@ class AppSettingsNotifier extends Notifier<AppSettings> {
       markSettingsLoaded();
       return;
     }
-    // Initial-load race: honor a user edit that landed while we read disk
-    // rather than overwriting it with the now-stale stored snapshot. Also abort
-    // if the provider was disposed across the async gap (e.g. a tab closed).
-    _applyFromPrefs(prefs, abort: () => _userEdited || !ref.mounted);
+    if (!ref.mounted) {
+      markSettingsLoaded();
+      return;
+    }
+    // A write is in flight, so disk is about to change under us: skip THIS
+    // pass and let [_persist] re-run it once the write lands, when disk holds
+    // the stored settings AND the edit.
+    //
+    // What this replaces mattered. The abort used to be a sticky "has any
+    // setter run?" flag, and it discarded the WHOLE stored snapshot rather
+    // than the edited field — so one pane-width write moments after a tab
+    // mounted left that tab on defaults for every setting: no chosen editor,
+    // no chosen terminal, default timeouts, until something else triggered a
+    // reload (plan 0048 deviation (c)).
+    if (_pendingWrites > 0) return;
+    _applyFromPrefs(prefs, abort: () => !ref.mounted);
+    _storedApplied = true;
     markSettingsLoaded();
   }
+
+  /// Whether the stored snapshot has been folded in yet. False while the first
+  /// load is still waiting for an in-flight write to settle.
+  bool _storedApplied = false;
 
   /// Folds the persisted values from [prefs] into [state]. [abort] is consulted
   /// immediately before the (synchronous) assignment; because the prefs reads
@@ -520,6 +527,9 @@ class AppSettingsNotifier extends Notifier<AppSettings> {
     } finally {
       _pendingWrites--;
     }
+    // The first load skips while a write is in flight; now that this one has
+    // landed, run it — disk carries the stored settings and this edit both.
+    if (!_storedApplied && ref.mounted) unawaited(_load());
     // Tell sibling tabs (and, via the root notifier's listener, the native
     // History window) to reload. Fired after the write is flushed and the
     // pending-guard released, so this notifier's own reload defers correctly.
@@ -534,7 +544,6 @@ class AppSettingsNotifier extends Notifier<AppSettings> {
   /// Updates the timeouts and persists them. Values are clamped to a sane floor
   /// so a user can't set a 0-second timeout that kills every command.
   Future<void> setTimeouts({Duration? network, Duration? commit}) async {
-    _userEdited = true;
     Duration? floor(Duration? d) => d == null ? null : _floorTimeout(d);
     state = state.copyWith(
       networkTimeout: floor(network),
@@ -556,7 +565,6 @@ class AppSettingsNotifier extends Notifier<AppSettings> {
     bool? pushFollowTags,
     int? autoFetchMinutes,
   }) async {
-    _userEdited = true;
     state = state.copyWith(
       committerName: committerName?.trim(),
       committerEmail: committerEmail?.trim(),
@@ -578,7 +586,6 @@ class AppSettingsNotifier extends Notifier<AppSettings> {
   /// Updates and persists the external-binary path overrides. Blank entries are
   /// dropped (revert to auto-discovery).
   Future<void> setBinaryOverrides(Map<String, String> overrides) async {
-    _userEdited = true;
     final cleaned = <String, String>{
       for (final e in overrides.entries)
         if (e.value.trim().isNotEmpty) e.key: e.value.trim(),
@@ -607,7 +614,6 @@ class AppSettingsNotifier extends Notifier<AppSettings> {
   Future<void> setHistoryZoom(double zoom) async {
     final clamped = zoom.clamp(minHistoryZoom, maxHistoryZoom).toDouble();
     if (clamped == state.historyZoom) return;
-    _userEdited = true;
     state = state.copyWith(historyZoom: clamped);
     await _persist((prefs) => prefs.setDouble(_historyZoomKey, clamped));
   }
@@ -622,7 +628,6 @@ class AppSettingsNotifier extends Notifier<AppSettings> {
     // reset-to-default must still persist (an absent entry merely *renders*
     // as the default; after a reset it should be stored).
     if (clamped == state.paneWidths[id]) return;
-    _userEdited = true;
     state = state.copyWith(paneWidths: {...state.paneWidths, id: clamped});
     await _persist(
       (prefs) => prefs.setDouble('$_paneWidthPrefix${id.name}', clamped),
@@ -640,7 +645,6 @@ class AppSettingsNotifier extends Notifier<AppSettings> {
       workspaceHighContrast: highContrast,
     );
     if (next == state) return;
-    _userEdited = true;
     state = next;
     await _persist((prefs) async {
       await prefs.setInt(_workspaceDensityKey, state.workspaceDensity.index);
@@ -655,7 +659,6 @@ class AppSettingsNotifier extends Notifier<AppSettings> {
   /// by both windows — the sync path is the same as [setHistoryZoom]'s.
   Future<void> setHistoryDiffWrap(bool wrap) async {
     if (wrap == state.historyDiffWrap) return;
-    _userEdited = true;
     state = state.copyWith(historyDiffWrap: wrap);
     await _persist((prefs) => prefs.setBool(_historyDiffWrapKey, wrap));
   }
@@ -663,7 +666,6 @@ class AppSettingsNotifier extends Notifier<AppSettings> {
   /// Toggles and persists whether History defaults to showing all branches (`--all`).
   Future<void> setHistoryAllBranches(bool all) async {
     if (all == state.historyAllBranches) return;
-    _userEdited = true;
     state = state.copyWith(historyAllBranches: all);
     await _persist((prefs) => prefs.setBool(_historyAllBranchesKey, all));
   }
@@ -678,7 +680,6 @@ class AppSettingsNotifier extends Notifier<AppSettings> {
     String? postCreate,
     bool? postCreateEnabled,
   }) async {
-    _userEdited = true;
     state = state.copyWith(
       worktreeCopyGlobs: copyGlobs?.trim(),
       worktreeCopyEnabled: copyEnabled,
@@ -701,7 +702,6 @@ class AppSettingsNotifier extends Notifier<AppSettings> {
   /// same nearly every time, so the sheet remembers its last use instead of
   /// asking again.
   Future<void> setTagDefaults({bool? annotated, bool? pushAfterCreate}) async {
-    _userEdited = true;
     state = state.copyWith(
       tagAnnotatedByDefault: annotated,
       tagPushAfterCreate: pushAfterCreate,
@@ -721,7 +721,6 @@ class AppSettingsNotifier extends Notifier<AppSettings> {
     AppBundle? editor,
     AppBundle? terminal,
   }) async {
-    _userEdited = true;
     state = state.copyWith(
       preferredEditorBundleId: editor?.bundleId,
       preferredEditorName: editor?.name,

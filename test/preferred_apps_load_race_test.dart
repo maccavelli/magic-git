@@ -15,6 +15,7 @@ import 'dart:io';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:remote_magic_git/core/settings/app_settings.dart';
+import 'package:remote_magic_git/core/settings/pane_layout.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
@@ -103,6 +104,38 @@ void main() {
           'that container has finished its first disk load, so a launch can use '
           'the system default while the user has chosen otherwise. Read '
           'appSettingsProvider.notifier.loaded instead.',
+    );
+  });
+
+  // Plan 0048 deviation (c): the first load used to abort on a sticky "any
+  // setter ran" flag and discard the WHOLE stored snapshot. A workspace
+  // persists a pane width moments after a tab mounts, so that tab kept
+  // defaults for every setting — including the chosen terminal, which is how
+  // Open in Terminal kept using Terminal.app with WezTerm stored.
+  //
+  // Both directions are asserted: the stored values survive an early write,
+  // and the early write survives the load.
+  test('an early local write does not discard the stored settings', () async {
+    SharedPreferences.setMockInitialValues({
+      'preferredTerminalBundleId': 'com.github.wez.wezterm',
+      'preferredTerminalName': 'WezTerm',
+      'preferredEditorBundleId': 'com.apple.TextEdit',
+    });
+
+    final container = ProviderContainer();
+    addTearDown(container.dispose);
+    final notifier = container.read(appSettingsProvider.notifier);
+
+    // Exactly what a workspace does moments after a tab mounts.
+    await notifier.setPaneWidth(PaneId.filesTree, 300);
+
+    final apps = await notifier.loaded;
+    expect(apps.preferredTerminalBundleId, 'com.github.wez.wezterm');
+    expect(apps.preferredEditorBundleId, 'com.apple.TextEdit');
+    expect(
+      apps.paneWidth(PaneId.filesTree),
+      300,
+      reason: 'and the edit that raced the load is still there',
     );
   });
 }
