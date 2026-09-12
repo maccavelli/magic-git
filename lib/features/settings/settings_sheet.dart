@@ -1,3 +1,4 @@
+import 'package:file_selector/file_selector.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/services.dart';
@@ -11,6 +12,7 @@ import '../../core/settings/keymap.dart';
 import '../../core/settings/tool_health.dart';
 import '../../core/ssh/environment_probe.dart';
 import '../../core/storage/known_hosts_store.dart';
+import '../../core/utils/app_bundle.dart';
 import '../common/actions.dart';
 import '../common/buttons.dart';
 import '../common/escape_dismissible.dart';
@@ -148,6 +150,9 @@ class _SettingsSheetState extends ConsumerState<SettingsSheet> {
 
   @override
   Widget build(BuildContext context) {
+    // Watched, not read: choosing an application saves immediately, and the
+    // row must show the new name without closing the sheet.
+    final apps = ref.watch(appSettingsProvider);
     final typography = MacosTheme.of(context).typography;
     return SizedSheet(
       width: _sheetWidth,
@@ -233,6 +238,41 @@ class _SettingsSheetState extends ConsumerState<SettingsSheet> {
                 MacosSwitch(
                   value: _followTags,
                   onChanged: (v) => setState(() => _followTags = v),
+                ),
+              ),
+
+              const SizedBox(height: 20),
+              _section(
+                context,
+                'Opening files',
+                'Which application "Open file" and "Open in Terminal" use. '
+                    'Left as the system default, a file opens in whatever macOS '
+                    'already opens that kind of file with — the same as '
+                    'double-clicking it in Finder. macOS has no default terminal, '
+                    'so Terminal is used until you choose one. Both save '
+                    'immediately.',
+              ),
+              _rowLabelled(
+                'Open files with',
+                _appChooser(
+                  context,
+                  chosenName: apps.preferredEditorName,
+                  fallbackLabel: 'System default',
+                  onChosen: (bundle) => ref
+                      .read(appSettingsProvider.notifier)
+                      .setPreferredApps(editor: bundle),
+                ),
+              ),
+              const SizedBox(height: 10),
+              _rowLabelled(
+                'Open terminal with',
+                _appChooser(
+                  context,
+                  chosenName: apps.preferredTerminalName,
+                  fallbackLabel: 'Terminal',
+                  onChosen: (bundle) => ref
+                      .read(appSettingsProvider.notifier)
+                      .setPreferredApps(terminal: bundle),
                 ),
               ),
 
@@ -596,6 +636,77 @@ class _SettingsSheetState extends ConsumerState<SettingsSheet> {
         ],
       ),
     );
+  }
+
+  /// The current choice, plus Choose… and Reset. Immediate-save, like Keyboard
+  /// Mappings: there is nothing here to validate on Save, and a choice that
+  /// looked applied but was not is exactly the confusion this record removes.
+  Widget _appChooser(
+    BuildContext context, {
+    required String chosenName,
+    required String fallbackLabel,
+    required void Function(AppBundle) onChosen,
+  }) {
+    final typography = MacosTheme.of(context).typography;
+    final unset = chosenName.isEmpty;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        SizedBox(
+          width: 170,
+          child: Text(
+            unset ? fallbackLabel : chosenName,
+            textAlign: TextAlign.end,
+            overflow: TextOverflow.ellipsis,
+            style: unset
+                ? typography.body.copyWith(color: MacosColors.systemGrayColor)
+                : typography.body,
+          ),
+        ),
+        const SizedBox(width: 8),
+        InlineActionButton(
+          label: 'Choose…',
+          icon: CupertinoIcons.app,
+          tooltip: 'Choose an application',
+          onPressed: () => _chooseApp(onChosen),
+        ),
+        const SizedBox(width: 6),
+        InlineActionButton(
+          label: 'Reset',
+          icon: CupertinoIcons.arrow_counterclockwise,
+          tooltip: 'Use the system default',
+          onPressed: unset
+              ? null
+              : () => onChosen(const AppBundle(bundleId: '', name: '')),
+        ),
+      ],
+    );
+  }
+
+  /// Picks an application and stores its **identifier**. A bundle without one
+  /// is refused here rather than stored as a path: `open -b` could not use it,
+  /// and a path breaks the moment the application moves (MADR 0048 F4).
+  Future<void> _chooseApp(void Function(AppBundle) onChosen) async {
+    final picked = await openFile(
+      acceptedTypeGroups: const [
+        XTypeGroup(
+          label: 'Applications',
+          uniformTypeIdentifiers: ['com.apple.application-bundle'],
+        ),
+      ],
+      initialDirectory: '/Applications',
+    );
+    if (picked == null || !mounted) return;
+    final bundle = readAppBundle(picked.path);
+    if (bundle == null) {
+      await showErrorDialog(
+        context,
+        'That application has no bundle identifier, so it could not be '
+        'launched reliably. Choose another, or keep the system default.',
+      );
+      return;
+    }
+    onChosen(bundle);
   }
 
   Widget _rowLabelled(String label, Widget control) {
