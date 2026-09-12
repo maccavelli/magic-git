@@ -290,7 +290,7 @@ The **first** baseline run failed one test — `directory_watch_source_test.dart
 watches exactly one root, as before`, `no matching path within 0:00:15.000000`. It passes alone. The
 second full run was green: `03:35 +4065 ~3`. See deviation (a).
 
-#### Deviation (a) — a pre-existing flaky test makes every gate a coin flip (2026-09-12, open)
+#### Deviation (a) — a pre-existing flaky test makes every gate a coin flip (2026-09-12, resolved)
 
 **Found.** `test/directory_watch_source_test.dart` failed twice today under full-suite load, in two
 *different* tests of that file (`an ordinary repo watches exactly one root, as before`, then `a commit
@@ -313,6 +313,52 @@ it imports; the same flake appeared before the first line of Phase 1 was written
 
 **The consequence of doing nothing:** every phase gate in this plan, and every one after it, carries a
 false-failure rate nobody has measured. Two failures in five full runs today is the only data.
+
+**Decision: resolution 1** (maintainer: "we need to resolve that"). It reached **three** failures
+before it was addressed, always that file, always at the 15-second ceiling.
+
+#### Deviation (a), executed — and the diagnosis corrected
+
+~~The ceiling is a fixed clock where the test needs a signal.~~ That reading was wrong, and resolving
+it began by disproving it. The timeout was never the defect: **the test was throwing the events away.**
+
+`quietSource` handed back a **broadcast** stream. Each test then mutated the repository — `git add`,
+`git commit` — and only subscribed afterwards, inside `waitFor`. A broadcast stream delivers to
+whoever is listening at that instant and keeps nothing, so every event that arrived while git was
+still running went to the keep-alive listener and was discarded. Nothing touches the repository after
+that, so the wait sat on a silent watcher until its ceiling expired. On an idle machine git finishes
+fast enough that some events land after the subscribe and the test passes; under load the whole burst
+lands in the gap.
+
+**Proved deterministically, with no load at all.** In a detached scratch worktree, a three-second
+delay inserted between the git commands and the subscribe:
+
+```text
+no matching path within 0:00:15.000000
+00:19 +0 -1: Some tests failed.
+```
+
+That is the identical failure seen three times under load, now on demand — which is what told us the
+cause was a dropped event rather than a slow one.
+
+**Fixed** by recording instead of racing: `quietSource` now returns a `_Reported`, which subscribes
+the moment the source goes quiet — *before* the mutation — and `firstMatching` answers from what has
+already arrived, falling back to waiting only when nothing matches yet. The 15-second timeout stays as
+a backstop for a watcher that never reports at all; it is no longer the mechanism by which a report is
+caught.
+
+**Confirmed** with the same three-second delay that had failed every time, now passing:
+
+```text
+with the delay, the one test:   00:04 +1: All tests passed!
+with the delay, all five:       00:09 +5: All tests passed!
+```
+
+**Gate.** `dart format` clean, `flutter analyze` clean, the file alone `00:06 +5`, full suite
+`03:33 +4085 ~3`. **Commit** `eb2a8c2`. No production code changed: the defect was in the test.
+
+**What this closes.** The gates in this plan were never measuring what they appeared to; three of the
+runs recorded above were coin flips. They pass now for a reason rather than by luck.
 
 ### Phase 1, executed
 
