@@ -610,6 +610,38 @@ bookkeeping, but it silently mistakes "the user set it back to the default" for 
 **Scope added:** `app_settings.dart`, a guard for the outcome (not just the mechanism), and a
 catalogue entry.
 
+#### Deviation (c), executed
+
+**Modified.** `_load()` no longer aborts on a sticky flag. It skips only while a write is genuinely in
+flight (`_pendingWrites > 0`), and `_persist` re-runs it once that write lands — by which time disk
+holds the stored settings *and* the edit, so neither is lost. `_userEdited` is gone from this notifier
+along with its eleven assignments; `_storedApplied` records whether the snapshot has been folded in.
+
+**Guarded on the outcome, not the mechanism.** `an early local write does not discard the stored
+settings` performs exactly what a workspace does on mount — `setPaneWidth` before the load resolves —
+and asserts **both** directions: the stored editor and terminal survive, and the racing edit survives
+too.
+
+**Seen to fail**, with the sticky abort restored in a detached scratch worktree:
+
+```text
+Expected: 'com.github.wez.wezterm'
+  Actual: ''
+```
+
+**The existing guarantee held.** `a user edit that lands before _load resolves is not clobbered by the
+stale on-disk value` passes untouched — the edit reaches disk before the retry reads it.
+
+**Gate.** `dart format` clean, `flutter analyze` No issues, settings tests `00:00 +23`, full suite
+`03:35 +4091 ~3`. **Commit** `6007246`.
+
+**Follow-up, not taken here.** `keymap.dart:889` carries the identical sticky-abort shape, so a
+container whose first keymap write beats its load keeps default keybindings. Nothing has reported it,
+and fixing it blind would be scope this plan did not ask for — but it is the same defect and should
+get its own record.
+
+**Still owed.** The maintainer's verification of 5.4(b), (c) and (d) on a build carrying this fix.
+
 ### Phase 6, executed
 
 **Created.** `tool/mutations/0048-preferred-apps.json`, eight entries. Every `find` string was
