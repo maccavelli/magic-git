@@ -230,10 +230,15 @@ security-scoped bookmarks (`lib/core/local/`). Secrets go to the macOS Keychain
 
 ## Gotchas
 
-- `lib/core/providers/app_providers.dart` contains bytes that make search tools
-  classify it as **binary** — plain `grep`/`rg` silently return *zero matches*
-  on it. Use `grep -a` / `rg -a` (or your tool's binary-override flag) when
-  searching that file.
+- **No source file may contain a raw NUL byte**, and none does any more. One
+  makes `grep`, `rg`, IDE search and GitHub's code view treat the whole file as
+  binary, and they then report *zero matches* — silently, with no error to
+  notice. Three files carried one (`app_providers.dart`,
+  `git_porcelain_parser.dart`, `recent_repos_store.dart`); each now writes it as
+  the escape `\u0000`, which compiles to the identical string at runtime.
+  `test/source_is_text_scan_test.dart` enforces this, so searching this
+  repository no longer needs `grep -a` — and if a search ever comes back
+  suspiciously empty again, that test will already have said why.
 - Exclude `.flutter-sdk/` (vendored full Flutter SDK, gitignored), `build/`,
   and `.dart_tool/` from repo-wide searches — they are huge and will drown out
   real matches.
