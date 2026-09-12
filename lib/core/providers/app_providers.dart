@@ -625,7 +625,7 @@ class RecentRemoteRepo extends RecentRepo {
   @override
   DateTime? get lastUsedAt => connection.lastConnectedAt;
   @override
-  String get id => '${connection.id} $repoPath';
+  String get id => '${connection.id}\u0000$repoPath';
 }
 
 /// A bookmarked local-filesystem repo (one repo per [SavedLocalRepo]).
@@ -643,7 +643,7 @@ class RecentLocalRepoEntry extends RecentRepo {
   @override
   DateTime? get lastUsedAt => repo.lastConnectedAt;
   @override
-  String get id => 'local ${repo.id}';
+  String get id => 'local\u0000${repo.id}';
 }
 
 String _pathBasename(String path) {
@@ -3439,10 +3439,10 @@ class WorktreeEditStamps {
   /// path in the repo must then be treated as possibly edited.
   final Map<String, int> repos;
 
-  /// 'repoPath path' → stamp.
+  /// 'repoPath\u0000path' → stamp.
   final Map<String, int> files;
 
-  static String _key(String repoPath, String path) => '$repoPath $path';
+  static String _key(String repoPath, String path) => '$repoPath\u0000$path';
 
   /// The pair a cache for [path] watches. A record, so Riverpod's `select`
   /// compares it by value: the listener fires only when *this* file's stamp (or
@@ -3491,7 +3491,7 @@ class WorktreeEditsNotifier extends Notifier<WorktreeEditStamps> {
     state = WorktreeEditStamps(
       repos: {...state.repos}..remove(repoPath),
       files: {...state.files}
-        ..removeWhere((k, _) => k.startsWith('$repoPath ')),
+        ..removeWhere((k, _) => k.startsWith('$repoPath\u0000')),
     );
   }
 }

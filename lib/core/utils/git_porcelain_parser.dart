@@ -250,7 +250,7 @@ class GitPorcelainParser {
             // by its old-path record; a stream truncated right after this
             // record's own fields (plausible over a live SSH channel) means
             // that pairing never arrives — record it as a warning rather than
-            // silently emitting a rename with a null old path. `split(' ')`
+            // silently emitting a rename with a null old path. `split('\u0000')`
             // always yields a trailing '' element, so when this type-2 record is
             // the last real record the "next" record is that empty string — an
             // empty old-path is never valid (a rename always has a source), so
