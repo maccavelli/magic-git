@@ -17,6 +17,7 @@ import '../common/actions.dart';
 import '../common/async_views.dart';
 import '../common/busy_action.dart';
 import '../common/buttons.dart';
+import '../common/chip_strip.dart';
 import '../common/context_menu.dart';
 import '../common/label_chip.dart';
 import '../common/list_keyboard_nav.dart';
@@ -492,6 +493,11 @@ class _WorktreesViewState extends ConsumerState<WorktreesView>
   }
 
   // ------------------------------------------------------------------- menu
+
+  /// Chips in an overview row are capped tighter than [LabelChip]'s app-wide
+  /// default: this pane can be dragged to 240 pt, and the name has to survive
+  /// beside them.
+  static const double _rowChipMaxWidth = 100;
 
   List<ContextMenuEntry> _rowMenu(GitWorktree wt) {
     final isLocal = ref.read(connectionProvider).isLocal;
@@ -1059,9 +1065,10 @@ class _WorktreesViewState extends ConsumerState<WorktreesView>
                 children: [
                   Row(
                     children: [
-                      // 2:1 — the name is the row's subject and the branch
-                      // qualifies it, so under pressure the name keeps twice
-                      // the remainder. Both ellipsize; neither overflows.
+                      // The subject flexes; the chips do not. They live in
+                      // a capped strip that collapses the rest into +N, which
+                      // is what keeps a name readable at a 240 pt pane
+                      // (MADR 0049, plan deviation (a)).
                       Flexible(
                         flex: 2,
                         child: MacosTooltip(
@@ -1078,59 +1085,73 @@ class _WorktreesViewState extends ConsumerState<WorktreesView>
                         ),
                       ),
                       const SizedBox(width: 6),
-                      // The branch label appears nowhere else in the row, so a
-                      // truncated one keeps its full text on hover.
                       Flexible(
-                        child: MacosTooltip(
-                          message: wt.branchLabel,
-                          child: LabelChip(
-                            wt.branchLabel,
-                            color: MacosColors.systemBlueColor,
+                        child: ChipStrip(
+                          // This strip shares a bounded row with the name, so
+                          // its chips give way rather than squeezing it.
+                          chipsMayShrink: true,
+                          // Two, as History shows: enough for the branch plus
+                          // the one state that matters most, with the rest on
+                          // the +N tooltip. Safe at 240 pt only because these
+                          // chips give way (chipsMayShrink) instead of holding
+                          // an intrinsic slice.
+                          maxVisible: 2,
+                          // Priority order: the branch first, then the states
+                          // that mean something is wrong, then the merely
+                          // informational ones.
+                          entries: [
+                            (
+                              chip: LabelChip(
+                                wt.branchLabel,
+                                color: MacosColors.systemBlueColor,
+                                maxWidth: _rowChipMaxWidth,
+                              ),
+                              tooltip: 'Branch: ${wt.branchLabel}',
+                            ),
+                            if (wt.isPrunable)
+                              (
+                                chip: const LabelChip(
+                                  'missing',
+                                  color: MacosColors.systemRedColor,
+                                ),
+                                tooltip: 'Missing: its folder is gone',
+                              ),
+                            if (wt.isLocked)
+                              (
+                                chip: LabelChip(
+                                  wt.lockReason?.isNotEmpty ?? false
+                                      ? 'locked: ${wt.lockReason}'
+                                      : 'locked',
+                                  color: MacosColors.systemGrayColor,
+                                  maxWidth: _rowChipMaxWidth,
+                                ),
+                                tooltip: wt.lockReason?.isNotEmpty ?? false
+                                    ? 'Locked: ${wt.lockReason}'
+                                    : 'Locked',
+                              ),
+                            if (wt.isMain)
+                              (
+                                chip: const LabelChip(
+                                  'main worktree',
+                                  color: MacosColors.systemGreenColor,
+                                ),
+                                tooltip: "The repository's main worktree",
+                              ),
+                            if (open)
+                              (
+                                chip: const LabelChip(
+                                  'open',
+                                  color: MacosColors.systemGrayColor,
+                                ),
+                                tooltip: 'Open in a tab',
+                              ),
+                          ],
+                          overflowChipBuilder: (hidden) => LabelChip(
+                            '+$hidden',
+                            color: MacosColors.systemGrayColor,
                           ),
                         ),
                       ),
-                      if (wt.isMain) ...[
-                        const SizedBox(width: 4),
-                        const LabelChip(
-                          'main worktree',
-                          color: MacosColors.systemGreenColor,
-                        ),
-                      ],
-                      if (open) ...[
-                        const SizedBox(width: 4),
-                        const LabelChip(
-                          'open',
-                          color: MacosColors.systemGrayColor,
-                        ),
-                      ],
-                      if (wt.isLocked) ...[
-                        const SizedBox(width: 4),
-                        // A lock reason is free text the user typed, so it
-                        // flexes like the branch label rather than holding a
-                        // fixed 160 pt while the name is squeezed out. The
-                        // fixed-vocabulary chips below ('main worktree',
-                        // 'open', 'missing') stay rigid: they cannot grow.
-                        Flexible(
-                          child: MacosTooltip(
-                            message: wt.lockReason?.isNotEmpty ?? false
-                                ? 'Locked: ${wt.lockReason}'
-                                : 'Locked',
-                            child: LabelChip(
-                              wt.lockReason?.isNotEmpty ?? false
-                                  ? 'locked: ${wt.lockReason}'
-                                  : 'locked',
-                              color: MacosColors.systemGrayColor,
-                            ),
-                          ),
-                        ),
-                      ],
-                      if (wt.isPrunable) ...[
-                        const SizedBox(width: 4),
-                        const LabelChip(
-                          'missing',
-                          color: MacosColors.systemRedColor,
-                        ),
-                      ],
                     ],
                   ),
                   const SizedBox(height: 2),

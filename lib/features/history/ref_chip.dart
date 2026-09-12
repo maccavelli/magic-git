@@ -2,6 +2,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:macos_ui/macos_ui.dart';
 
 import '../../core/git/git_service.dart';
+import '../common/chip_strip.dart';
 import '../dnd/drag_item.dart';
 import '../worktrees/worktree_tabs.dart';
 
@@ -122,33 +123,29 @@ class RefChipStrip extends StatelessWidget {
     final visible = filterHistoryRefDecorations(refs);
     if (visible.isEmpty) return const SizedBox.shrink();
 
-    final shown = visible.take(effectiveMaxVisible).toList();
-    final hidden = visible.sublist(shown.length);
-
-    // Intrinsic row: each chip caps its own width ([maxChipWidth]) and long
-    // names ellipsize inside. Do NOT wrap chips in Flexible here — a flex
-    // child of a min-sized / right-aligned strip can collapse to zero width
-    // (the history pop-out showed subjects with no badges at all).
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        for (final r in shown) RefChip(gitRef: r, enableDrag: enableDrag),
-        if (hidden.isNotEmpty)
-          MacosTooltip(
-            message: hidden.map((r) => refDecorationTooltip(r)).join('\n'),
-            child: _RefChipChrome(
-              color: MacosColors.systemGrayColor,
-              child: Text(
-                '+${hidden.length}',
-                style: const TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                  color: MacosColors.systemGrayColor,
-                ),
-              ),
-            ),
+    // The cap-and-collapse behaviour this strip pioneered now lives in
+    // [ChipStrip], shared with the worktree rows that needed the same rule
+    // (MADR 0049). The chip styling stays here; only the arithmetic moved.
+    return ChipStrip(
+      maxVisible: effectiveMaxVisible,
+      entries: [
+        for (final r in visible)
+          (
+            chip: RefChip(gitRef: r, enableDrag: enableDrag),
+            tooltip: refDecorationTooltip(r),
           ),
       ],
+      overflowChipBuilder: (hidden) => _RefChipChrome(
+        color: MacosColors.systemGrayColor,
+        child: Text(
+          '+$hidden',
+          style: const TextStyle(
+            fontSize: 11,
+            fontWeight: FontWeight.w600,
+            color: MacosColors.systemGrayColor,
+          ),
+        ),
+      ),
     );
   }
 }
