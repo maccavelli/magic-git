@@ -521,6 +521,44 @@ user clicks.
 **Scope added:** `app_settings.dart` (readiness), the seven launch call sites, a new guard test, and
 catalogue entries for the new guarantee.
 
+#### Deviation (b), executed
+
+**Modified.** `AppSettingsNotifier` gains `ready` (a `Completer` released by `_load` on **both** its
+exits, including the storage-unavailable branch) and `loaded`, the settings after that wait. All
+**seven** launch call sites now read through `loaded` rather than `state`: the four view menus, both
+opens in `RemoteEditManager`, and `worktrees_view`'s `_openInTerminal`.
+
+**A contract fell out of it.** A subclass that supplies settings without reading disk — a test double
+with fixed state — never releases `ready`, so every launch waiting on `loaded` waits forever. The
+Phase 4 routing test failed exactly that way, which is the right failure: `markSettingsLoaded()` is now
+`@protected` and documented, and both doubles call it.
+
+**A guard that did not guard.** An end-to-end widget test was written first — real notifier, mock
+prefs, click the row — and it **passed against the sabotage**, because `pumpAndSettle` lets the load
+finish before any tap can happen. The race cannot be reproduced through the UI. Rather than keep a
+test that looks like protection and is not, the shape is enforced structurally, the way
+`provider_retry_policy_test.dart` enforces its own rule: `no launch path reads a preferred application
+from state` scans `lib/` for `read(appSettingsProvider).preferred…`. The widget test stays as a
+routing regression test, with no claim beyond that.
+
+**Seen to fail**, each sabotage applied alone in a detached scratch worktree:
+
+```text
+A  one launch path reads state at click time
+     against the widget test:  PASSED  (it cannot see the race — see above)
+     against the scan:         Expected: empty
+                                 Actual: ['lib/features/worktrees/worktrees_view.dart']
+B  _load no longer releases readiness after a successful load
+     TimeoutException after 0:00:30.000000  (two tests hang, as a launch would)
+```
+
+**Gate.** `dart format` clean, `flutter analyze` No issues, targeted tests `00:06 +41`, full suite
+`03:32 +4090 ~3`. **Commit** `a067c8f`.
+
+**Still owed.** 5.4(b) — that a *chosen editor* opens the file — remains unverified on the maintainer's
+machine, since the earlier "pass" was retracted above. It needs a rebuild and one open of a file whose
+system default is NOT the chosen editor, so the two cannot be confused again.
+
 ### Phase 6, executed
 
 **Created.** `tool/mutations/0048-preferred-apps.json`, eight entries. Every `find` string was
