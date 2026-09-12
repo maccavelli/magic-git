@@ -801,10 +801,8 @@ void main() {
     await tester.tap(find.text('Checkout').last);
     await tester.pumpAndSettle();
 
-    expect(
-      git.checkedOut,
-      ['topic'],
-      reason: 'the branch at that OID must be checked out, not the hash',
-    );
+    expect(git.checkedOut, [
+      'topic',
+    ], reason: 'the branch at that OID must be checked out, not the hash');
   });
 }

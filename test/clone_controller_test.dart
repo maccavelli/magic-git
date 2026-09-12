@@ -165,11 +165,12 @@ void main() {
       expect(logLines(), contains('✓ completed'));
       // Probe + the post-clone origin verification — never rm.
       expect(exec.calls, hasLength(2));
-      expect(
-        exec.calls.last,
-        ['git', 'remote', 'get-url', 'origin'],
-        reason: 'a successful clone validates its origin is in place',
-      );
+      expect(exec.calls.last, [
+        'git',
+        'remote',
+        'get-url',
+        'origin',
+      ], reason: 'a successful clone validates its origin is in place');
     },
   );
 

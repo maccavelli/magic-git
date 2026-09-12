@@ -577,11 +577,10 @@ void main() {
 
     await git.undoExecute(records.single);
     final list = await raw(['stash', 'list', '--format=%gs']);
-    expect(
-      list.split('\n'),
-      [contains('second wip'), contains('first wip')],
-      reason: 'newest back at stash@{0}, original order preserved',
-    );
+    expect(list.split('\n'), [
+      contains('second wip'),
+      contains('first wip'),
+    ], reason: 'newest back at stash@{0}, original order preserved');
   });
 
   test(

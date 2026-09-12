@@ -264,11 +264,9 @@ void main() {
     final stored = (await _storedConnections()).single;
     expect(stored.allRepoPaths, ['/srv/alpha', '/srv/gamma']);
     expect(stored.repoPath, '/srv/alpha', reason: 'default repo unchanged');
-    expect(
-      stored.fsmonitorPaths,
-      ['/srv/gamma'],
-      reason: 'the fsmonitor preference follows the renamed entry',
-    );
+    expect(stored.fsmonitorPaths, [
+      '/srv/gamma',
+    ], reason: 'the fsmonitor preference follows the renamed entry');
     expect(stored.repoLabels, {
       '/srv/gamma': 'Beta Service',
     }, reason: 'the friendly label follows the renamed entry');

@@ -197,11 +197,11 @@ void main() {
           RepositorySyncCommand.push: 'Another operation is running',
         },
       );
-      expect(
-        _accented(tester),
-        {'Fetch', 'Pull', 'Sync'},
-        reason: 'a blue button that cannot run is worse than a grey one',
-      );
+      expect(_accented(tester), {
+        'Fetch',
+        'Pull',
+        'Sync',
+      }, reason: 'a blue button that cannot run is worse than a grey one');
     });
 
     testWidgets('publish accents Push, since that is what it runs', (

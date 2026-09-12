@@ -155,11 +155,9 @@ void main() {
       await t.done.future;
 
       expect(t.error, isNull);
-      expect(
-        t.events,
-        [''],
-        reason: 'exactly one terminal tick so the view can leave its spinner',
-      );
+      expect(t.events, [
+        '',
+      ], reason: 'exactly one terminal tick so the view can leave its spinner');
     },
   );
 

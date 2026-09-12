@@ -162,11 +162,9 @@ void main() {
     await raw(['init', '-q', '--bare', emptyOrigin], cwd: root);
     await raw(['clone', '-q', emptyOrigin, emptyClone], cwd: root);
 
-    expect(
-      await git.remotes(emptyClone),
-      ['origin'],
-      reason: 'git remote is the config-level truth',
-    );
+    expect(await git.remotes(emptyClone), [
+      'origin',
+    ], reason: 'git remote is the config-level truth');
     expect(
       await git.refs(emptyClone),
       isEmpty,
