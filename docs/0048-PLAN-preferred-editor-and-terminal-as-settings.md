@@ -470,6 +470,57 @@ the choice, that the chosen terminal opens at the worktree directory, and that a
 application falls back and says so once. Acceptance criterion 11 waits on them, and with it this
 plan's status.
 
+#### Deviation (b) — the launch reads the choice before it has loaded (2026-09-12)
+
+**Found.** With phases 1–6 shipped and running, the maintainer reported "Open in Terminal" opening
+Terminal.app while WezTerm was chosen in Settings.
+
+**The choice was stored correctly all along.** The app's real preference store is
+`~/Library/Preferences/com.example.remoteMagicGit.plist` (120 keys), and it holds
+`flutter.preferredTerminalBundleId = com.github.wez.wezterm`,
+`flutter.preferredTerminalName = WezTerm`, and the editor pair. Several rounds of this diagnosis were
+spent believing nothing had persisted, because `defaults read com.example.remoteMagicGit` returns the
+**stale sandbox container** (one key) rather than that file. The file is authoritative; the query tool
+was not, and it should have been read first.
+
+**Root cause.** `AppSettingsNotifier.build()` returns `const AppSettings()` and kicks `_load()`
+fire-and-forget (`app_settings.dart:351-363`). **Every tab is its own `ProviderContainer`**, so each
+has its own notifier and its own asynchronous load. Phase 4 wired the launch paths to read the
+preference at *click time* with `ref.read`, so the first read in a given tab returns defaults — an
+empty bundle id — and the launch falls through to `open -a Terminal` (or, for files, to the per-type
+default).
+
+**Proved deterministically**, in a detached scratch worktree, with the stored value present in prefs:
+
+```text
+READ AT CLICK TIME: ""
+READ AFTER LOAD:    "com.github.wez.wezterm"
+Expected: 'com.github.wez.wezterm'
+  Actual: ''
+```
+
+**This also retracts a step-5.4 result.** 5.4(b) was recorded as passing because a file opened in
+TextEdit after TextEdit was chosen — but the editor path has the identical race across its five call
+sites, so that was very likely the system default for the file type rather than the setting taking
+effect. It is recorded here as *not* established, and the guard below is what will establish it.
+
+**Decision: resolution 1** (maintainer: "yes address it now"). `AppSettingsNotifier` gains a readiness
+future completed when the first disk load finishes — **including the path where storage is
+unavailable**, so a launch can never wait forever — and exposes `loaded`, the settings after that
+wait. Every launch path reads through it, so the answer cannot depend on how early in a tab's life the
+user clicks.
+
+**Rejected.**
+
+* *Reading `SharedPreferences` directly at launch time.* It would work, and it puts a second reader of
+  the same values beside the notifier — two sources that can disagree, which is the defect class MADR
+  0039 exists to keep out of this codebase.
+* *`ref.watch(appSettingsProvider)` in each view's build.* It narrows the window rather than closing
+  it, and does nothing for `RemoteEditManager`, which has no build to watch in.
+
+**Scope added:** `app_settings.dart` (readiness), the seven launch call sites, a new guard test, and
+catalogue entries for the new guarantee.
+
 ### Phase 6, executed
 
 **Created.** `tool/mutations/0048-preferred-apps.json`, eight entries. Every `find` string was
