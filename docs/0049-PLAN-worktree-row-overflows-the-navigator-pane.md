@@ -295,6 +295,54 @@ per-chip `Flexible` was a workaround for not having a strip, and it goes.
 History overflow guard must stay green untouched — it is what proves the extraction preserved
 behaviour.
 
+### Deviation (a), executed
+
+**Extracted.** `lib/features/common/chip_strip.dart` — cap at `maxVisible`, collapse the rest into a
+`+N` chip whose tooltip names what it swallowed. `RefChipStrip` now delegates to it and keeps its own
+chip styling; the worktree row uses it with `maxVisible: 2`, chips capped at 100 pt, and entries in
+priority order: branch, missing, locked, main worktree, open.
+
+**The first design was wrong, and the sabotage said so.** `ChipStrip` began by *inferring* whether its
+chips could shrink from `constraints.hasBoundedWidth`. Three sabotages were run; two were caught and
+`always-shrink` was not — which exposed that the "unbounded row" test did not test what it claimed
+(`Center` supplies bounded constraints, so both tests took the same branch). The inference would
+therefore have switched **History's** chips to flexible as well — the collapse-to-zero its own comment
+warns about — with nothing to catch it.
+
+Shrinking is now an explicit `chipsMayShrink`, **off by default**, and the guard asserts the structure
+each mode produces rather than a width that happens to come out the same:
+
+```text
+no-cap          exit=1   Expected: no matching candidates          (+N never appears)
+never-shrink    exit=1   Expected: at least one matching candidate  (chips cannot give way)
+always-shrink   exit=1   Expected: no matching candidates          (History's chips made flexible)
+no-tooltip      exit=1                                             (hidden chips unreachable)
+```
+
+**Measured, and this is the point of the deviation.** Name width with the ordinary chip set:
+
+| Pane | Phase 1 | Intrinsic strip | Adopted strip |
+| --- | --- | --- | --- |
+| 240 pt | 97.3 pt | 46.0 pt | **97.3 pt** |
+| 320 pt | 150.7 pt | 126.0 pt | **150.7 pt** |
+| 720 pt | 417.3 pt | 526.0 pt | **417.3 pt** |
+
+An intrinsic strip — History's shape, adopted literally — made the name *worse* at the widths that
+prompted the deviation, because chips held a fixed slice instead of yielding. With `chipsMayShrink`
+the name is exactly what Phase 1 achieved, and the row additionally gains the cap: at most two chips,
+the rest on a tooltip, so a worktree in four states no longer competes with its own name.
+
+**A cap of one was tried and rejected by the existing tests.** With `maxVisible: 1`, `lists every
+worktree real git reports` and `overview highlights the selected row; open tabs get a chip` failed —
+`main worktree` and `open` had vanished behind `+1` at every width. Two is what History uses and what
+those tests describe, and it is safe here only because the chips give way.
+
+**Gate.** `dart format` clean, `flutter analyze` No issues, targeted `00:05 +25`, full suite
+`03:28 +4099 ~3`. **Commit** `894352f`.
+
+**Still owed:** Phases 2–5 — clip the navigator pane, measure the other `LabelChip` surfaces, the
+catalogue, and the records.
+
 ## Verification
 
 The whole-plan gate:
