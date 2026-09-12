@@ -642,6 +642,35 @@ get its own record.
 
 **Still owed.** The maintainer's verification of 5.4(b), (c) and (d) on a build carrying this fix.
 
+#### Deviation (d) — a chosen terminal does not take a directory (2026-09-12)
+
+**Found.** With deviations (b) and (c) shipped, "Open in Terminal" finally honoured the stored
+choice — and WezTerm opened and closed immediately. Run by hand, it says why:
+
+```text
+error: unrecognized subcommand '/…/magic-git'
+Usage: wezterm-gui [OPTIONS] [COMMAND]
+```
+
+`open -b <id> <dir>` passes the directory as a trailing argument; WezTerm treats trailing arguments as
+a command and exits. `wezterm-gui start --cwd <dir>` works. Terminal.app and iTerm2 accept a bare
+directory, so the contract this plan assumed holds for some terminals and not others — MADR 0048's
+"not established" item, now established.
+
+**`open`'s exit status cannot detect it.** It exited 0 in every failing case, because it reports that
+Launch Services dispatched the request, not that the application stayed alive. An earlier round of
+this investigation read that 0 as success, which was wrong for the same reason reading `defaults` was.
+
+**Decision** (maintainer: "just open the macos terminal app"). The terminal preference is removed:
+`openInTerminal` always uses Terminal.app. MADR 0048 amendment 0048.1 records the decision change.
+
+**Rejected.** A per-terminal launch table (someone must extend it for every terminal, and an unknown
+one still fails); a user-supplied argument template (CLI syntax in a preferences pane, and the default
+still fails for the terminal that prompted it).
+
+**Scope:** remove the terminal setting — field, keys, setter parameter, Settings row — and the
+`bundleId` parameter of `openInTerminal`, with the tests and catalogue entries that assert them.
+
 ### Phase 6, executed
 
 **Created.** `tool/mutations/0048-preferred-apps.json`, eight entries. Every `find` string was

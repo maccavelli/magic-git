@@ -198,6 +198,43 @@ Terminal.app.
   exist today have different defaults and different fallbacks — which two explicit fields state and a
   generic map hides.
 
+## Amendments
+
+### 0048.1 — the terminal half is withdrawn; "Open in Terminal" always uses Terminal.app (2026-09-12)
+
+**What this record assumed.** That `open -b <bundleId> <dir>` opens *any* chosen terminal at that
+directory — the same contract the editor half relies on. The record flagged it as not established and
+asked for one manual check per terminal.
+
+**What the check found.** It is not a contract at all. Terminal.app and iTerm2 accept a directory;
+**WezTerm rejects it**, in its own words:
+
+```text
+error: unrecognized subcommand '/…/magic-git'
+Usage: wezterm-gui [OPTIONS] [COMMAND]
+```
+
+`open` hands the path to the app as a trailing argument, WezTerm reads trailing arguments as a command
+to run, and it exits — which presents to the user as a window that flashes open and closes. Its
+documented form is `start --cwd <dir>`, and every other terminal has its own. **`open` exits 0
+regardless**, because it reports whether Launch Services dispatched, not whether the application
+survived — so the failure cannot even be detected from the exit status.
+
+Making the preference work would therefore need either a table of per-terminal launch recipes, which
+someone must extend for every terminal anyone uses, or a user-supplied argument template, which puts
+CLI syntax into a preferences pane and still fails by default for the terminal that prompted it.
+
+**Decision (maintainer: "just open the macos terminal app").** The preferred-terminal setting is
+removed. "Open in Terminal" always uses Terminal.app — the one terminal macOS guarantees is present,
+and the fallback this record already specified.
+
+**The editor half stands unchanged**, and the difference is not arbitrary: a file has a registered
+handler and `open <file>` is exactly the contract Launch Services exists to provide. A *directory
+handed to a terminal* is not that; it only looked similar.
+
+**Reopening this** needs no new decision record, only the template from the rejected options — if a
+terminal preference is wanted later, that is the shape it takes.
+
 ## More Information
 
 * **What this follows.** `11f9ed7` (open by type, `-t` fallback, failures reported) and the defect it
