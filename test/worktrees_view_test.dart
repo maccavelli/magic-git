@@ -11,7 +11,7 @@ library;
 
 import 'dart:io';
 
-import 'package:flutter/cupertino.dart';
+import 'package:flutter/cupertino.dart' hide ConnectionState;
 import 'package:flutter/gestures.dart' show kSecondaryButton;
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -22,8 +22,10 @@ import 'package:remote_magic_git/core/exec/local_command_executor.dart';
 import 'package:remote_magic_git/core/git/git_service.dart';
 import 'package:remote_magic_git/core/git/watch_event.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
+import 'package:remote_magic_git/core/settings/app_settings.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
+import 'package:remote_magic_git/core/utils/file_actions.dart';
 import 'package:remote_magic_git/core/utils/git_porcelain_parser.dart';
 import 'package:remote_magic_git/features/common/panel_shortcuts.dart';
 import 'package:remote_magic_git/features/common/repository_workspace_scaffold.dart';
@@ -73,6 +75,35 @@ List<Override> _tabOverrides(String path) => [
   remotesProvider(path).overrideWith((ref) async => const <String>[]),
   fileViewVisibleProvider.overrideWith(_HiddenFileView.new),
 ];
+
+/// Records what would be launched, instead of launching it.
+class _RecordingFileActions extends FileActions {
+  final List<({String path, String bundleId})> terminals = [];
+
+  @override
+  Future<void> openInTerminal(String path, {String bundleId = ''}) async {
+    terminals.add((path: path, bundleId: bundleId));
+  }
+}
+
+/// A connection pinned local, so the local-only menu items are on screen
+/// without running a real connect.
+class _StubConnection extends ConnectionController {
+  _StubConnection(this._state);
+  final ConnectionState _state;
+  @override
+  ConnectionState build() => _state;
+}
+
+/// Settings carrying a chosen terminal, built directly rather than loaded, so
+/// the test never waits on an asynchronous SharedPreferences read.
+class _SettingsWithTerminal extends AppSettingsNotifier {
+  @override
+  AppSettings build() => const AppSettings(
+    preferredTerminalBundleId: 'com.googlecode.iterm2',
+    preferredTerminalName: 'iTerm',
+  );
+}
 
 void main() {
   late Directory tmp;
@@ -487,5 +518,43 @@ void main() {
 
     expect(find.text('No worktrees yet'), findsOneWidget);
     expect(find.text('Add Worktree…'), findsOneWidget);
+  });
+
+  // MADR 0048: the terminal is the user's choice, and the launch lives in
+  // FileActions where the exit status is checked — `worktrees_view` used to
+  // call `Process.run('open', ['-a', 'Terminal', path])` and ignore the result.
+  testWidgets('Open in Terminal routes through FileActions with the chosen '
+      'terminal', (tester) async {
+    final actions = _RecordingFileActions();
+    await pump(
+      tester,
+      extraOverrides: [
+        fileActionsProvider.overrideWithValue(actions),
+        appSettingsProvider.overrideWith(_SettingsWithTerminal.new),
+        connectionProvider.overrideWith(
+          () => _StubConnection(
+            const ConnectionState(
+              backend: ConnectionBackend.local,
+              phase: ConnectionPhase.connected,
+            ),
+          ),
+        ),
+      ],
+    );
+
+    await tester.tap(find.text('app-feature'), buttons: kSecondaryButton);
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Open in Terminal'));
+    await tester.pumpAndSettle();
+
+    expect(actions.terminals, hasLength(1));
+    expect(
+      actions.terminals.single.bundleId,
+      'com.googlecode.iterm2',
+      reason: 'the stored choice reaches the launch',
+    );
+    expect(actions.terminals.single.path, endsWith('app-feature'));
   });
 }

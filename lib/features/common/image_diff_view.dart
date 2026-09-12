@@ -9,6 +9,7 @@ import 'package:macos_ui/macos_ui.dart';
 import '../../core/git/git_service.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/providers/provider_retry_policy.dart';
+import '../../core/settings/app_settings.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/file_actions.dart';
 import '../viewer/remote_edit_service.dart';
@@ -421,7 +422,9 @@ class _ImageDiffViewState extends ConsumerState<ImageDiffView> {
     if (isLocal) {
       runAction(
         context,
-        () => openFiles(['${widget.repoPath}/${widget.displayPath}']),
+        () => ref.read(fileActionsProvider).openFiles([
+          '${widget.repoPath}/${widget.displayPath}',
+        ], bundleId: ref.read(appSettingsProvider).preferredEditorBundleId),
       );
     } else {
       ref

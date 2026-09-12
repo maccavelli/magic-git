@@ -3041,7 +3041,14 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
           if (ref.read(connectionProvider).isLocal) {
             runAction(
               context,
-              () => openFiles(paths.map(_absolutePath).toList()),
+              () => ref
+                  .read(fileActionsProvider)
+                  .openFiles(
+                    paths.map(_absolutePath).toList(),
+                    bundleId: ref
+                        .read(appSettingsProvider)
+                        .preferredEditorBundleId,
+                  ),
             );
           } else {
             for (final path in paths) {

@@ -3,6 +3,8 @@ import 'dart:io';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../output/output_log.dart';
+
 /// Launches a command. Injected so a test can assert what *would* be launched
 /// without launching it; production passes [Process.run].
 typedef LaunchRunner =
@@ -140,7 +142,15 @@ class FileActions {
   }
 }
 
-final fileActionsProvider = Provider<FileActions>((ref) => const FileActions());
+final fileActionsProvider = Provider<FileActions>(
+  (ref) => FileActions(
+    // "Your chosen application could not be used" is news rather than a
+    // failure — the file did open — so it goes to the Output pane instead of
+    // interrupting a successful action with a dialog.
+    onNotice: (message) =>
+        ref.read(outputLogProvider.notifier).logError('open file', message),
+  ),
+);
 
 /// Backward compatibility for callers not using the provider yet
 Future<void> revealInFinder(String absolutePath) =>

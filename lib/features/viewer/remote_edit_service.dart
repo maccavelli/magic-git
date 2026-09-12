@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/output/output_log.dart';
 import '../../core/providers/app_providers.dart';
+import '../../core/settings/app_settings.dart';
 import '../../core/utils/display_error.dart';
 import '../../core/utils/file_actions.dart';
 
@@ -114,7 +115,7 @@ class RemoteEditManager extends Notifier<Map<String, RemoteEditSession>> {
       try {
         await ref.read(fileActionsProvider).openFiles([
           state[sessionKey]!.tempFile.absolute.path,
-        ]);
+        ], bundleId: ref.read(appSettingsProvider).preferredEditorBundleId);
       } catch (e) {
         _reportOpenFailure(path, e);
       }
@@ -175,7 +176,9 @@ class RemoteEditManager extends Notifier<Map<String, RemoteEditSession>> {
       // any of that — the user can still open the file by hand, and tearing
       // the session down would lose the save-back watch.
       try {
-        await ref.read(fileActionsProvider).openFiles([tempFile.absolute.path]);
+        await ref.read(fileActionsProvider).openFiles([
+          tempFile.absolute.path,
+        ], bundleId: ref.read(appSettingsProvider).preferredEditorBundleId);
       } catch (e) {
         _reportOpenFailure(path, e);
       }

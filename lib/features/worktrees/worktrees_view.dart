@@ -1,5 +1,3 @@
-import 'dart:io';
-
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/cupertino.dart' hide ConnectionState;
 import 'package:flutter/material.dart' show SelectableText;
@@ -10,9 +8,11 @@ import 'package:macos_ui/macos_ui.dart';
 import '../../core/git/git_service.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/providers/window_manager_bridge.dart';
+import '../../core/settings/app_settings.dart';
 import '../../core/settings/keymap.dart';
 import '../../core/settings/repository_workspace_prefs.dart';
 import '../../core/utils/display_error.dart';
+import '../../core/utils/file_actions.dart';
 import '../branches/branches_view.dart';
 import '../common/actions.dart';
 import '../common/async_views.dart';
@@ -476,7 +476,7 @@ class _WorktreesViewState extends ConsumerState<WorktreesView>
 
   Future<void> _revealInFinder(String path) async {
     try {
-      await Process.run('open', ['-R', path]);
+      await ref.read(fileActionsProvider).revealInFinder(path);
     } catch (e) {
       if (mounted) await showErrorDialog(context, 'Could not open Finder: $e');
     }
@@ -484,7 +484,12 @@ class _WorktreesViewState extends ConsumerState<WorktreesView>
 
   Future<void> _openInTerminal(String path) async {
     try {
-      await Process.run('open', ['-a', 'Terminal', path]);
+      await ref
+          .read(fileActionsProvider)
+          .openInTerminal(
+            path,
+            bundleId: ref.read(appSettingsProvider).preferredTerminalBundleId,
+          );
     } catch (e) {
       if (mounted) {
         await showErrorDialog(context, 'Could not open Terminal: $e');

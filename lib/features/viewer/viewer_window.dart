@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
 
 import '../../core/providers/app_providers.dart';
+import '../../core/settings/app_settings.dart';
 import '../../core/settings/keymap.dart';
 import '../../core/utils/display_error.dart';
 import '../../core/utils/file_actions.dart';
@@ -589,7 +590,9 @@ class _FileViewerWindowState extends ConsumerState<FileViewerWindow> {
         if (isLocal) {
           runAction(
             context,
-            () => openFiles(['${widget.repoPath}/${widget.path}']),
+            () => ref.read(fileActionsProvider).openFiles([
+              '${widget.repoPath}/${widget.path}',
+            ], bundleId: ref.read(appSettingsProvider).preferredEditorBundleId),
           );
         } else {
           ref
