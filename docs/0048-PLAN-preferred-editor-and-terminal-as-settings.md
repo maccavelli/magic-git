@@ -559,6 +559,57 @@ B  _load no longer releases readiness after a successful load
 machine, since the earlier "pass" was retracted above. It needs a rebuild and one open of a file whose
 system default is NOT the chosen editor, so the two cannot be confused again.
 
+#### Deviation (c) — the first load discards every stored setting if anything wrote first (2026-09-12)
+
+**Found.** With deviation (b) shipped and the app rebuilt, "Open in Terminal" *still* opened
+Terminal.app while WezTerm was stored. Waiting for the load (b's fix) is correct and did not help,
+because the load itself was throwing the stored values away.
+
+`_load()` aborted on `_userEdited` — set by **any** setter, sticky for the container's life — and the
+abort discards the **whole** stored snapshot rather than the field that was edited. A tab that
+persists a pane width moments after it mounts therefore keeps defaults for *every* setting in that
+container: no editor, no terminal, default timeouts, default pull mode.
+
+**Proved deterministically**, with the value present in prefs:
+
+```text
+AFTER AN EARLY WRITE: ""
+Expected: 'com.github.wez.wezterm'
+  Actual: ''
+```
+
+That is one `setPaneWidth` call before the load resolves — exactly what a workspace does on mount.
+
+**Why the earlier diagnosis missed it.** Deviation (b)'s guard proves `loaded` *waits*; it never
+proved the waited-for value was the *stored* one. A guard that checks the mechanism rather than the
+outcome will pass while the outcome is wrong.
+
+**Blast radius.** Not the two new settings: *all* of them — timeouts, committer identity, pull mode,
+auto-fetch, binary overrides, pane widths — in any container whose first local write beats the disk
+read, until something triggers `reloadFromDisk`. `keymap.dart:889` carries the identical shape and is
+noted as a follow-up rather than changed here.
+
+**Decision: resolution 1** (maintainer: "b" — fix it under this plan). The initial load stops using a
+sticky, all-or-nothing abort:
+
+* it skips only while a write is **genuinely in flight** (`_pendingWrites > 0`), the same condition
+  `reloadFromDisk` already uses;
+* and when that write completes, the load **runs again** — at which point disk holds both the stored
+  settings and the just-made edit, so nothing is discarded and nothing is clobbered;
+* `_userEdited` is then dead in this notifier and goes, with its twelve assignments.
+
+The existing guarantee — "a user edit that lands before `_load` resolves is not clobbered by the stale
+on-disk value" (`app_settings_test.dart:234`) — is kept by construction: the edit reaches disk before
+the retry reads it. That test must stay green untouched, and is part of this deviation's gate.
+
+**Rejected.** *Field-scoped skipping* (each setter records which keys it edited, and the load skips
+exactly those): precise, but it spreads bookkeeping across twelve setters and leaves the same defect
+one forgotten line away. *Comparing state against the build-time defaults to infer edits*: no
+bookkeeping, but it silently mistakes "the user set it back to the default" for "never edited".
+
+**Scope added:** `app_settings.dart`, a guard for the outcome (not just the mechanism), and a
+catalogue entry.
+
 ### Phase 6, executed
 
 **Created.** `tool/mutations/0048-preferred-apps.json`, eight entries. Every `find` string was
