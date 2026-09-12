@@ -24,7 +24,10 @@ class _Settings extends AppSettingsNotifier {
   final List<({AppBundle? editor, AppBundle? terminal})> calls = [];
 
   @override
-  AppSettings build() => _initial;
+  AppSettings build() {
+    markSettingsLoaded();
+    return _initial;
+  }
 
   @override
   Future<void> setPreferredApps({

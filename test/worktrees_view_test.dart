@@ -34,6 +34,7 @@ import 'package:remote_magic_git/features/worktrees/worktree_access.dart';
 import 'package:remote_magic_git/features/worktrees/worktree_tabs.dart';
 import 'package:remote_magic_git/features/worktrees/worktrees_view.dart';
 import 'package:riverpod/misc.dart' show Override;
+import 'package:shared_preferences/shared_preferences.dart';
 
 /// Records grant releases instead of touching the real ScopedAccess.
 class _RecordingAccess extends WorktreeAccess {
@@ -99,10 +100,15 @@ class _StubConnection extends ConnectionController {
 /// the test never waits on an asynchronous SharedPreferences read.
 class _SettingsWithTerminal extends AppSettingsNotifier {
   @override
-  AppSettings build() => const AppSettings(
-    preferredTerminalBundleId: 'com.googlecode.iterm2',
-    preferredTerminalName: 'iTerm',
-  );
+  AppSettings build() {
+    // No disk read here, so this double declares itself loaded — otherwise
+    // every launch path that waits on `loaded` waits forever.
+    markSettingsLoaded();
+    return const AppSettings(
+      preferredTerminalBundleId: 'com.googlecode.iterm2',
+      preferredTerminalName: 'iTerm',
+    );
+  }
 }
 
 void main() {
@@ -556,5 +562,46 @@ void main() {
       reason: 'the stored choice reaches the launch',
     );
     expect(actions.terminals.single.path, endsWith('app-feature'));
+  });
+
+  // Plan 0048 deviation (b): the settings notifier loads from disk
+  // fire-and-forget, and every tab is its own container — so a launch that read
+  // `state` at click time got an empty id and fell back to Terminal.app while
+  // the user's choice sat on disk. Here the REAL notifier is used (no double),
+  // loading from mock prefs, and the row is clicked as soon as it is on screen.
+  testWidgets('the stored terminal is used even on a container that has just '
+      'loaded', (tester) async {
+    SharedPreferences.setMockInitialValues({
+      'preferredTerminalBundleId': 'com.github.wez.wezterm',
+      'preferredTerminalName': 'WezTerm',
+    });
+    final actions = _RecordingFileActions();
+    await pump(
+      tester,
+      extraOverrides: [
+        fileActionsProvider.overrideWithValue(actions),
+        connectionProvider.overrideWith(
+          () => _StubConnection(
+            const ConnectionState(
+              backend: ConnectionBackend.local,
+              phase: ConnectionPhase.connected,
+            ),
+          ),
+        ),
+      ],
+    );
+
+    await tester.tap(find.text('app-feature'), buttons: kSecondaryButton);
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Open in Terminal'));
+    await tester.pumpAndSettle();
+
+    expect(actions.terminals, hasLength(1));
+    expect(
+      actions.terminals.single.bundleId,
+      'com.github.wez.wezterm',
+      reason: 'reading the setting at click time yields the empty default',
+    );
   });
 }

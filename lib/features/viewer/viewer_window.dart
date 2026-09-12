@@ -588,12 +588,12 @@ class _FileViewerWindowState extends ConsumerState<FileViewerWindow> {
       secondary: true,
       onPressed: () {
         if (isLocal) {
-          runAction(
-            context,
-            () => ref.read(fileActionsProvider).openFiles([
+          runAction(context, () async {
+            final apps = await ref.read(appSettingsProvider.notifier).loaded;
+            await ref.read(fileActionsProvider).openFiles([
               '${widget.repoPath}/${widget.path}',
-            ], bundleId: ref.read(appSettingsProvider).preferredEditorBundleId),
-          );
+            ], bundleId: apps.preferredEditorBundleId);
+          });
         } else {
           ref
               .read(remoteEditServiceProvider.notifier)

@@ -1,4 +1,7 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:meta/meta.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../git/git_service.dart';
 import '../utils/app_bundle.dart';
@@ -362,17 +365,55 @@ class AppSettingsNotifier extends Notifier<AppSettings> {
     return const AppSettings();
   }
 
+  /// Completed when the first disk load has finished — whether it read
+  /// anything or not.
+  final Completer<void> _ready = Completer<void>();
+
+  /// Completes once the stored settings have been folded into [state].
+  ///
+  /// [build] returns defaults immediately and reads disk fire-and-forget, and
+  /// **every tab is its own container** with its own load. So a caller that
+  /// reads a setting at an arbitrary moment — a menu item, a launch — can read
+  /// defaults while the user's choice sits on disk. That is exactly how "Open
+  /// in Terminal" came to use Terminal.app with WezTerm chosen (plan 0048
+  /// deviation (b)).
+  Future<void> get ready => _ready.future;
+
+  /// The settings, once the stored values have loaded. Launch paths read
+  /// through this rather than [state], so the answer cannot depend on how early
+  /// in a tab's life the user clicks.
+  Future<AppSettings> get loaded async {
+    await ready;
+    return state;
+  }
+
+  /// Marks the stored settings as loaded, releasing [loaded].
+  ///
+  /// [_load] calls this on every exit. A subclass that supplies settings
+  /// directly instead of reading disk — a test double with fixed state — must
+  /// call it too, or every launch path that waits on [loaded] waits forever.
+  @protected
+  @visibleForTesting
+  void markSettingsLoaded() {
+    if (!_ready.isCompleted) _ready.complete();
+  }
+
   Future<void> _load() async {
     final SharedPreferences prefs;
     try {
       prefs = await SharedPreferences.getInstance();
     } catch (_) {
-      return; // storage unavailable (e.g. no platform binding) — keep defaults
+      // Storage unavailable (e.g. no platform binding): keep defaults, and
+      // release `ready` — a launch waiting on it must proceed with defaults
+      // rather than wait forever.
+      markSettingsLoaded();
+      return;
     }
     // Initial-load race: honor a user edit that landed while we read disk
     // rather than overwriting it with the now-stale stored snapshot. Also abort
     // if the provider was disposed across the async gap (e.g. a tab closed).
     _applyFromPrefs(prefs, abort: () => _userEdited || !ref.mounted);
+    markSettingsLoaded();
   }
 
   /// Folds the persisted values from [prefs] into [state]. [abort] is consulted

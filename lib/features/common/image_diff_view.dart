@@ -420,12 +420,12 @@ class _ImageDiffViewState extends ConsumerState<ImageDiffView> {
   void _openExternally() {
     final isLocal = ref.read(connectionProvider).isLocal;
     if (isLocal) {
-      runAction(
-        context,
-        () => ref.read(fileActionsProvider).openFiles([
+      runAction(context, () async {
+        final apps = await ref.read(appSettingsProvider.notifier).loaded;
+        await ref.read(fileActionsProvider).openFiles([
           '${widget.repoPath}/${widget.displayPath}',
-        ], bundleId: ref.read(appSettingsProvider).preferredEditorBundleId),
-      );
+        ], bundleId: apps.preferredEditorBundleId);
+      });
     } else {
       ref
           .read(remoteEditServiceProvider.notifier)

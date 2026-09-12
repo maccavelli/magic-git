@@ -265,13 +265,12 @@ class _FileViewState extends ConsumerState<FileView> {
         label: 'Open file',
         onTap: () {
           if (ref.read(connectionProvider).isLocal) {
-            runAction(
-              context,
-              () => ref.read(fileActionsProvider).openFiles(
-                ['$repoPath/${node.path}'],
-                bundleId: ref.read(appSettingsProvider).preferredEditorBundleId,
-              ),
-            );
+            runAction(context, () async {
+              final apps = await ref.read(appSettingsProvider.notifier).loaded;
+              await ref.read(fileActionsProvider).openFiles([
+                '$repoPath/${node.path}',
+              ], bundleId: apps.preferredEditorBundleId);
+            });
           } else {
             ref
                 .read(remoteEditServiceProvider.notifier)

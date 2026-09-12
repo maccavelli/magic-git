@@ -484,12 +484,10 @@ class _WorktreesViewState extends ConsumerState<WorktreesView>
 
   Future<void> _openInTerminal(String path) async {
     try {
+      final apps = await ref.read(appSettingsProvider.notifier).loaded;
       await ref
           .read(fileActionsProvider)
-          .openInTerminal(
-            path,
-            bundleId: ref.read(appSettingsProvider).preferredTerminalBundleId,
-          );
+          .openInTerminal(path, bundleId: apps.preferredTerminalBundleId);
     } catch (e) {
       if (mounted) {
         await showErrorDialog(context, 'Could not open Terminal: $e');

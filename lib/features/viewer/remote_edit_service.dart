@@ -113,9 +113,10 @@ class RemoteEditManager extends Notifier<Map<String, RemoteEditSession>> {
       // by throwing, and an unawaited throw reaches nobody — precisely the
       // silence this method's contract rules out.
       try {
+        final apps = await ref.read(appSettingsProvider.notifier).loaded;
         await ref.read(fileActionsProvider).openFiles([
           state[sessionKey]!.tempFile.absolute.path,
-        ], bundleId: ref.read(appSettingsProvider).preferredEditorBundleId);
+        ], bundleId: apps.preferredEditorBundleId);
       } catch (e) {
         _reportOpenFailure(path, e);
       }
@@ -176,9 +177,10 @@ class RemoteEditManager extends Notifier<Map<String, RemoteEditSession>> {
       // any of that — the user can still open the file by hand, and tearing
       // the session down would lose the save-back watch.
       try {
+        final apps = await ref.read(appSettingsProvider.notifier).loaded;
         await ref.read(fileActionsProvider).openFiles([
           tempFile.absolute.path,
-        ], bundleId: ref.read(appSettingsProvider).preferredEditorBundleId);
+        ], bundleId: apps.preferredEditorBundleId);
       } catch (e) {
         _reportOpenFailure(path, e);
       }
