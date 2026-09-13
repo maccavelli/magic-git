@@ -465,18 +465,27 @@ merely found:
 
 | Surface | Pre-plan `8032c83` | HEAD `3eb35a9` | Verdict |
 | --- | --- | --- | --- |
-| Branch row — `branch_navigator.dart:1589` | overflow **181 px** | overflow **5.0 px** | still overflows |
+| Branch row — `branch_navigator.dart:1589` | overflow **181 px** | overflow **111 px** | still overflows |
 | Section header — `section_collapse.dart:158` | overflow **12 px** | overflow **12 px** | independent defect |
 | Stash row (long subject + long branch) | clean | clean | guard only |
 | Switcher tile (long label, linked worktree) | clean | clean | guard only |
 | `MiniLabelChip`, single over-long label in a `Wrap` | clean | clean | guard only |
 | `ForgeLabelChip`, single over-long label in a `Wrap` | clean | clean | guard only |
 
+> **The branch-row figures were first recorded as 181 px → 5 px, and that was wrong.** The fixture
+> keyed `branchForgeProvider` and `mergedBranchesProvider` on the full ref (`refs/heads/feature/…`)
+> while the row looks both up by `GitRef.shortName`, so the *merged* and *request* chips never
+> rendered and the "pathological" row carried a single chip. The mistake surfaced only because a
+> sabotage passed when it should have failed — raising the cap to 99 changed nothing, which it could
+> not have done had the row held three chips. Re-keyed, the same fixture overflows by **111 px**. The
+> corrected numbers are in the table; the retracted ones are named here rather than quietly replaced.
+
 **Three findings, and two of them are "not broken".**
 
-1. **Phase 1 already did most of the branches work.** Bounding `LabelChip` cut that row's overflow from
-   181 px to 5 px without branches being touched — the chip bound travelling to every surface, which is
-   what MADR 0049's Consequences predicted. The residual 5 px is the row's own layout, not the chip's.
+1. **Phase 1 helped branches without touching them.** Bounding `LabelChip` cut that row's overflow from
+   181 px to 111 px — the chip bound travelling to every surface, which is what MADR 0049's
+   Consequences predicted. It was not enough: two chips at `LabelChip.defaultMaxWidth` are 320 pt in a
+   212 pt row, so the residual is the row's own layout, not the chip's.
 2. **The forge chips are unbounded and still do not overflow.** A `Wrap` hands its child its own
    maximum width, so an over-long label soft-wraps to a second line rather than painting outside its
    bounds. Unbounded in a `Row` is a defect; unbounded in a `Wrap` is merely ugly at the extreme. This
@@ -522,6 +531,74 @@ warned about.
 **Scope added to Phase 3:** `lib/features/branches/branch_navigator.dart`,
 `lib/features/common/section_collapse.dart`, and their guards in
 `test/label_chip_row_overflow_test.dart`. Catalogue entries follow in Phase 4.
+
+### Phase 3, executed (2026-09-13)
+
+Commit `f846469` (code). Gate: `dart format` clean on all nine files, `flutter analyze` **No issues
+found**, full suite **`03:33 +4110 ~3`** — the 48 workspace goldens among them, unshifted.
+
+**Deviation (b) — the chip explains itself.** `LabelChip` gained a `tooltip` (defaulting to its own
+text) and wraps itself in a `MacosTooltip`. `branch_navigator.dart`'s three outer tooltips were
+un-nested by passing their richer messages through the new parameter rather than deleting them, so no
+hover text was lost. A `labelChipEntry` helper builds the chip and its `ChipEntry` from one string,
+because the tooltip reaches the reader by two routes — the visible chip's hover and the `+N` list —
+and writing it twice is how the two drift.
+
+**And the `+N` chip had the same disease.** Once chips self-tooltipped, `ChipStrip`'s wrapper put two
+tooltips on the `+N`; `chip_strip_test` failed with `Bad state: Too many elements`, which is the test
+noticing before a person could. `overflowChipBuilder` now takes `(hidden, hiddenTooltip)` and the strip
+wraps nothing — History's `_RefChipChrome`, which has no tooltip of its own, adds the wrapper at its
+own call site.
+
+**Deviation (d.1) — the branch row.** Adopted `ChipStrip`, and the first attempt was wrong in a way
+worth recording. It used the strip's **default** (intrinsic) mode on the reasoning that the branch row
+is History's shape — right-aligned past a `Spacer` — where a flex chip can collapse to zero. Measured,
+that does not bound the row: one chip may be `LabelChip.defaultMaxWidth` wide, so two of them are
+320 pt in a 212 pt row.
+
+| Branch-row variant at 240 pt | Overflow |
+| --- | --- |
+| Intrinsic strip, `maxVisible: 2` | 111 px |
+| Intrinsic strip, `maxVisible: 1` | 33 px |
+| Flexible strip, `chipsMayShrink: true` | **none** |
+
+So **capping alone cannot bound a row whose chips are individually capped too wide** — the strip must
+also give way. The `Spacer` stays, so the badges remain right-aligned; that is safe only because the
+row's non-flexible parts (the icon, the reserved CI width) are small enough to leave real free space
+for the flex children. The CI glyph moved out of the strip into `_ciBadge` — it is not a chip, never
+truncates, and collapsing the one badge that changes while the user watches into a `+N` would be a
+regression.
+
+**Deviation (d.2) — the section header, fixed twice.** Making the title cluster `Flexible` with an
+ellipsizing title moved the overflow one `Row` inward instead of removing it:
+`forge_project_sections_test` then failed with 45 px at `section_collapse.dart:122`, because the
+cluster's `count` and `caption` still held their intrinsic width. Both now flex and ellipsize.
+
+**The guards, each seen to fail** in a detached scratch worktree against the final code:
+
+| Sabotage | Caught by | Failure |
+| --- | --- | --- |
+| `LabelChip` stops tooltipping | both tooltip guards | `Expected: contains 'Branch: scratch/…'` |
+| the section title cluster is intrinsic again | branch row guard | `RenderFlex overflowed by 12 pixels` |
+| the branch chips stop giving way | branch row guard | `RenderFlex overflowed by 60 pixels` |
+| the branch strip holds its intrinsic width | branch row guard | `RenderFlex overflowed by 111 pixels` |
+| the branch chips get no width to shrink into | **the width guard alone** | `Expected: a value greater than <8>` |
+
+The last row is the one that matters most. Collapsing the chips to zero width *contains* the row
+perfectly — the overflow guard passes — and produces a branch row with no badges at all, which is
+precisely the failure History's strip records. Only `a branch badge still has width at 240 pt` sees it,
+which is why `chipsMayShrink` is defensible here rather than merely convenient.
+
+**Two mistakes of mine, caught by the instruments rather than by review.** The branch fixture keyed its
+providers by the full ref instead of `shortName`, so it measured a one-chip row — exposed by a sabotage
+that passed. And the fixture's absolute paths named a home account, which
+`no_real_identifiers_scan_test` failed on; they are now `/Users/<user>/…`. Both are recorded because a
+measurement is only worth what its fixture is.
+
+**Not done, deliberately:** the forge chips. `ForgeLabelChip` and `MiniLabelChip` remain unbounded, and
+the measurement is why — a `Wrap` hands its child its own maximum width, so an over-long label
+soft-wraps rather than overflowing. Their tests stand as guards against a future caller moving them
+into a `Row`.
 
 ## Verification
 
