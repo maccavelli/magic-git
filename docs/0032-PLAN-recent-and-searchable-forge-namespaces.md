@@ -891,6 +891,28 @@ only the tests claiming to cover them, which is what makes it usable inside a
 single phase. The two are complements: rules find what you did not think to
 check, catalogues check what you claimed.
 
+### Catalogue re-anchored, 2026-09-13
+
+`tool/mutations/0032-namespaces.json` had **2 of 31** entries silently not applying. Found while
+verifying plan 0049 against every catalogue: `did not apply` is not a failure, so the run had been
+exiting green while those two tested nothing. Both anchors matched zero times at `8032c83` too, so the
+drift predates that work.
+
+Both were `sheet:`/`clone: active connection not resolved for history`, which mutated
+`_isLocalTarget ? null : (_destConnectionId ?? activeId)` down to `_destConnectionId`. **That is now
+what the code says**, deliberately: the `?? activeId` fallback was removed and the sheets carry a
+comment explaining that `_destConnectionId` alone decides the store — null means This Mac *or* an
+ad-hoc session, which is `NamespaceHistory`'s documented rule. Re-anchoring them as written would have
+produced a mutation identical to the source: applied, compiled, killed nothing.
+
+They were retargeted at the rule that replaced them — `connection: await
+connectionById(_destConnectionId)` → `connection: null`, guarding that history is keyed by the
+destination at all — and **relabelled** to
+`sheet:`/`clone: namespace history is not keyed by the destination`, because the old labels no longer
+described what is tested.
+
+`31 killed, 0 survived, 0 did not apply, 0 did not compile`. Commit `dd0c29a`.
+
 ## Rollout and Rollback
 
 **Rollout.** Five commits. Phases 1–2 are independently valuable (a correct,

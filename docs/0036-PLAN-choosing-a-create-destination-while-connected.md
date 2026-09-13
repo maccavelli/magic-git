@@ -1007,6 +1007,40 @@ refuses up front and dials nothing; an unsaved local open stays in place and
 opens no tab. Plus the structural claim above — one provisioning
 implementation, three users, no fourth copy.
 
+### Catalogue re-anchored, 2026-09-13
+
+`tool/mutations/0036-destination.json` had **13 of 30** entries silently not applying — it was
+exercising 17. Found while verifying plan 0049 against every catalogue; every one of the 13 anchors
+also matched zero times at `8032c83`, so the drift predates that work. `did not apply` is not a
+failure, so the catalogue had been reporting success while testing little over half of what it claims.
+
+**Twelve were re-anchored**: the guarantee survives, the code moved under it.
+
+| What changed in the code | Entries |
+| --- | --- |
+| `_destConnectionId` became a getter over the `WorkspaceDestination` sealed type | 3 |
+| the `registerAndActivateLocal` call moved to `workspace_flow.dart` (`openResult`) | 2 |
+| `provisionTarget ?? ProviderScope.containerOf(…)` became `_dialContainer => flow.container` | 2 |
+| `_ensureProvisionTab()` became `_flow.ensureTab()` | 3 |
+| `openLocalRepoInTab` began returning a record rather than a tab | 1 |
+| `_opensNewTab` gained its `_target != sshActive` clause | 1 |
+
+**One was retired, not re-anchored:** `phase1: registration's sshProvision branch always fails`.
+`registerAndActivateLocal` has neither a `provisionToken` nor an ssh branch any more — the `save` flag
+and the duplicate `saveLocalRepo` call were removed on 2026-09-08 as a MADR 0038 residual, and the
+function's own doc comment records it. There is no guarantee left to break, and forcing an anchor
+would have manufactured a test of nothing. The catalogue is 29 entries.
+
+**Two survived the first re-anchored run, and that was the re-anchoring being wrong rather than the
+code.** Both `Browse…` entries were anchored at the wrong call site: `create_repo_sheet.dart` has two
+browse methods (`_browseRemoteFolder` for the folder field, `_browseRemote` for the parent — the one
+the test taps), and `local_repo_form.dart` has two `_flow.ensureTab()` sites, the browse path and the
+submit path. Moved to the sites the tests actually drive, both are killed. Worth recording: a
+re-anchored mutation that survives is the same defect as one that does not apply — a check that has
+stopped checking — and only running it to a kill distinguishes a repaired guard from a relocated one.
+
+`29 killed, 0 survived, 0 did not apply, 0 did not compile`. Commit `dd0c29a`.
+
 ## Rollout and Rollback
 
 **Rollout.** Six commits: Phase 1, Phase 2, **Phases 3+4 together**, Phase 5,
