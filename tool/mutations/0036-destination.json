@@ -1,14 +1,5 @@
 [
   {
-    "label": "phase1: registration's sshProvision branch always fails",
-    "file": "lib/features/workspace/workspace_registration.dart",
-    "find": "      if (conn == null || provisionToken == null) return false;",
-    "replace": "      if (conn == null || provisionToken == null || true) return false;",
-    "tests": [
-      "test/create_repo_sheet_test.dart"
-    ]
-  },
-  {
     "label": "phase1: a failed dial reports no error",
     "file": "lib/features/workspace/workspace_provisioning.dart",
     "find": "    if (token == null) {\n      onProvisioningError(\n        _dialContainer.read(connectionProvider).error ??\n            'Could not connect to host.',\n      );\n    }",
@@ -38,8 +29,8 @@
   {
     "label": "phase3: the current session resolves to sshActive again",
     "file": "lib/features/workspace/create_repo_sheet.dart",
-    "find": "    _target = _destConnectionId == null\n        ? WorkspaceTarget.localMac\n        : WorkspaceTarget.sshProvision;",
-    "replace": "    _target = _destConnectionId == null\n        ? WorkspaceTarget.localMac\n        : (_destConnectionId == conn.connectionId\n            ? WorkspaceTarget.sshActive\n            : WorkspaceTarget.sshProvision);",
+    "find": "      ActiveSessionDestination() => WorkspaceTarget.sshActive,",
+    "replace": "      ActiveSessionDestination() => WorkspaceTarget.sshProvision,",
     "tests": [
       "test/create_repo_sheet_test.dart"
     ]
@@ -47,8 +38,8 @@
   {
     "label": "phase3: the wizard does not open on the current session",
     "file": "lib/features/workspace/create_repo_sheet.dart",
-    "find": "      _destConnectionId = conn.isLocal ? null : conn.connectionId;\n",
-    "replace": "      _destConnectionId = null;\n",
+    "find": "        _ when conn.connectionId == null => const ActiveSessionDestination(),\n        _ => SavedConnectionDestination(conn.connectionId!),",
+    "replace": "        _ when conn.connectionId == null => const LocalMacDestination(),\n        _ => const LocalMacDestination(),",
     "tests": [
       "test/create_repo_sheet_test.dart"
     ]
@@ -65,7 +56,7 @@
   {
     "label": "phase3: an unsaved local create is gated by the cap too",
     "file": "lib/features/workspace/create_repo_sheet.dart",
-    "find": "  bool get _opensNewTab => !_isLocalTarget || _saveLocal;",
+    "find": "  bool get _opensNewTab =>\n      _target != WorkspaceTarget.sshActive && (!_isLocalTarget || _saveLocal);",
     "replace": "  bool get _opensNewTab => true;",
     "tests": [
       "test/create_repo_sheet_test.dart"
@@ -74,8 +65,8 @@
   {
     "label": "phase4: the mixin dials in the sheet's own container",
     "file": "lib/features/workspace/workspace_provisioning.dart",
-    "find": "      provisionTarget ?? ProviderScope.containerOf(context, listen: false);",
-    "replace": "      ProviderScope.containerOf(context, listen: false);",
+    "find": "  ProviderContainer get _dialContainer => flow.container;",
+    "replace": "  ProviderContainer get _dialContainer =>\n      ProviderScope.containerOf(context, listen: false);",
     "tests": [
       "test/create_repo_sheet_test.dart"
     ]
@@ -83,8 +74,8 @@
   {
     "label": "phase4: finalize runs in the sheet's own container",
     "file": "lib/features/workspace/create_repo_sheet.dart",
-    "find": "    if (tab == null) {\n      // No tab host: the sheet's own container dialled (landing behaviour).",
-    "replace": "    if (tab == null || true) {\n      // No tab host: the sheet's own container dialled (landing behaviour).",
+    "find": "      final runIn = tab?.container ?? own;",
+    "replace": "      final runIn = own;",
     "tests": [
       "test/create_repo_sheet_test.dart"
     ]
@@ -92,25 +83,25 @@
   {
     "label": "phase4: grant-release guard removed from the local open",
     "file": "lib/features/workspace/workspace_open_in_tab.dart",
-    "find": "  if (connected) {\n    await opening;\n    return tab;\n  }",
-    "replace": "  await opening;\n  return tab;",
+    "find": "  if (connected) {\n    await opening;\n    return (tab: tab, outcome: LocalOpenOutcome.opened);\n  }",
+    "replace": "  await opening;\n  return (tab: tab, outcome: LocalOpenOutcome.opened);",
     "tests": [
       "test/create_repo_sheet_test.dart"
     ]
   },
   {
     "label": "phase4: a saved local create opens in place anyway",
-    "file": "lib/features/workspace/create_repo_sheet.dart",
-    "find": "      if (!_saveLocal) {\n        return registerAndActivateLocal(",
-    "replace": "      if (!_saveLocal || true) {\n        return registerAndActivateLocal(",
+    "file": "lib/features/workspace/workspace_flow.dart",
+    "find": "      if (!request.saveLocal) {\n        return registerAndActivateLocal(",
+    "replace": "      if (!request.saveLocal || true) {\n        return registerAndActivateLocal(",
     "tests": [
       "test/create_repo_sheet_test.dart"
     ]
   },
   {
     "label": "phase4: an unsaved local create is routed to a tab",
-    "file": "lib/features/workspace/create_repo_sheet.dart",
-    "find": "      if (!_saveLocal) {\n        return registerAndActivateLocal(",
+    "file": "lib/features/workspace/workspace_flow.dart",
+    "find": "      if (!request.saveLocal) {\n        return registerAndActivateLocal(",
     "replace": "      if (false) {\n        return registerAndActivateLocal(",
     "tests": [
       "test/create_repo_sheet_test.dart"
@@ -137,7 +128,7 @@
   {
     "label": "phase4: Browse\u2026 dials in the current tab",
     "file": "lib/features/workspace/create_repo_sheet.dart",
-    "find": "  Future<void> _browseRemote() async {\n    if (!await _ensureProvisionTab()) {",
+    "find": "  Future<void> _browseRemote() async {\n    if (!await _flow.ensureTab()) {",
     "replace": "  Future<void> _browseRemote() async {\n    if (false) {",
     "tests": [
       "test/create_repo_sheet_test.dart"
@@ -155,8 +146,8 @@
   {
     "label": "phase4: mid-hang-up mounted guard removed (0034 F4)",
     "file": "lib/features/workspace/create_repo_sheet.dart",
-    "find": "    if (!mounted) return;\n    setState(() {\n      _destConnectionId = connectionId;",
-    "replace": "    setState(() {\n      _destConnectionId = connectionId;",
+    "find": "    if (!mounted) return;\n    setState(() {\n      _dest = dest;",
+    "replace": "    setState(() {\n      _dest = dest;",
     "tests": [
       "test/create_repo_sheet_test.dart"
     ]
@@ -218,8 +209,8 @@
   {
     "label": "phase7: add-existing dials in the current tab (the hand-rolled copy's behaviour)",
     "file": "lib/features/workspace/workspace_provisioning.dart",
-    "find": "      provisionTarget ?? ProviderScope.containerOf(context, listen: false);",
-    "replace": "      ProviderScope.containerOf(context, listen: false);",
+    "find": "  ProviderContainer get _dialContainer => flow.container;",
+    "replace": "  ProviderContainer get _dialContainer =>\n      ProviderScope.containerOf(context, listen: false);",
     "tests": [
       "test/add_existing_repo_sheet_test.dart"
     ]
@@ -245,8 +236,8 @@
   {
     "label": "phase7: Browse\u2026 dials without opening a tab",
     "file": "lib/features/connection/local_repo_form.dart",
-    "find": "      if (!await _ensureProvisionTab()) {\n        setState(() => _saveWarning = AddExistingRepoSheet.capMessage);\n        return;\n      }\n      if (!await ensureProvisioned() || !mounted) return;\n      final picked = await showMacosSheet<String>(",
-    "replace": "      if (!await ensureProvisioned() || !mounted) return;\n      final picked = await showMacosSheet<String>(",
+    "find": "        if (!await _flow.ensureTab()) {\n          setState(() => _saveWarning = AddExistingRepoSheet.capMessage);\n          return;\n        }\n        if (!await ensureProvisioned() || !mounted) return;\n      }\n      final picked = await showMacosSheet<String>(",
+    "replace": "        if (!await ensureProvisioned() || !mounted) return;\n      }\n      final picked = await showMacosSheet<String>(",
     "tests": [
       "test/add_existing_repo_sheet_test.dart"
     ]
