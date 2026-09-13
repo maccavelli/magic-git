@@ -131,12 +131,21 @@ Stashes or the connection switcher.
 `stash_view.dart` and `connection_switcher.dart`.~~ Branches absorbs pressure through its flexible
 name; the others have the same exposure as the worktree row.
 
-> **Amended 2026-09-13 (plan deviation (c)).** The count was taken from too narrow a search.
-> `LabelChip` has **seven** users besides `worktrees_view.dart`: `branch_navigator.dart` (four
-> sites), `stash_view.dart`, `connection_switcher.dart` — which lives in `lib/features/switcher/`,
-> not `lib/features/connections/` as cited below — plus `forge_widgets.dart`,
-> `project_sections.dart`, `github_panel.dart` and `gitlab_panel.dart`. The blast radius is
-> roughly twice what this finding claimed, and the plan's Phase 3 measures all seven.
+> **Amended 2026-09-13 (plan deviation (c)).** This finding named the right *files* for `LabelChip`;
+> two details were wrong, and one thing was missed.
+>
+> * `connection_switcher.dart` lives in `lib/features/switcher/`, not `lib/features/connections/`.
+> * The site counts were low: `worktrees_view.dart` has **nine**, `branch_navigator.dart` **five**.
+> * **A second chip widget was never counted.** `ForgeLabelChip` and `MiniLabelChip`
+>   (`forge_widgets.dart`, used in `project_sections.dart`, `github_panel.dart`,
+>   `gitlab_panel.dart`) are bare `Container` + `Text` with no `maxWidth` and no ellipsis — this
+>   record's own F5 complaint, in a widget it did not know about — and their text is arbitrary
+>   remote input. All five sites sit in `Wrap`s, which move children to the next run instead of
+>   overflowing, so the exposure is a *single* label wider than the pane rather than an
+>   accumulation. The plan's Phase 3 measures them and bounds them only if they overflow.
+>
+> An earlier form of this amendment claimed seven `LabelChip` users. That came from a substring
+> grep matching `ForgeLabelChip`/`MiniLabelChip`; see plan deviation (c) for the correction.
 
 With both changes applied in the scratch copy, the **full suite passed: `+4085`, zero failures** — so
 nothing in the suite depends on chips being unbounded.
@@ -266,5 +275,6 @@ The truncated name and chip must carry a `MacosTooltip` with the full text, foll
 * **Not established.** Whether any other pane in the app currently overflows: only the Worktrees row
   was reproduced. F6 says every navigator *can*, not that any other does. The plan should run the same
   pathological fixtures through the Branches, Stashes and switcher rows before claiming the class is
-  closed — **all seven surfaces**, per the amendment to F8, not the four this record counted.
+  closed — and, per the amendment to F8, the forge chips (`ForgeLabelChip`, `MiniLabelChip`) too,
+  which this record never counted as chips at all.
 * **No implementation exists.** This record proposes a decision; a plan follows only on approval.

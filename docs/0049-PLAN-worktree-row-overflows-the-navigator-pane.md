@@ -194,22 +194,23 @@ SizedBox(
 
 ### Phase 3 — the other `LabelChip` surfaces
 
-~~MADR 0049 F8 lists `branch_navigator.dart` (four sites), `stash_view.dart` and
-`connection_switcher.dart`;~~ **per deviation (c), the list is seven files, not three** —
-`branch_navigator.dart` (four sites), `stash_view.dart`,
-`lib/features/switcher/connection_switcher.dart`, `forge_widgets.dart`, `project_sections.dart`,
-`github_panel.dart` and `gitlab_panel.dart`. The MADR's "Not established" says nobody has shown
-whether any of them overflows today. This phase answers that with a measurement rather than an
-assumption, for every one of them.
+MADR 0049 F8 lists `branch_navigator.dart`, `stash_view.dart` and `connection_switcher.dart` — the
+right files, at `lib/features/switcher/` for the last of them and with five `LabelChip` sites in
+branches, not four (deviation (c)). Its "Not established" says nobody has shown whether any of them
+overflows today. This phase answers that with a measurement rather than an assumption.
 
-3.1 `test/label_chip_row_overflow_test.dart` — the same pathological data through each of the seven
-surfaces, at 240 pt: a branch row with a long name and a long "checked out elsewhere" chip; a stash
-row with a long message; a switcher row with a long repository label; and the forge surfaces
-(`forge_widgets.dart`, `project_sections.dart`, `github_panel.dart`, `gitlab_panel.dart`) with a long
-label on whatever each chips — a label, a milestone, a status. Each asserts
-`expect(tester.takeException(), isNull)`. Where a surface cannot be pumped in isolation, say so in
-the record and name what was measured instead — an unmeasured surface is reported, never skipped
-silently.
+**And it measures one more thing.** Deviation (c) found a second, unbounded chip widget the MADR never
+counted — `ForgeLabelChip` / `MiniLabelChip`, in `project_sections.dart`, `github_panel.dart` and
+`gitlab_panel.dart`. They are measured here too, and bounded only if the measurement shows an
+overflow.
+
+3.1 `test/label_chip_row_overflow_test.dart` — the same pathological data through each surface, at
+240 pt: a branch row with a long name and a long "checked out elsewhere" chip; a stash row with a long
+message; a switcher row with a long repository label. Plus the forge chips, whose failure mode is
+different: a `Wrap` cannot split one child, so the fixture is a **single** label longer than the pane
+rather than many. Each asserts `expect(tester.takeException(), isNull)`. Where a surface cannot be
+pumped in isolation, say so in the record and name what was measured instead — an unmeasured surface
+is reported, never skipped silently.
 
 3.2 Run it **before** touching those files and record the result per surface. Then:
 
@@ -419,21 +420,42 @@ a guard in `test/worktree_row_overflow_test.dart` that the probe above becomes, 
 **Cost of doing nothing:** the row is bounded but illegible — truncation traded for unreachable text,
 which is the outcome step 1.3 ruled out.
 
-### Deviation (c) — the blast radius is seven surfaces, not three (2026-09-13)
+### Deviation (c) — a second, unbounded chip widget exists beside `LabelChip` (2026-09-13)
 
-**Found** while assessing Phase 3. MADR 0049 F8 counted `LabelChip` users as `worktrees_view.dart`,
-`branch_navigator.dart`, `stash_view.dart` and `connection_switcher.dart`. `grep -rln 'LabelChip' lib/`
-returns **seven** besides worktrees: those three plus `forge_widgets.dart`, `project_sections.dart`,
-`github_panel.dart` and `gitlab_panel.dart`. Separately, the path cited for the switcher is wrong — it
-is `lib/features/switcher/connection_switcher.dart`, not `lib/features/connections/`.
+**First recorded wrongly, and corrected the same day.** The initial entry claimed `LabelChip` had
+**seven** users besides `worktrees_view.dart`, from `grep -rln 'LabelChip' lib/`. That is a *substring*
+match: `forge_widgets.dart`, `project_sections.dart`, `github_panel.dart` and `gitlab_panel.dart`
+matched on `ForgeLabelChip` and `MiniLabelChip`, and none of the four imports `common/label_chip.dart`.
+The maintainer's first scope answer ("all seven") was given on that bad premise and was re-asked once
+the facts were right. Recorded rather than quietly amended: the grep that produced it is the same class
+of mistake this repository's own notes warn about, and a corrected record is the point of the record.
 
-**Decision** (maintainer: all seven). Phase 3 measures every one at 240 pt and fixes only what
-overflows; a surface that does not overflow keeps its test as a regression guard and is reported as a
-finding, per 3.2. MADR F8 amended and its "Not established" paragraph updated to the true count.
+**What is actually true**, from `grep -rn '\bLabelChip(' lib/` plus the import check:
 
-**Cost of doing nothing:** the MADR's open question would get a partial answer, and four unmeasured
-surfaces are exactly where the same defect hides — the plan would close claiming a class it had not
-checked.
+| Widget | Files | Bounded? |
+| --- | --- | --- |
+| `LabelChip` | `worktrees_view.dart` (9 sites), `branch_navigator.dart` (5), `stash_view.dart` (1), `switcher/connection_switcher.dart` (1) | yes, since Phase 1 |
+| `ForgeLabelChip`, `MiniLabelChip` | defined in `forge_widgets.dart`; used in `project_sections.dart` (3), `github_panel.dart` (1), `gitlab_panel.dart` (1) | **no** — bare `Container` + `Text`, no `maxWidth`, no ellipsis |
+
+So MADR 0049 F8 named the right *files* for `LabelChip`. Two corrections to it stand: the switcher is
+`lib/features/switcher/connection_switcher.dart`, not `lib/features/connections/`; and the site counts
+were low (six→nine for worktrees, four→five for branches).
+
+**The real finding is the second widget.** `ForgeLabelChip` and `MiniLabelChip` are `LabelChip`'s
+pre-Phase-1 shape — unbounded — and their text is arbitrary remote input (GitHub/GitLab label names),
+which is the unbounded-input case this MADR is about. Their exposure is narrower than the worktree
+row's: all five sites sit in `Wrap`s (`forge_widgets.dart:368`, `project_sections.dart:396, 554`), and
+a `Wrap` moves children to the next run rather than overflowing. What a `Wrap` cannot do is split a
+**single** child, so one label longer than the pane still overflows.
+
+**Decision** (maintainer). Phase 3 fixes the three `LabelChip` surfaces as planned, and additionally
+**measures** the forge chips with a pathological single label — fixing them only if the measurement
+shows an overflow, which is 3.2's own rule applied to a widget the MADR never counted. Bounding them
+unmeasured was offered and declined: it would change forge rendering, and possibly goldens, for a
+defect nobody has shown.
+
+**Cost of doing nothing:** a known-unbounded chip widget in four files, fed by remote input, with no
+measurement and no guard — the MADR would close claiming a class it had checked only half of.
 
 ## Verification
 
