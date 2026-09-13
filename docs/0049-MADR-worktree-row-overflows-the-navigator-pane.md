@@ -4,7 +4,7 @@ date: 2026-09-12
 decision-makers: [Maintainer]
 consulted: []
 informed: [Magic Git contributors]
-verified: 2026-09-12
+verified: 2026-09-13
 ---
 
 # A worktree row paints into the next pane: two unbounded children in one `Row`, and a pane that constrains layout without clipping
@@ -292,4 +292,7 @@ The truncated name and chip must carry a `MacosTooltip` with the full text, foll
   overflow**: a `Wrap` hands its child its own maximum width, so an over-long label soft-wraps instead
   of painting outside. Unbounded in a `Row` is a defect; unbounded in a `Wrap` is not. The class is now
   measured across every chip surface in the app, and exactly one other row overflowed.
-* **No implementation exists.** This record proposes a decision; a plan follows only on approval.
+* ~~**No implementation exists.** This record proposes a decision; a plan follows only on approval.~~
+  **Implemented 2026-09-13** by [0049-PLAN-worktree-row-overflows-the-navigator-pane.md](0049-PLAN-worktree-row-overflows-the-navigator-pane.md), phases 0–5, across `a84122f`, `894352f`, `3eb35a9`, `f846469` and `cd058d1`. The plan's execution
+  record carries four deviations, two of which corrected this record's own facts (F8's blast
+  radius) and one of which corrected a measurement the plan had first recorded wrongly.

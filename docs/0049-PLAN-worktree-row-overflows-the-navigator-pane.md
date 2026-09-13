@@ -1,5 +1,5 @@
 ---
-status: "in-progress"
+status: "complete"
 date: 2026-09-13
 associated-madr: "0049-MADR-worktree-row-overflows-the-navigator-pane.md"
 ---
@@ -599,6 +599,76 @@ measurement is only worth what its fixture is.
 the measurement is why — a `Wrap` hands its child its own maximum width, so an over-long label
 soft-wraps rather than overflowing. Their tests stand as guards against a future caller moving them
 into a `Row`.
+
+### Phase 4, executed (2026-09-13)
+
+`tool/mutations/0049-row-bounding.json`, 14 entries. Every `find` string was asserted to occur exactly
+once in its file *before* the catalogue was written, as 4.1 requires — the script that built it refuses
+to write on any anchor count but one.
+
+**`--check` caught the first version.** `p1: the worktree name is unbounded again` deleted the name's
+`Flexible(` wrapper and left its closing paren behind: `EXPECTED_TOKEN: Expected to find ')'`. A
+mutation that does not compile proves nothing, so the entry was rewritten to swap the `Flexible` for a
+fixed over-wide `SizedBox` — still a real removal of the bound, and it parses. Second run:
+`14 sound, 0 did not apply, 0 do not compile`.
+
+**The first full run reported `10 killed, 4 survived`**, and the four survivors were the point of
+running it:
+
+| Survivor | What nothing tested |
+| --- | --- |
+| `p1: the worktree name no longer ellipsizes` | that the name truncates rather than wrapping |
+| `p1: a chip may draw at any width` | that `LabelChip` honours its own `maxWidth` |
+| `p1: a chip's label does not ellipsize` | that a capped chip truncates rather than growing taller |
+| `d2: the section header's title is intrinsic again` | that the header's title is one ellipsized line |
+
+Three of those are guarantees this plan's own step 1.4 promised a test for. They were fixed by writing
+the missing guards, not by softening the catalogue:
+
+* `the worktree name ellipsizes rather than widening the row` — asserts `maxLines`, `overflow` and
+  `softWrap` on the name.
+* `a chip never draws wider than its cap, on one line` — pumped at the **widest** pane, so the cap
+  proved is the chip's own and not one the row imposed; asserts width against each chip's `maxWidth`
+  *and* its height, because removing the ellipsis inside the cap trades a too-wide chip for a too-tall
+  one rather than for nothing.
+* `a section header title truncates on one line` — the same, for every `CollapsibleSectionHeader`
+  rendered.
+
+**Second full run: `14 killed, 0 survived, 0 did not apply, 0 did not compile, 0 observed by no test`.**
+
+Gate: `flutter analyze` No issues, full suite `03:34 +4113 ~3`. Committed by the maintainer as
+`cd058d1` (the catalogue and the three new guards).
+
+### Phase 5, executed (2026-09-13)
+
+MADR 0049 → `verified: 2026-09-13`, its "No implementation exists" struck through and pointed at this
+plan, and its **"Not established"** paragraph replaced by the Phase 3 measurement table rather than
+deleted. This plan → `status: complete`. `docs/README.md`'s 0049 row rewritten to live state.
+
+### What this plan actually delivered
+
+The reported defect is fixed, and three things were found on the way that the record is worth reading
+for:
+
+1. **One shared widget, not three implementations.** `ChipStrip` now carries the cap-and-collapse
+   arithmetic for Worktrees, Branches and History. Its two modes are not a convenience — they are the
+   two row shapes, and choosing the wrong one is a real bug in each direction: intrinsic chips squeeze
+   a subject that shares their row (46 pt of name against 97 pt), and flexible chips in a min-sized
+   strip collapse to nothing. Both directions are guarded.
+2. **Bounding the shared chip fixed a surface nobody touched.** Branches went from 181 px of overflow
+   to 111 px on Phase 1 alone. That is the "four features at once" consequence the MADR predicted,
+   measured rather than assumed — and it is also why the residual needed a different fix than the
+   MADR imagined.
+3. **Measuring beat assuming, twice.** The forge chips are unbounded and were *not* bounded, because a
+   `Wrap` makes that harmless; stash and switcher were never broken. Both would have been "fixed"
+   under deviation (c)'s third option, changing rendering and possibly goldens for defects that do
+   not exist.
+
+**What was not done, and why.** The forge chips keep their unbounded `Container` + `Text`; their tests
+stand as guards against a future caller moving them into a `Row`. The trailing canvas pane is still
+unclipped, as the Scope said. And the maintainer's manual check — criterion 12 — is still owed: the
+reported row at the default width and dragged to 240 pt, nothing crossing the divider, the full branch
+name on hover.
 
 ## Verification
 
