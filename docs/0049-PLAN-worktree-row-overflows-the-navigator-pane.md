@@ -688,6 +688,45 @@ tool/mutate.py tool/mutations/0049-row-bounding.json
 
 Exit statuses are captured, never piped into a filter.
 
+### Every catalogue, run one at a time (2026-09-13)
+
+Criterion 9 asks that catalogue 0049 report `0 survived, 0 did not apply`, **and that every other
+catalogue still does**. The first half holds. The second does not — and did not before this plan
+either.
+
+| Catalogue | Killed | Survived | Did not apply |
+| --- | --- | --- | --- |
+| `0032-namespaces` | 29 | 0 | **2** |
+| `0036-destination` | 17 | 0 | **13** |
+| `0037-open-recency` | 21 | 0 | 0 |
+| `0038-workspace-entry-points` | 31 | 0 | 0 |
+| `0039-globals-and-heuristics` | 47 | 0 | 0 |
+| `0040-watcher-ceiling` | 2 | 0 | 0 |
+| `0041-watcher-teardown` | 27 | 0 | 0 |
+| `0043-one-watcher-per-repo` | 7 | 0 | 0 |
+| `0044-arm-readiness` | 10 | 0 | 0 |
+| `0045-watch-stack` | 39 | 0 | 0 |
+| `0048-preferred-apps` | 9 | 0 | 0 |
+| `0049-row-bounding` | 14 | 0 | 0 |
+| **Total** | **253** | **0** | **15** |
+
+**Nothing regressed:** every entry that applies is still killed, in every catalogue.
+
+**The 15 that do not apply are pre-existing drift, not this plan's doing.** Each of their `find`
+anchors matches **zero** times at `8032c83` — the commit before Phase 1 — and none of them names a
+file this plan touched; they are in `clone_sheet.dart`, `create_repo_sheet.dart`, `workspace_*.dart`,
+`local_repo_form.dart` and `namespace_field.dart`. Established by comparing the anchors against the
+baseline blobs rather than by running a second catalogue, because the mutation rule forbids a
+concurrent run.
+
+**Why it is worth a paragraph rather than a footnote.** `0036-destination` is exercising 17 of its 30
+entries: thirteen guarantees it was written to defend are no longer checked, and because `did not
+apply` is not a failure, the run still looks healthy. That is the same shape as the four survivors
+catalogue 0049's first run exposed — a check that has quietly stopped checking — and it is exactly
+what the repository's "a check is not trusted until it has been seen to fail" rule exists to catch.
+Repairing those anchors is real work on records 0032 and 0036, not on this one, so it is reported here
+and left for the maintainer rather than absorbed.
+
 ## Acceptance Criteria
 
 1. With a 60-character name and a 50-character branch, the Worktrees overview raises **no**
@@ -701,7 +740,11 @@ Exit statuses are captured, never piped into a filter.
 7. Every guard in phases 1–3 has been seen to fail against the unfixed code, with the output recorded.
 8. Phase 3 reports, per surface, whether it overflowed before the chip change — a measured answer to
    the MADR's open question, not an assumption.
-9. Catalogue 0049 reports `0 survived, 0 did not apply`, and every other catalogue still does.
+9. ~~Catalogue 0049 reports `0 survived, 0 did not apply`, and every other catalogue still does.~~
+   **Met in part, and the shortfall is pre-existing.** 0049 reports `14 killed, 0 survived, 0 did
+   not apply`; all twelve catalogues together report **253 killed, 0 survived**. Two catalogues
+   carry 15 anchors that no longer match — already true at `8032c83`, in files this plan never
+   touched. See the run table above.
 10. `flutter analyze` clean, full suite green, every staged Dart file formatted.
 11. The 48 workspace goldens either pass untouched, or any that shift are inspected and their new
     state justified in the record — never regenerated wholesale.
