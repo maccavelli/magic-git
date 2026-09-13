@@ -21,6 +21,7 @@ import 'package:remote_magic_git/core/git/git_service.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/core/settings/repository_workspace_prefs.dart';
 import 'package:remote_magic_git/core/storage/repository_ui_identity.dart';
+import 'package:remote_magic_git/features/common/label_chip.dart';
 import 'package:remote_magic_git/features/worktrees/worktrees_view.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -119,6 +120,47 @@ void main() {
   // defect, and moving the strip to ChipStrip once shipped exactly that:
   // a strip tooltips the chips it HIDES, so every VISIBLE chip lost its
   // hover (plan deviation (b)). The tooltip now lives in LabelChip itself.
+  testWidgets('the worktree name ellipsizes rather than widening the row', (
+    tester,
+  ) async {
+    await _pump(tester, paneWidth: RepositoryWorkspacePrefs.minNavigatorWidth);
+
+    final name = tester.widget<Text>(find.text(_longName));
+    expect(name.maxLines, 1);
+    expect(name.overflow, TextOverflow.ellipsis);
+    expect(
+      name.softWrap,
+      isFalse,
+      reason: 'a wrapping name grows the row taller instead of truncating',
+    );
+  });
+
+  testWidgets('a chip never draws wider than its cap, on one line', (
+    tester,
+  ) async {
+    await _pump(tester, paneWidth: RepositoryWorkspacePrefs.maxNavigatorWidth);
+
+    // At the WIDEST pane, where nothing else forces the chips smaller: the cap
+    // is the chip's own, not something the row imposed on it.
+    final chips = tester.widgetList<LabelChip>(find.byType(LabelChip));
+    expect(chips, isNotEmpty);
+    for (final chip in chips) {
+      final size = tester.getSize(find.byWidget(chip));
+      expect(
+        size.width,
+        lessThanOrEqualTo(chip.maxWidth),
+        reason: 'chip "${chip.text}" drew ${size.width} pt past its cap',
+      );
+      // Without the ellipsis inside the chip its label WRAPS within the cap,
+      // which trades a too-wide chip for a too-tall one.
+      expect(
+        size.height,
+        lessThan(24),
+        reason: 'chip "${chip.text}" wrapped to ${size.height} pt tall',
+      );
+    }
+  });
+
   testWidgets('a visible, truncated chip is still reachable by tooltip', (
     tester,
   ) async {

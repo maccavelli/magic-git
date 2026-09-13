@@ -1,0 +1,131 @@
+[
+  {
+    "label": "p1: the worktree name is unbounded again",
+    "file": "lib/features/worktrees/worktrees_view.dart",
+    "find": "                      Flexible(\n                        flex: 2,\n                        child: MacosTooltip(",
+    "replace": "                      SizedBox(\n                        width: 400,\n                        child: MacosTooltip(",
+    "tests": [
+      "test/worktree_row_overflow_test.dart"
+    ]
+  },
+  {
+    "label": "p1: the worktree name no longer ellipsizes",
+    "file": "lib/features/worktrees/worktrees_view.dart",
+    "find": "                            wt.name,\n                            maxLines: 1,\n                            softWrap: false,\n                            overflow: TextOverflow.ellipsis,",
+    "replace": "                            wt.name,",
+    "tests": [
+      "test/worktree_row_overflow_test.dart"
+    ]
+  },
+  {
+    "label": "p1: a chip may draw at any width",
+    "file": "lib/features/common/label_chip.dart",
+    "find": "      constraints: BoxConstraints(maxWidth: maxWidth),\n",
+    "replace": "",
+    "tests": [
+      "test/worktree_row_overflow_test.dart",
+      "test/chip_strip_test.dart"
+    ]
+  },
+  {
+    "label": "p1: a chip's label does not ellipsize",
+    "file": "lib/features/common/label_chip.dart",
+    "find": "          Flexible(\n            child: Text(\n              text,\n              maxLines: 1,\n              softWrap: false,\n              overflow: TextOverflow.ellipsis,",
+    "replace": "          Flexible(\n            child: Text(\n              text,",
+    "tests": [
+      "test/worktree_row_overflow_test.dart",
+      "test/chip_strip_test.dart"
+    ]
+  },
+  {
+    "label": "b: a truncated chip cannot be read",
+    "file": "lib/features/common/label_chip.dart",
+    "find": "    return MacosTooltip(message: tooltip ?? text, child: _chip());",
+    "replace": "    return _chip();",
+    "tests": [
+      "test/worktree_row_overflow_test.dart"
+    ]
+  },
+  {
+    "label": "a: the strip no longer caps",
+    "file": "lib/features/common/chip_strip.dart",
+    "find": "    final shown = entries.take(maxVisible).toList();",
+    "replace": "    final shown = entries.toList();",
+    "tests": [
+      "test/worktree_row_overflow_test.dart",
+      "test/chip_strip_test.dart"
+    ]
+  },
+  {
+    "label": "a: the hidden chips are not named",
+    "file": "lib/features/common/chip_strip.dart",
+    "find": "            hidden.map((e) => e.tooltip).join('\\n'),",
+    "replace": "            '',",
+    "tests": [
+      "test/chip_strip_test.dart"
+    ]
+  },
+  {
+    "label": "a: the worktree row's chips stop giving way",
+    "file": "lib/features/worktrees/worktrees_view.dart",
+    "find": "                          chipsMayShrink: true,\n",
+    "replace": "",
+    "tests": [
+      "test/worktree_row_overflow_test.dart"
+    ]
+  },
+  {
+    "label": "d1: the branch row's chips stop giving way",
+    "file": "lib/features/branches/branch_navigator.dart",
+    "find": "                    chipsMayShrink: true,\n",
+    "replace": "",
+    "tests": [
+      "test/label_chip_row_overflow_test.dart"
+    ]
+  },
+  {
+    "label": "d1: the branch strip holds its intrinsic width",
+    "file": "lib/features/branches/branch_navigator.dart",
+    "find": "                Flexible(\n                  child: ChipStrip(",
+    "replace": "                SizedBox(\n                  child: ChipStrip(",
+    "tests": [
+      "test/label_chip_row_overflow_test.dart"
+    ]
+  },
+  {
+    "label": "d2: the section header's title is intrinsic again",
+    "file": "lib/features/common/section_collapse.dart",
+    "find": "        Flexible(\n          child: Text(\n            title,\n            maxLines: 1,\n            softWrap: false,\n            overflow: TextOverflow.ellipsis,",
+    "replace": "        Flexible(\n          child: Text(\n            title,",
+    "tests": [
+      "test/label_chip_row_overflow_test.dart"
+    ]
+  },
+  {
+    "label": "d2: the section header's title cluster is intrinsic again",
+    "file": "lib/features/common/section_collapse.dart",
+    "find": "          Flexible(\n            child: onToggle != null\n                ? Tappable(",
+    "replace": "          Builder(\n            builder: (_) => onToggle != null\n                ? Tappable(",
+    "tests": [
+      "test/label_chip_row_overflow_test.dart"
+    ]
+  },
+  {
+    "label": "p2: the navigator pane is not clipped",
+    "file": "lib/features/common/resizable_master_detail.dart",
+    "find": "                    child: widget.collapsed\n                        ? null\n                        : ClipRect(child: widget.leading),",
+    "replace": "                    child: widget.collapsed ? null : widget.leading,",
+    "tests": [
+      "test/resizable_pane_clip_test.dart"
+    ]
+  },
+  {
+    "label": "p2: the vertical pane is not clipped",
+    "file": "lib/features/common/resizable_master_detail.dart",
+    "find": "                  child: widget.collapsed\n                      ? null\n                      : ClipRect(child: widget.leading),",
+    "replace": "                  child: widget.collapsed ? null : widget.leading,",
+    "tests": [
+      "test/resizable_pane_clip_test.dart"
+    ]
+  }
+]

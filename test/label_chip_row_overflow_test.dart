@@ -36,6 +36,7 @@ import 'package:remote_magic_git/core/storage/repository_ui_identity.dart';
 import 'package:remote_magic_git/core/storage/saved_local_repo.dart';
 import 'package:remote_magic_git/features/branches/branches_view.dart';
 import 'package:remote_magic_git/features/common/label_chip.dart';
+import 'package:remote_magic_git/features/common/section_collapse.dart';
 import 'package:remote_magic_git/features/forge/forge_widgets.dart';
 import 'package:remote_magic_git/features/stash/stash_view.dart';
 import 'package:remote_magic_git/features/switcher/connection_switcher.dart';
@@ -168,6 +169,29 @@ void main() {
           greaterThan(8),
           reason: 'chip "${chip.text}" collapsed to ${size.width} pt',
         );
+      }
+    });
+
+    testWidgets('a section header title truncates on one line', (tester) async {
+      // Bounding the cluster alone is not enough: a title that WRAPS inside its
+      // bound keeps the header from overflowing sideways by making it taller,
+      // which is a different way to break the row (plan deviation (d.2)).
+      await _pumpBranches(tester);
+
+      final headers = tester.widgetList<CollapsibleSectionHeader>(
+        find.byType(CollapsibleSectionHeader),
+      );
+      expect(headers, isNotEmpty, reason: 'the fixture renders no headers');
+      for (final header in headers) {
+        final title = tester.widget<Text>(
+          find.descendant(
+            of: find.byWidget(header),
+            matching: find.text(header.title),
+          ),
+        );
+        expect(title.maxLines, 1, reason: 'header "${header.title}"');
+        expect(title.overflow, TextOverflow.ellipsis);
+        expect(title.softWrap, isFalse);
       }
     });
 
