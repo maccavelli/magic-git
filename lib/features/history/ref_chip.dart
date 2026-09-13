@@ -135,14 +135,19 @@ class RefChipStrip extends StatelessWidget {
             tooltip: refDecorationTooltip(r),
           ),
       ],
-      overflowChipBuilder: (hidden) => _RefChipChrome(
-        color: MacosColors.systemGrayColor,
-        child: Text(
-          '+$hidden',
-          style: const TextStyle(
-            fontSize: 11,
-            fontWeight: FontWeight.w600,
-            color: MacosColors.systemGrayColor,
+      overflowChipBuilder: (hidden, hiddenTooltip) => MacosTooltip(
+        // _RefChipChrome carries no tooltip of its own, unlike LabelChip, so
+        // the wrapper belongs here — one tooltip, at the surface that knows.
+        message: hiddenTooltip,
+        child: _RefChipChrome(
+          color: MacosColors.systemGrayColor,
+          child: Text(
+            '+$hidden',
+            style: const TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              color: MacosColors.systemGrayColor,
+            ),
           ),
         ),
       ),

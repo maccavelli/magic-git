@@ -127,27 +127,50 @@ class CollapsibleSectionHeader extends StatelessWidget {
           const SizedBox(width: 4),
         ],
         if (leading != null) ...[leading!, const SizedBox(width: 6)],
-        Text(
-          title,
-          style: typography.caption1.copyWith(fontWeight: FontWeight.bold),
+        // Flexible inside a min-sized Row is safe only because the outer Row
+        // below gives this cluster a bounded share; a flex child of a row that
+        // is itself unbounded can collapse to zero (see ChipStrip).
+        Flexible(
+          child: Text(
+            title,
+            maxLines: 1,
+            softWrap: false,
+            overflow: TextOverflow.ellipsis,
+            style: typography.caption1.copyWith(fontWeight: FontWeight.bold),
+          ),
         ),
+        // Count and caption flex as well. Bounding only the title moved the
+        // overflow one Row inward rather than removing it — a forge header
+        // with a long title AND an "N of M" count still ran 45 px past its
+        // pane, because these two held their intrinsic width (MADR 0049, plan
+        // deviation (d.2)).
         if (count != null)
-          Padding(
-            padding: const EdgeInsets.only(left: 6),
-            child: Text(
-              count!,
-              style: typography.caption1.copyWith(
-                color: MacosColors.systemGrayColor,
+          Flexible(
+            child: Padding(
+              padding: const EdgeInsets.only(left: 6),
+              child: Text(
+                count!,
+                maxLines: 1,
+                softWrap: false,
+                overflow: TextOverflow.ellipsis,
+                style: typography.caption1.copyWith(
+                  color: MacosColors.systemGrayColor,
+                ),
               ),
             ),
           ),
         if (caption != null)
-          Padding(
-            padding: const EdgeInsets.only(left: 6),
-            child: Text(
-              caption!,
-              style: typography.caption1.copyWith(
-                color: MacosColors.systemGrayColor,
+          Flexible(
+            child: Padding(
+              padding: const EdgeInsets.only(left: 6),
+              child: Text(
+                caption!,
+                maxLines: 1,
+                softWrap: false,
+                overflow: TextOverflow.ellipsis,
+                style: typography.caption1.copyWith(
+                  color: MacosColors.systemGrayColor,
+                ),
               ),
             ),
           ),
@@ -157,14 +180,21 @@ class CollapsibleSectionHeader extends StatelessWidget {
       padding: padding,
       child: Row(
         children: [
-          if (onToggle != null)
-            Tappable(
-              onTap: onToggle,
-              behavior: HitTestBehavior.opaque,
-              child: titleCluster,
-            )
-          else
-            titleCluster,
+          // The title cluster flexes and the trailing controls do not: the
+          // buttons are fixed-size and always actionable, so under pressure it
+          // is the title that ellipsizes. Without this the cluster held its
+          // intrinsic width and the header overflowed its pane by 12 px at
+          // 240 pt — painting over the divider, because a Flex paints outside
+          // its bounds (MADR 0049, plan deviation (d.2)).
+          Flexible(
+            child: onToggle != null
+                ? Tappable(
+                    onTap: onToggle,
+                    behavior: HitTestBehavior.opaque,
+                    child: titleCluster,
+                  )
+                : titleCluster,
+          ),
           const Spacer(),
           ...trailing,
         ],

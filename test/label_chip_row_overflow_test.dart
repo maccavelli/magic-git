@@ -35,9 +35,11 @@ import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 import 'package:remote_magic_git/core/storage/repository_ui_identity.dart';
 import 'package:remote_magic_git/core/storage/saved_local_repo.dart';
 import 'package:remote_magic_git/features/branches/branches_view.dart';
+import 'package:remote_magic_git/features/common/label_chip.dart';
 import 'package:remote_magic_git/features/forge/forge_widgets.dart';
 import 'package:remote_magic_git/features/stash/stash_view.dart';
 import 'package:remote_magic_git/features/switcher/connection_switcher.dart';
+import 'package:riverpod/misc.dart' show Override;
 import 'package:shared_preferences/shared_preferences.dart';
 
 const _repo = '/repo';
@@ -48,8 +50,16 @@ const _narrow = RepositoryWorkspacePrefs.minNavigatorWidth; // 240
 const _longBranch =
     'refs/heads/feature/an-extremely-long-branch-name-that-nobody-would-type'
     '-but-a-generator-will';
+
+/// `GitRef.shortName` — the key `branchForgeProvider` and `mergedBranches` are
+/// looked up by. Keying the fixtures on the full ref instead silently yields a
+/// row with ONE chip, which is a much weaker case than this file claims to
+/// measure.
+const _longBranchShort =
+    'feature/an-extremely-long-branch-name-that-nobody-would-type'
+    '-but-a-generator-will';
 const _longWorktreePath =
-    '/Users/somebody/code/checkouts/an-extremely-long-worktree-directory-name';
+    '/Users/<user>/code/checkouts/an-extremely-long-worktree-directory-name';
 const _longLabel =
     'needs-triage-from-the-platform-team-before-the-next-release-window';
 
@@ -94,49 +104,71 @@ Future<void> _pumpView(
   await tester.pumpAndSettle();
 }
 
+/// The Branches page at the narrowest pane, with a branch that carries every
+/// badge at once: checked out in a long-named worktree, merged, and with an
+/// open request. The forge and merged fixtures are keyed by `shortName`
+/// because that is what the row looks them up by — keyed by the full ref they
+/// silently yield a one-chip row.
+Future<void> _pumpBranches(WidgetTester tester) => _pumpView(
+  tester,
+  const MacosWindow(child: BranchesView(repoPath: _repo)),
+  overrides: [
+    gitServiceProvider.overrideWithValue(_NoopGit()),
+    refsProvider(_repo).overrideWith(
+      (ref) async => const [
+        GitRef(name: 'refs/heads/main', oid: 'a', isHead: true, subject: 's'),
+        GitRef(
+          name: _longBranch,
+          oid: 'b',
+          isHead: false,
+          subject: 's',
+          // Drives the purple "checked out elsewhere" chip, whose label is the
+          // worktree directory's last path segment.
+          worktreePath: _longWorktreePath,
+        ),
+      ],
+    ),
+    remotesProvider(_repo).overrideWith((ref) async => const ['origin']),
+    remoteTagsProvider(_repo).overrideWith((ref) async => null),
+    branchForgeProvider(_repo).overrideWith(
+      (ref) async => const <String, BranchForge>{
+        _longBranchShort: BranchForge(requestNumber: 12345, isMr: true),
+      },
+    ),
+    mergedBranchesProvider(
+      _repo,
+    ).overrideWith((ref) async => const <String>{_longBranchShort}),
+    ..._pinnedNavigator(_narrow),
+  ],
+);
+
 void main() {
   group('LabelChip rows', () {
     testWidgets('a branch row with a long name and a long worktree chip', (
       tester,
     ) async {
-      await _pumpView(
-        tester,
-        const MacosWindow(child: BranchesView(repoPath: _repo)),
-        overrides: [
-          gitServiceProvider.overrideWithValue(_NoopGit()),
-          refsProvider(_repo).overrideWith(
-            (ref) async => const [
-              GitRef(
-                name: 'refs/heads/main',
-                oid: 'a',
-                isHead: true,
-                subject: 's',
-              ),
-              GitRef(
-                name: _longBranch,
-                oid: 'b',
-                isHead: false,
-                subject: 's',
-                // Drives the purple "checked out elsewhere" chip, whose label
-                // is the worktree directory's last path segment.
-                worktreePath: _longWorktreePath,
-              ),
-            ],
-          ),
-          remotesProvider(_repo).overrideWith((ref) async => const ['origin']),
-          remoteTagsProvider(_repo).overrideWith((ref) async => null),
-          branchForgeProvider(_repo).overrideWith(
-            (ref) async => const <String, BranchForge>{
-              _longBranch: BranchForge(requestNumber: 12345, isMr: true),
-            },
-          ),
-          mergedBranchesProvider(
-            _repo,
-          ).overrideWith((ref) async => const <String>{_longBranch}),
-          ..._pinnedNavigator(_narrow),
-        ],
-      );
+      await _pumpBranches(tester);
       expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('a branch badge still has width at 240 pt', (tester) async {
+      // `chipsMayShrink` buys containment by letting chips give way — and a
+      // flex child of a row with no free space gives way to NOTHING. History's
+      // pop-out once rendered commit subjects with no badges at all for that
+      // reason. Containment that erases the badge is not a fix, so the branch
+      // row's chips are held to a visible width at the narrowest pane.
+      await _pumpBranches(tester);
+
+      final chips = tester.widgetList<LabelChip>(find.byType(LabelChip));
+      expect(chips, isNotEmpty, reason: 'the fixture renders no chips at all');
+      for (final chip in chips) {
+        final size = tester.getSize(find.byWidget(chip));
+        expect(
+          size.width,
+          greaterThan(8),
+          reason: 'chip "${chip.text}" collapsed to ${size.width} pt',
+        );
+      }
     });
 
     testWidgets('a stash row with a long subject and branch', (tester) async {
@@ -184,7 +216,7 @@ void main() {
                     'an extremely long saved repository label that will '
                     'not fit in a narrow sidebar tile',
                 repoPath: _longWorktreePath,
-                mainRepoPath: '/Users/somebody/code/main-repo',
+                mainRepoPath: '/Users/<user>/code/main-repo',
               ),
             ],
           ),

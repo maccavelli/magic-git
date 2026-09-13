@@ -1100,56 +1100,48 @@ class _WorktreesViewState extends ConsumerState<WorktreesView>
                           // that mean something is wrong, then the merely
                           // informational ones.
                           entries: [
-                            (
-                              chip: LabelChip(
-                                wt.branchLabel,
-                                color: MacosColors.systemBlueColor,
-                                maxWidth: _rowChipMaxWidth,
-                              ),
+                            labelChipEntry(
+                              wt.branchLabel,
+                              color: MacosColors.systemBlueColor,
+                              maxWidth: _rowChipMaxWidth,
                               tooltip: 'Branch: ${wt.branchLabel}',
                             ),
                             if (wt.isPrunable)
-                              (
-                                chip: const LabelChip(
-                                  'missing',
-                                  color: MacosColors.systemRedColor,
-                                ),
+                              labelChipEntry(
+                                'missing',
+                                color: MacosColors.systemRedColor,
                                 tooltip: 'Missing: its folder is gone',
                               ),
                             if (wt.isLocked)
-                              (
-                                chip: LabelChip(
-                                  wt.lockReason?.isNotEmpty ?? false
-                                      ? 'locked: ${wt.lockReason}'
-                                      : 'locked',
-                                  color: MacosColors.systemGrayColor,
-                                  maxWidth: _rowChipMaxWidth,
-                                ),
+                              labelChipEntry(
+                                wt.lockReason?.isNotEmpty ?? false
+                                    ? 'locked: ${wt.lockReason}'
+                                    : 'locked',
+                                color: MacosColors.systemGrayColor,
+                                maxWidth: _rowChipMaxWidth,
                                 tooltip: wt.lockReason?.isNotEmpty ?? false
                                     ? 'Locked: ${wt.lockReason}'
                                     : 'Locked',
                               ),
                             if (wt.isMain)
-                              (
-                                chip: const LabelChip(
-                                  'main worktree',
-                                  color: MacosColors.systemGreenColor,
-                                ),
+                              labelChipEntry(
+                                'main worktree',
+                                color: MacosColors.systemGreenColor,
                                 tooltip: "The repository's main worktree",
                               ),
                             if (open)
-                              (
-                                chip: const LabelChip(
-                                  'open',
-                                  color: MacosColors.systemGrayColor,
-                                ),
+                              labelChipEntry(
+                                'open',
+                                color: MacosColors.systemGrayColor,
                                 tooltip: 'Open in a tab',
                               ),
                           ],
-                          overflowChipBuilder: (hidden) => LabelChip(
-                            '+$hidden',
-                            color: MacosColors.systemGrayColor,
-                          ),
+                          overflowChipBuilder: (hidden, hiddenTooltip) =>
+                              LabelChip(
+                                '+$hidden',
+                                color: MacosColors.systemGrayColor,
+                                tooltip: hiddenTooltip,
+                              ),
                         ),
                       ),
                     ],

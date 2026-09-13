@@ -1,5 +1,4 @@
 import 'package:flutter/widgets.dart';
-import 'package:macos_ui/macos_ui.dart';
 
 /// One chip and the text that describes it in full.
 ///
@@ -38,8 +37,12 @@ class ChipStrip extends StatelessWidget {
   /// Chips in priority order: the ones that matter most survive the cap.
   final List<ChipEntry> entries;
 
-  /// Builds the `+N` chip, so each surface keeps its own chip styling.
-  final Widget Function(int hidden) overflowChipBuilder;
+  /// Builds the `+N` chip from the number hidden and the text naming them.
+  ///
+  /// The strip hands the message over rather than wrapping the result in a
+  /// tooltip of its own: chips explain themselves now (see `LabelChip.tooltip`),
+  /// and a wrapper here would nest two tooltips on the same chip.
+  final Widget Function(int hidden, String hiddenTooltip) overflowChipBuilder;
 
   /// Beyond this, chips collapse. Two is what leaves a readable subject in a
   /// narrow pane; a caller with more room may raise it.
@@ -81,9 +84,9 @@ class ChipStrip extends StatelessWidget {
         // Never flexible: it is a handful of pixels and the only sign that
         // anything was hidden.
         if (hidden.isNotEmpty)
-          MacosTooltip(
-            message: hidden.map((e) => e.tooltip).join('\n'),
-            child: overflowChipBuilder(hidden.length),
+          overflowChipBuilder(
+            hidden.length,
+            hidden.map((e) => e.tooltip).join('\n'),
           ),
       ],
     );

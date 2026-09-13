@@ -15,6 +15,7 @@ import '../../core/git/git_service.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/settings/keymap.dart';
 import '../../core/theme/app_theme.dart';
+import '../common/chip_strip.dart';
 import '../common/context_menu.dart';
 import '../common/field_styles.dart';
 import '../common/inline_action_button.dart';
@@ -1608,19 +1609,34 @@ class _BranchNavigatorState extends ConsumerState<BranchNavigator> {
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
-                if (elsewhere != null) ...[
-                  const SizedBox(width: 6),
-                  MacosTooltip(
-                    message: checkedOutElsewhereMessage(elsewhere),
-                    child: LabelChip(
-                      elsewhere.split('/').last,
-                      color: MacosColors.systemPurpleColor,
-                      icon: kWorktreeIcon,
+                const Spacer(),
+                // The badges cap AND give way. Capping alone cannot bound this
+                // row: one chip may be LabelChip.defaultMaxWidth wide, so even
+                // `maxVisible: 1` still overflowed 240 pt by 33 px — measured,
+                // not assumed (plan deviation (d.1)). Shrinking is what fixes
+                // it; the cap is what keeps a four-badge branch from pushing
+                // the name down to nothing.
+                //
+                // The Spacer stays, so the badges remain right-aligned. It is
+                // safe beside a flexible strip only because the row's
+                // non-flexible parts are small — the icon and the reserved CI
+                // width — leaving real free space for the flex children to
+                // divide. Were that free space to reach zero, the chips would
+                // collapse to nothing, which is the trap History's strip
+                // records; `a branch badge still has width at 240 pt` in
+                // label_chip_row_overflow_test.dart is what holds that shut.
+                Flexible(
+                  child: ChipStrip(
+                    chipsMayShrink: true,
+                    entries: _badgeEntries(branch, elsewhere),
+                    overflowChipBuilder: (hidden, hiddenTooltip) => LabelChip(
+                      '+$hidden',
+                      color: MacosColors.systemGrayColor,
+                      tooltip: hiddenTooltip,
                     ),
                   ),
-                ],
-                const Spacer(),
-                ..._forgeBadges(branch),
+                ),
+                _ciBadge(branch),
                 _divergenceCluster(context, branch),
               ],
             ),
@@ -1633,7 +1649,7 @@ class _BranchNavigatorState extends ConsumerState<BranchNavigator> {
   /// The trailing forge/merged signal for a local row: a grey "merged" chip
   /// (base-relative in Review, HEAD-relative in Browse), the open PR/MR
   /// number, and a CI dot — each present only when its data is in.
-  List<Widget> _forgeBadges(GitRef branch) {
+  List<ChipEntry> _badgeEntries(GitRef branch, String? elsewhere) {
     final bf = widget.vm.forge[branch.shortName];
     final reviewSummary = widget.review?.value?.summariesByRefName[branch.name];
     final isReview = widget.mode == BranchWorkspaceMode.review;
@@ -1648,55 +1664,65 @@ class _BranchNavigatorState extends ConsumerState<BranchNavigator> {
     final mergedTooltip = isReview
         ? 'Merged into ${baseName ?? 'the comparison base'}'
         : 'Merged into current ${currentName ?? 'branch'}';
+    // Priority order: where the branch is checked out, then whether it is
+    // already merged, then its open request. The CI signal is NOT a chip and
+    // stays outside the strip — it is a glyph and a dot, it never truncates,
+    // and collapsing it into a +N would hide the one badge that changes while
+    // the user watches.
     return [
-      if (isMerged) ...[
-        MacosTooltip(
-          message: mergedTooltip,
-          child: const LabelChip('merged', color: MacosColors.systemGrayColor),
+      if (elsewhere != null)
+        labelChipEntry(
+          elsewhere.split('/').last,
+          color: MacosColors.systemPurpleColor,
+          icon: kWorktreeIcon,
+          tooltip: checkedOutElsewhereMessage(elsewhere),
         ),
-        const SizedBox(width: 6),
-      ],
-      if (bf != null && bf.hasRequest) ...[
-        MacosTooltip(
-          message: bf.requestDraft
+      if (isMerged)
+        labelChipEntry(
+          'merged',
+          color: MacosColors.systemGrayColor,
+          tooltip: mergedTooltip,
+        ),
+      if (bf != null && bf.hasRequest)
+        labelChipEntry(
+          bf.requestLabel,
+          color: bf.requestDraft
+              ? MacosColors.systemGrayColor
+              : MacosColors.systemBlueColor,
+          tooltip: bf.requestDraft
               ? 'Draft ${bf.isMr ? 'merge' : 'pull'} request ${bf.requestLabel}'
               : 'Open ${bf.isMr ? 'merge' : 'pull'} request ${bf.requestLabel}',
-          child: LabelChip(
-            bf.requestLabel,
-            color: bf.requestDraft
-                ? MacosColors.systemGrayColor
-                : MacosColors.systemBlueColor,
-          ),
         ),
-        const SizedBox(width: 6),
-      ],
-      if (bf?.ci != null) ...[
-        MacosTooltip(
-          message: 'CI: ${_ciLabel(bf!.ci!)}',
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // Non-color-only: glyph + color + spoken tooltip.
-              Text(
-                forgeCiGlyph(bf.ci!),
-                style: TextStyle(
-                  fontSize: 11,
-                  height: 1,
-                  color: _forgeCiColor(bf.ci!),
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              const SizedBox(width: 3),
-              CiDot(_forgeCiColor(bf.ci!), size: 9),
-            ],
-          ),
-        ),
-        const SizedBox(width: 6),
-      ] else ...[
-        // Reserve trailing status width so lazy forge badges do not jump text.
-        const SizedBox(width: 28),
-      ],
     ];
+  }
+
+  /// The CI glyph + dot, or the width it will occupy once the lazy forge fetch
+  /// lands — reserved so arriving badges do not shove the row's text sideways.
+  Widget _ciBadge(GitRef branch) {
+    final bf = widget.vm.forge[branch.shortName];
+    if (bf?.ci == null) return const SizedBox(width: 28);
+    return MacosTooltip(
+      message: 'CI: ${_ciLabel(bf!.ci!)}',
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const SizedBox(width: 6),
+          // Non-color-only: glyph + color + spoken tooltip.
+          Text(
+            forgeCiGlyph(bf.ci!),
+            style: TextStyle(
+              fontSize: 11,
+              height: 1,
+              color: _forgeCiColor(bf.ci!),
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(width: 3),
+          CiDot(_forgeCiColor(bf.ci!), size: 9),
+          const SizedBox(width: 6),
+        ],
+      ),
+    );
   }
 
   static Color _forgeCiColor(ForgeCi c) => switch (c) {

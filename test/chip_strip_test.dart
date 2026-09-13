@@ -33,8 +33,11 @@ Widget _strip(
   maxVisible: maxVisible,
   chipsMayShrink: chipsMayShrink,
   entries: [for (final l in labels) _entry(l)],
-  overflowChipBuilder: (hidden) =>
-      LabelChip('+$hidden', color: MacosColors.systemGrayColor),
+  overflowChipBuilder: (hidden, hiddenTooltip) => LabelChip(
+    '+$hidden',
+    color: MacosColors.systemGrayColor,
+    tooltip: hiddenTooltip,
+  ),
 );
 
 void main() {
@@ -60,12 +63,26 @@ void main() {
   testWidgets('the hidden chips are named in the +N tooltip', (tester) async {
     await _pump(tester, _strip(['one', 'two', 'three', 'four']));
 
-    final tooltip = tester.widget<MacosTooltip>(
-      find.ancestor(of: find.text('+2'), matching: find.byType(MacosTooltip)),
-    );
-    expect(tooltip.message, contains('the full three'));
+    // The +N chip carries the message itself — ChipStrip hands it to the
+    // builder rather than wrapping the result, so a self-tooltipping chip
+    // (LabelChip) does not end up with two.
+    final messages = tester
+        .widgetList<MacosTooltip>(
+          find.ancestor(
+            of: find.text('+2'),
+            matching: find.byType(MacosTooltip),
+          ),
+        )
+        .map((t) => t.message)
+        .toList();
     expect(
-      tooltip.message,
+      messages,
+      hasLength(1),
+      reason: 'the +N chip has $messages tooltips; nested tooltips fight',
+    );
+    expect(messages.single, contains('the full three'));
+    expect(
+      messages.single,
       contains('the full four'),
       reason: 'a chip that is hidden must still be readable somewhere',
     );

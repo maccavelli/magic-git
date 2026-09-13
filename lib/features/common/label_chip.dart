@@ -1,6 +1,8 @@
 import 'package:flutter/cupertino.dart';
 import 'package:macos_ui/macos_ui.dart';
 
+import 'chip_strip.dart';
+
 /// The small tinted status chip used on list rows (a worktree's branch /
 /// locked / missing state, a stash's `stash@{n}` ref, the "checked out in a
 /// worktree" badge): colored text on a soft same-color background, with an
@@ -23,16 +25,35 @@ class LabelChip extends StatelessWidget {
 
   static const double defaultMaxWidth = 160;
 
+  /// Hover text, defaulting to [text] itself.
+  ///
+  /// The chip carries this rather than its callers, because [maxWidth] means a
+  /// chip can always be showing less than it holds — and a caller that bounds
+  /// a chip without also explaining it ships an unreadable label. That is not
+  /// hypothetical: wrapping at the call site is what let the move to
+  /// [ChipStrip] silently drop every worktree tooltip (MADR 0049, plan
+  /// deviation (b)), because a strip tooltips only the chips it HIDES.
+  ///
+  /// Pass it where the full story is more than the label — `'Locked: cutting
+  /// the release'` for a chip reading `locked`, the worktree's whole path for
+  /// one reading its last segment.
+  final String? tooltip;
+
   const LabelChip(
     this.text, {
     super.key,
     required this.color,
     this.icon,
     this.maxWidth = defaultMaxWidth,
+    this.tooltip,
   });
 
   @override
   Widget build(BuildContext context) {
+    return MacosTooltip(message: tooltip ?? text, child: _chip());
+  }
+
+  Widget _chip() {
     return Container(
       // A chip used to draw at whatever width its label wanted, so a long
       // branch name or a typed lock reason pushed the row past its pane — and
@@ -73,3 +94,26 @@ class LabelChip extends StatelessWidget {
     );
   }
 }
+
+/// A [LabelChip] and its description, as one [ChipEntry].
+///
+/// [tooltip] reaches the reader by two different routes — the chip's own hover
+/// while it is visible, and the `+N` chip's list once the strip hides it — and
+/// writing it twice at the call site is how the two drift apart. Stating it
+/// once is the point of this helper.
+ChipEntry labelChipEntry(
+  String text, {
+  required Color color,
+  IconData? icon,
+  double maxWidth = LabelChip.defaultMaxWidth,
+  required String tooltip,
+}) => (
+  chip: LabelChip(
+    text,
+    color: color,
+    icon: icon,
+    maxWidth: maxWidth,
+    tooltip: tooltip,
+  ),
+  tooltip: tooltip,
+);

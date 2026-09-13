@@ -113,6 +113,55 @@ Future<void> _pump(
 }
 
 void main() {
+  // Truncation is only acceptable because the full text stays reachable — the
+  // whole argument for bounding these chips (MADR 0049's Decision Outcome).
+  // A chip capped at 100 pt with no hover is not a fix, it is a different
+  // defect, and moving the strip to ChipStrip once shipped exactly that:
+  // a strip tooltips the chips it HIDES, so every VISIBLE chip lost its
+  // hover (plan deviation (b)). The tooltip now lives in LabelChip itself.
+  testWidgets('a visible, truncated chip is still reachable by tooltip', (
+    tester,
+  ) async {
+    await _pump(tester, paneWidth: RepositoryWorkspacePrefs.minNavigatorWidth);
+
+    final messages = tester
+        .widgetList<MacosTooltip>(find.byType(MacosTooltip))
+        .map((t) => t.message)
+        .toList();
+
+    // The branch chip is shown, and ellipsized at _rowChipMaxWidth — so its
+    // full label has to be somewhere a person can get at.
+    expect(
+      messages,
+      contains('Branch: ${_longBranch.replaceFirst('refs/heads/', '')}'),
+      reason: 'the branch chip is truncated with no way to read it',
+    );
+    // And the name beside it, for the same reason.
+    expect(messages, contains(_longName));
+  });
+
+  testWidgets('a lock reason is reachable even when the chip is capped', (
+    tester,
+  ) async {
+    await _pump(
+      tester,
+      paneWidth: RepositoryWorkspacePrefs.minNavigatorWidth,
+      locked: true,
+    );
+
+    final messages = tester
+        .widgetList<MacosTooltip>(find.byType(MacosTooltip))
+        .map((t) => t.message)
+        .toList();
+    expect(
+      messages.any((m) => m.contains(_longReason)),
+      isTrue,
+      reason:
+          'the lock reason exists nowhere else in the panel; messages '
+          'were: $messages',
+    );
+  });
+
   for (final width in <double>[
     RepositoryWorkspacePrefs.minNavigatorWidth,
     RepositoryWorkspacePrefs.defaultNavigatorWidth,
