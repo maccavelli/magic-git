@@ -145,7 +145,15 @@ class _ResizablePanePairState extends State<ResizablePanePair> {
                 children: [
                   SizedBox(
                     width: visibleExtent,
-                    child: widget.collapsed ? null : widget.leading,
+                    // A SizedBox bounds LAYOUT, not painting: a child that
+                    // overflows its constraint still paints across the divider
+                    // and onto the canvas, which is how a too-wide worktree row
+                    // came to draw over the detail pane (MADR 0049 F6). The clip
+                    // makes an overflow truncate at the divider instead — it
+                    // repairs nothing, it contains everything.
+                    child: widget.collapsed
+                        ? null
+                        : ClipRect(child: widget.leading),
                   ),
                   Container(width: 1, color: dividerColor),
                   Expanded(child: widget.trailing),
@@ -168,7 +176,15 @@ class _ResizablePanePairState extends State<ResizablePanePair> {
               children: [
                 SizedBox(
                   height: visibleExtent,
-                  child: widget.collapsed ? null : widget.leading,
+                  // A SizedBox bounds LAYOUT, not painting: a child that
+                  // overflows its constraint still paints across the divider
+                  // and onto the canvas, which is how a too-wide worktree row
+                  // came to draw over the detail pane (MADR 0049 F6). The clip
+                  // makes an overflow truncate at the divider instead — it
+                  // repairs nothing, it contains everything.
+                  child: widget.collapsed
+                      ? null
+                      : ClipRect(child: widget.leading),
                 ),
                 Container(height: 1, color: dividerColor),
                 Expanded(child: widget.trailing),
