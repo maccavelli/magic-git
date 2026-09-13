@@ -457,6 +457,72 @@ defect nobody has shown.
 **Cost of doing nothing:** a known-unbounded chip widget in four files, fed by remote input, with no
 measurement and no guard — the MADR would close claiming a class it had checked only half of.
 
+### Phase 3 measurement — the answer to the MADR's open question (2026-09-13)
+
+`test/label_chip_row_overflow_test.dart`, pathological fixtures at 240 pt, run **before** any Phase 3
+change and again against the pre-plan tree (`8032c83`) to separate what this plan caused from what it
+merely found:
+
+| Surface | Pre-plan `8032c83` | HEAD `3eb35a9` | Verdict |
+| --- | --- | --- | --- |
+| Branch row — `branch_navigator.dart:1589` | overflow **181 px** | overflow **5.0 px** | still overflows |
+| Section header — `section_collapse.dart:158` | overflow **12 px** | overflow **12 px** | independent defect |
+| Stash row (long subject + long branch) | clean | clean | guard only |
+| Switcher tile (long label, linked worktree) | clean | clean | guard only |
+| `MiniLabelChip`, single over-long label in a `Wrap` | clean | clean | guard only |
+| `ForgeLabelChip`, single over-long label in a `Wrap` | clean | clean | guard only |
+
+**Three findings, and two of them are "not broken".**
+
+1. **Phase 1 already did most of the branches work.** Bounding `LabelChip` cut that row's overflow from
+   181 px to 5 px without branches being touched — the chip bound travelling to every surface, which is
+   what MADR 0049's Consequences predicted. The residual 5 px is the row's own layout, not the chip's.
+2. **The forge chips are unbounded and still do not overflow.** A `Wrap` hands its child its own
+   maximum width, so an over-long label soft-wraps to a second line rather than painting outside its
+   bounds. Unbounded in a `Row` is a defect; unbounded in a `Wrap` is merely ugly at the extreme. This
+   is precisely why deviation (c) chose to measure rather than bound them — the alternative would have
+   changed forge rendering, and possibly goldens, for a defect that does not exist.
+3. **Stash and switcher were never broken.** Both bound their subject already (`maxLines` + ellipsis on
+   the stash subject, `Expanded` + ellipsis on the switcher name), and both chips are fixed short
+   strings. Their tests stand as regression guards. Recorded as findings, per 3.2 — "not broken" is an
+   answer, not a gap.
+
+This replaces MADR 0049's **"Not established"** paragraph: the class is now measured across every chip
+surface in the app, and exactly one other row overflows.
+
+### Deviation (d) — the branch row, and a shared header outside the plan's file list (2026-09-13)
+
+**Found** by the measurement above. Both are **pre-existing**: reproduced against the unmodified
+pre-plan tree at `8032c83` in a detached scratch worktree, not against a tree this plan had touched.
+
+**(d.1) The branch row, 5 px.** In scope — 3.2 already says a surface that overflows is fixed in this
+phase. **Decision** (maintainer): fix it by adopting the shared `ChipStrip`, as worktrees did, rather
+than by the narrower Phase 1 pattern. The row's badges — checked-out-elsewhere, merged, PR/MR,
+divergence — become a capped strip with `chipsMayShrink`, so the branch name flexes and the remainder
+collapses into `+N`. Chosen because the alternative leaves Branches with a different solution from
+Worktrees, which is the second implementation deviation (a) existed to remove; and because it kills the
+class rather than the five pixels.
+
+**(d.2) `lib/features/common/section_collapse.dart` — a file this plan does not list.**
+`CollapsibleSectionHeader` builds `titleCluster` as a min-sized `Row` around a bare, unbounded
+`Text(title)`, then places it beside a `Spacer` and its trailing buttons (`:122-170`). At 240 pt that
+overflows by 12 px. It is **not** a `LabelChip` row and it is untouched by every commit in this plan —
+its 12 px is identical before and after — so it is a defect this work uncovered, not one it caused.
+
+**Decision** (maintainer): add the file to Phase 3's scope and fix it here. The title cluster becomes
+flexible and the title ellipsizes, with a guard at 240 pt. One file; `CollapsibleSectionHeader` is
+shared by Branches and Forge (the section-collapse canon is deliberately one header for both), so the
+single fix covers both surfaces.
+
+**Cost of doing nothing** was stated and declined: Phase 2's clip now *contains* this overflow, so the
+header would be silently truncated at the divider instead of painting across it — containment, not
+repair, and exactly the "a clip can hide a new layout bug from a human eye" consequence the MADR
+warned about.
+
+**Scope added to Phase 3:** `lib/features/branches/branch_navigator.dart`,
+`lib/features/common/section_collapse.dart`, and their guards in
+`test/label_chip_row_overflow_test.dart`. Catalogue entries follow in Phase 4.
+
 ## Verification
 
 The whole-plan gate:

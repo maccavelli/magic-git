@@ -272,9 +272,24 @@ The truncated name and chip must carry a `MacosTooltip` with the full text, foll
   `lib/features/branches/branch_navigator.dart:1600-1610` (a correctly bounded name).
 * **Evidence.** The live screen (F1); the scratch reproduction and the three candidate measurements
   (F2, F4), run in a detached worktree and removed afterwards — the working tree was never dirtied.
-* **Not established.** Whether any other pane in the app currently overflows: only the Worktrees row
-  was reproduced. F6 says every navigator *can*, not that any other does. The plan should run the same
-  pathological fixtures through the Branches, Stashes and switcher rows before claiming the class is
-  closed — and, per the amendment to F8, the forge chips (`ForgeLabelChip`, `MiniLabelChip`) too,
-  which this record never counted as chips at all.
+* ~~**Not established.** Whether any other pane in the app currently overflows: only the Worktrees row
+  was reproduced. F6 says every navigator *can*, not that any other does.~~
+  **Established 2026-09-13** by the plan's Phase 3 measurement
+  (`test/label_chip_row_overflow_test.dart`, pathological fixtures at 240 pt, run against the pre-plan
+  tree `8032c83` as well as against the fix):
+
+  | Surface | Pre-plan | After Phase 1–2 |
+  | --- | --- | --- |
+  | Branch row (`branch_navigator.dart:1589`) | overflow 181 px | overflow 5 px — **fixed in Phase 3** |
+  | Section header (`section_collapse.dart:158`) | overflow 12 px | overflow 12 px — **fixed in Phase 3**, plan deviation (d.2) |
+  | Stash row | clean | clean |
+  | Connection switcher tile | clean | clean |
+  | `MiniLabelChip` / `ForgeLabelChip` in a `Wrap` | clean | clean |
+
+  Two things this measurement establishes that the record could not have guessed. **Bounding
+  `LabelChip` fixed 97% of the branches overflow without branches being touched** — 181 px to 5 px —
+  which is the "four features at once" consequence, confirmed. And **the unbounded forge chips do not
+  overflow**: a `Wrap` hands its child its own maximum width, so an over-long label soft-wraps instead
+  of painting outside. Unbounded in a `Row` is a defect; unbounded in a `Wrap` is not. The class is now
+  measured across every chip surface in the app, and exactly one other row overflowed.
 * **No implementation exists.** This record proposes a decision; a plan follows only on approval.
