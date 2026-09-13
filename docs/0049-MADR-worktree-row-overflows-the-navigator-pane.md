@@ -127,9 +127,16 @@ Stashes or the connection switcher.
 
 ### F8 — Blast radius
 
-`LabelChip` is used in `worktrees_view.dart` (six sites), `branch_navigator.dart` (four),
-`stash_view.dart` and `connection_switcher.dart`. Branches absorbs pressure through its flexible name;
-the others have the same exposure as the worktree row.
+~~`LabelChip` is used in `worktrees_view.dart` (six sites), `branch_navigator.dart` (four),
+`stash_view.dart` and `connection_switcher.dart`.~~ Branches absorbs pressure through its flexible
+name; the others have the same exposure as the worktree row.
+
+> **Amended 2026-09-13 (plan deviation (c)).** The count was taken from too narrow a search.
+> `LabelChip` has **seven** users besides `worktrees_view.dart`: `branch_navigator.dart` (four
+> sites), `stash_view.dart`, `connection_switcher.dart` — which lives in `lib/features/switcher/`,
+> not `lib/features/connections/` as cited below — plus `forge_widgets.dart`,
+> `project_sections.dart`, `github_panel.dart` and `gitlab_panel.dart`. The blast radius is
+> roughly twice what this finding claimed, and the plan's Phase 3 measures all seven.
 
 With both changes applied in the scratch copy, the **full suite passed: `+4085`, zero failures** — so
 nothing in the suite depends on chips being unbounded.
@@ -172,6 +179,15 @@ with its warning about `Flexible` inside a min-sized strip.
 
 The truncated name and chip must carry a `MacosTooltip` with the full text, following
 `branch_navigator.dart`'s use of tooltips on its chips.
+
+> **Amended 2026-09-13 (plan deviation (b)).** This requirement stands, and *where* the tooltip
+> lives is now settled: **inside `LabelChip` itself**, as History's `RefChip` already does
+> (`ref_chip.dart:173-174`). Putting it at the call site — which the plan's Phase 1 did — meant
+> deviation (a)'s move to a shared `ChipStrip` silently dropped it, because the strip tooltips
+> only the chips it *hides*. A chip that bounds itself must also explain itself; the two belong
+> in the same widget, or the next surface to adopt the strip loses the tooltip the same way.
+> Consequence: `branch_navigator.dart`'s existing outer tooltip on a `LabelChip` is removed, so
+> the two do not nest.
 
 ### Consequences
 
@@ -250,5 +266,5 @@ The truncated name and chip must carry a `MacosTooltip` with the full text, foll
 * **Not established.** Whether any other pane in the app currently overflows: only the Worktrees row
   was reproduced. F6 says every navigator *can*, not that any other does. The plan should run the same
   pathological fixtures through the Branches, Stashes and switcher rows before claiming the class is
-  closed.
+  closed — **all seven surfaces**, per the amendment to F8, not the four this record counted.
 * **No implementation exists.** This record proposes a decision; a plan follows only on approval.

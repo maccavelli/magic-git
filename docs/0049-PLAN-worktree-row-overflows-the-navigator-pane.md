@@ -1,6 +1,6 @@
 ---
-status: "proposed"
-date: 2026-09-12
+status: "in-progress"
+date: 2026-09-13
 associated-madr: "0049-MADR-worktree-row-overflows-the-navigator-pane.md"
 ---
 
@@ -194,14 +194,22 @@ SizedBox(
 
 ### Phase 3 — the other `LabelChip` surfaces
 
-MADR 0049 F8 lists `branch_navigator.dart` (four sites), `stash_view.dart` and
-`connection_switcher.dart`; its "Not established" says nobody has shown whether any of them overflows
-today. This phase answers that with a measurement rather than an assumption.
+~~MADR 0049 F8 lists `branch_navigator.dart` (four sites), `stash_view.dart` and
+`connection_switcher.dart`;~~ **per deviation (c), the list is seven files, not three** —
+`branch_navigator.dart` (four sites), `stash_view.dart`,
+`lib/features/switcher/connection_switcher.dart`, `forge_widgets.dart`, `project_sections.dart`,
+`github_panel.dart` and `gitlab_panel.dart`. The MADR's "Not established" says nobody has shown
+whether any of them overflows today. This phase answers that with a measurement rather than an
+assumption, for every one of them.
 
-3.1 `test/label_chip_row_overflow_test.dart` — the same pathological data through each surface, at
-240 pt: a branch row with a long name and a long "checked out elsewhere" chip; a stash row with a long
-message; a switcher row with a long repository label. Each asserts
-`expect(tester.takeException(), isNull)`.
+3.1 `test/label_chip_row_overflow_test.dart` — the same pathological data through each of the seven
+surfaces, at 240 pt: a branch row with a long name and a long "checked out elsewhere" chip; a stash
+row with a long message; a switcher row with a long repository label; and the forge surfaces
+(`forge_widgets.dart`, `project_sections.dart`, `github_panel.dart`, `gitlab_panel.dart`) with a long
+label on whatever each chips — a label, a milestone, a status. Each asserts
+`expect(tester.takeException(), isNull)`. Where a surface cannot be pumped in isolation, say so in
+the record and name what was measured instead — an unmeasured surface is reported, never skipped
+silently.
 
 3.2 Run it **before** touching those files and record the result per surface. Then:
 
@@ -217,7 +225,7 @@ message; a switcher row with a long repository label. Each asserts
 4.1 `tool/mutations/0049-row-bounding.json`, each entry removing exactly one guarantee. Every `find`
 string is asserted to occur exactly once in its file before the catalogue is written.
 
-| Label | Removes |
+~~| Label | Removes |
 | --- | --- |
 | `p1: the worktree name is unbounded again` | the name's `Flexible` |
 | `p1: the name no longer ellipsizes` | `overflow: TextOverflow.ellipsis` on the name |
@@ -226,7 +234,29 @@ string is asserted to occur exactly once in its file before the catalogue is wri
 | `p1: a chip's label does not ellipsize` | the `Flexible` + ellipsis inside `LabelChip` |
 | `p1: the branch chip loses its tooltip` | the branch chip's `MacosTooltip` |
 | `p2: the navigator pane is not clipped` | the horizontal `ClipRect` |
-| `p2: the vertical pane is not clipped` | the vertical `ClipRect` |
+| `p2: the vertical pane is not clipped` | the vertical `ClipRect` |~~
+
+**Superseded 2026-09-13.** Two entries above target code that deviation (a) deleted — the branch
+chip's own `Flexible` and its call-site `MacosTooltip` — and one anchor
+(`overflow: TextOverflow.ellipsis`) occurs twice in `worktrees_view.dart`, so it cannot satisfy 4.1's
+uniqueness assert on its own. The catalogue that is actually written:
+
+| Label | Removes | File |
+| --- | --- | --- |
+| `p1: the worktree name is unbounded again` | the name's `Flexible(flex: 2)` | `worktrees_view.dart` |
+| `p1: the name no longer ellipsizes` | the name `Text`'s ellipsis (anchored with its `maxLines`/`softWrap` neighbours, so the `find` is unique) | `worktrees_view.dart` |
+| `p1: a chip may draw at any width` | `LabelChip`'s `maxWidth` constraint | `label_chip.dart` |
+| `p1: a chip's label does not ellipsize` | the `Flexible` + ellipsis inside `LabelChip` | `label_chip.dart` |
+| `p1: a truncated chip cannot be read` | `LabelChip`'s own `MacosTooltip` (deviation (b)) | `label_chip.dart` |
+| `pa: the strip no longer caps` | `take(maxVisible)` | `chip_strip.dart` |
+| `pa: the +N chip is unreachable` | the `+N` `MacosTooltip` | `chip_strip.dart` |
+| `pa: the row's chips stop giving way` | `chipsMayShrink: true` at the worktrees call site | `worktrees_view.dart` |
+| `p2: the navigator pane is not clipped` | the horizontal `ClipRect` | `resizable_master_detail.dart` |
+| `p2: the vertical pane is not clipped` | the vertical `ClipRect` | `resizable_master_detail.dart` |
+
+`pa` entries guard deviation (a)'s `ChipStrip`; they replace the two per-chip `Flexible`/tooltip
+entries with guards on the shared widget those were folded into. Phase 3 adds one entry per surface it
+actually fixes.
 
 4.2 `tool/mutate.py --check tool/mutations/0049-row-bounding.json` reports every entry sound, then
 `tool/mutate.py tool/mutations/0049-row-bounding.json` must end
@@ -342,6 +372,68 @@ those tests describe, and it is safe here only because the chips give way.
 
 **Still owed:** Phases 2–5 — clip the navigator pane, measure the other `LabelChip` surfaces, the
 catalogue, and the records.
+
+### Deviation (b) — deviation (a) dropped the tooltips that made truncation acceptable (2026-09-13)
+
+**Found** while assessing Phase 4: its entry `p1: the branch chip loses its tooltip` had nothing left
+to remove. `ChipStrip.build` renders `entry.chip` bare for the chips it *shows* and tooltips only the
+`+N` (`lib/features/common/chip_strip.dart:79-87`), so a branch label ellipsized at
+`_rowChipMaxWidth` (100 pt), or a lock reason truncated mid-sentence, is unreadable with no hover.
+
+**Not pre-existing — a regression from `894352f`.** A probe (`a visible branch chip is reachable by
+tooltip`) was pumped through the real `WorktreesView` at 240 pt in two detached scratch worktrees:
+
+| Tree | Result |
+| --- | --- |
+| `a84122f` (Phase 1) | `exit=0` — `00:00 +1: All tests passed!` |
+| `e28430f` (HEAD) | `exit=1` — `no tooltip carries the branch label` |
+
+The tooltip inventory at Phase 1 contained `master` and
+`scratch/scratch-branch-for-margain-testing-overflow`; at HEAD both are absent while the *name*
+tooltip survives. The instrument was itself verified in both directions — its first version expected
+the raw `refs/heads/…` ref rather than the stripped `branchLabel` and so failed on both trees for the
+wrong reason; corrected, it passes on Phase 1 and fails on HEAD.
+
+**What it breaks:** acceptance criterion 4, and step 1.3 in full — *"the tooltips are why truncation
+is acceptable: the branch label appears nowhere else in the row, and the lock reason nowhere else in
+the panel."* Also MADR 0049's Confirmation bullet *"a test that a truncated chip still exposes its
+full label through a tooltip"*, which was never written.
+
+**Why it happened:** History's chips self-tooltip inside `RefChip` (`ref_chip.dart:173-174`);
+`LabelChip` does not. Deviation (a) moved the worktree tooltips from the call site into
+`ChipEntry.tooltip`, which feeds only the `+N`.
+
+**Decision** (maintainer: tooltip inside `LabelChip`). `LabelChip` wraps itself in a `MacosTooltip`,
+matching `RefChip`. Chosen over tooltipping in `ChipStrip` (which would double-wrap History's already
+self-tooltipping chips) and over restoring the per-chip tooltip at the worktrees call site (the second
+implementation the extraction existed to remove — the next surface to adopt the strip would lose it
+again). A chip that bounds itself must also explain itself, and putting both in one widget fixes all
+seven `LabelChip` surfaces at once rather than only worktrees.
+
+**Scope added to Phase 3** (the phase that touches the other surfaces): `lib/features/common/label_chip.dart`,
+`lib/features/branches/branch_navigator.dart` — its existing outer tooltip on a `LabelChip`
+(`:1664`, the nesting risk the plan's Risks section already named) is removed so the two do not nest —
+a guard in `test/worktree_row_overflow_test.dart` that the probe above becomes, and a catalogue entry
+`p1: a truncated chip cannot be read`. MADR amended at its Decision Outcome.
+
+**Cost of doing nothing:** the row is bounded but illegible — truncation traded for unreachable text,
+which is the outcome step 1.3 ruled out.
+
+### Deviation (c) — the blast radius is seven surfaces, not three (2026-09-13)
+
+**Found** while assessing Phase 3. MADR 0049 F8 counted `LabelChip` users as `worktrees_view.dart`,
+`branch_navigator.dart`, `stash_view.dart` and `connection_switcher.dart`. `grep -rln 'LabelChip' lib/`
+returns **seven** besides worktrees: those three plus `forge_widgets.dart`, `project_sections.dart`,
+`github_panel.dart` and `gitlab_panel.dart`. Separately, the path cited for the switcher is wrong — it
+is `lib/features/switcher/connection_switcher.dart`, not `lib/features/connections/`.
+
+**Decision** (maintainer: all seven). Phase 3 measures every one at 240 pt and fixes only what
+overflows; a surface that does not overflow keeps its test as a regression guard and is reported as a
+finding, per 3.2. MADR F8 amended and its "Not established" paragraph updated to the true count.
+
+**Cost of doing nothing:** the MADR's open question would get a partial answer, and four unmeasured
+surfaces are exactly where the same defect hides — the plan would close claiming a class it had not
+checked.
 
 ## Verification
 
