@@ -1,5 +1,5 @@
 ---
-status: "proposed"
+status: "in-progress"
 date: 2026-09-17
 associated-madr: "0047-MADR-a-detached-window-on-a-linked-worktree-runs-no-command.md"
 ---

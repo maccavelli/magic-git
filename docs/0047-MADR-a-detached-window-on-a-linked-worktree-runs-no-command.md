@@ -1,10 +1,10 @@
 ---
-status: "proposed"
+status: "accepted"
 date: 2026-09-11
 decision-makers: [Maintainer]
 consulted: []
 informed: [Magic Git contributors]
-verified: 2026-09-11
+verified: 2026-09-17
 ---
 
 # A detached window on a linked worktree runs no command: exec routes by repo ownership, and a worktree is not a repo the session owns
