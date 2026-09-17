@@ -244,8 +244,7 @@ terminal preference is wanted later, that is the shape it takes.
   `_openInTerminal`); `lib/core/settings/app_settings.dart` (fields, keys, `_persist`);
   `lib/features/settings/settings_sheet.dart` (sections, and the per-binary controls);
   `lib/features/settings/environment_health_sheet.dart:131` (the `file_selector` pick).
-* **Not established.** Whether any terminal in common use needs more than a path argument to open at
-  a directory — `open -b <id> <dir>` is assumed sufficient, as it is for Terminal.app, and a terminal
-  that ignores the argument would need its own handling. Worth one manual check per terminal the
-  maintainer actually uses before the plan is written.
-* **No implementation exists.** This record proposes a decision; a plan follows only on approval.
+* **Established by amendment 0048.1.** WezTerm needs more than a path argument at a directory and
+  `open`'s exit status cannot detect the failure; the terminal preference was withdrawn as a result.
+* **Implementation:** [0048-PLAN-preferred-editor-and-terminal-as-settings.md](0048-PLAN-preferred-editor-and-terminal-as-settings.md),
+  executed through Phase 6. Step 5.4's remaining manual checks are the plan's own outstanding item.

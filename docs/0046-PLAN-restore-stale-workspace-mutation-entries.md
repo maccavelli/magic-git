@@ -1,7 +1,8 @@
 ---
-status: "proposed"
+status: "complete"
 date: 2026-09-10
 associated-madr: "none"
+verified: 2026-09-17
 ---
 
 # Restore the stale workspace mutation entries in the 0032 and 0036 catalogues
@@ -354,6 +355,32 @@ tool/mutate.py tool/mutations/0036-destination.json
   naming the retired entry and the 14 re-anchors.
 * Add this plan's row to `docs/README.md`.
 * Set this plan's `status` to `complete` with its execution record.
+
+## Execution Record
+
+Phases 1 and 3's annotations were executed 2026-09-13: the catalogue edits landed in `dd0c29a`
+(`tool/mutations/0032-namespaces.json`, `tool/mutations/0036-destination.json` only — no `lib/` or
+`test/` file touched, per Scope Out), and the "Catalogue re-anchored" annotations were added to
+`0032-PLAN` and `0036-PLAN` in `9a39c05`. Phase 3's own closing steps — this record's status, its
+`docs/README.md` row — were missed at the time and are completed now, 2026-09-17.
+
+Phase 2, run 2026-09-17 (not previously recorded):
+
+```
+tool/mutate.py --check tool/mutations/0032-namespaces.json tool/mutations/0036-destination.json
+  60 entries in 2 catalogue(s): 60 sound, 0 did not apply, 0 do not compile (4m 10s)
+tool/mutate.py tool/mutations/0032-namespaces.json
+  31 killed, 0 survived, 0 did not apply, 0 did not compile, 0 observed by no test
+tool/mutate.py tool/mutations/0036-destination.json
+  29 killed, 0 survived, 0 did not apply, 0 did not compile, 0 observed by no test
+flutter analyze
+  No issues found!
+flutter test test/no_real_identifiers_scan_test.dart
+  +2: All tests passed!
+```
+
+Both catalogue counts (31, 29) are larger than this plan's original 15-entry scope because entries
+from other plans (0038, 0034 F4) share the same two catalogue files; all report as sound and killed.
 
 ## Verification
 
