@@ -95,27 +95,51 @@ the script:
 
 ## Decision records (MADR) and plans
 
-When asked to write a decision record or an implementation plan, save it flat
-in `docs/` (no subdirectories) using this naming standard:
+**The layout is the global one** — see *MADR & PLAN file standards* in the
+global agent rules, which is the authority. In short: `docs/decisions/` holds
+`NNNN-MADR-*` and `NNNN-PLAN-*`, `docs/reports/` holds `NNNN-REPORT-*` and
+`NNNN-GATES-*`, `docs/guides/` holds unnumbered user documentation, and
+`docs/` itself holds only `README.md` and `architecture.md`. **A record never
+sits directly in `docs/`.**
+
+> **This repository has not migrated yet.** Its ~100 records are still flat in
+> `docs/`, and the architecture document is still `docs/ARCHITECTURE_PLAN.md`
+> rather than `docs/architecture.md`. The move is the last phase of
+> `0007-PLAN-standard-documentation-layout-and-where-the-standard-lives.md` in
+> the dotfiles repository and needs a link checker first, because the records
+> cite one another heavily and nothing validates a relative markdown link.
+> Until that phase runs, **write new records into `docs/decisions/` and
+> `docs/reports/`** — the destination is correct even while the backlog is not,
+> and adding to the flat pile makes the migration bigger.
 
 - **Decision record** (MADR format): `NNNN-MADR-short-kebab-title.md`
   (e.g. `0001-MADR-native-git-libgit2.md`)
 - **Implementation plan**: `NNNN-PLAN-short-kebab-title.md`
   (e.g. `0001-PLAN-native-git-libgit2.md`)
+- **Report** (an audit or investigation that decides nothing):
+  `NNNN-REPORT-short-kebab-title.md`
 
 Numbering rules:
 
-- `NNNN` is a zero-padded 4-digit sequence number shared by both file types.
-  To allocate one, scan `docs/` for the highest existing `NNNN` across all
-  `NNNN-MADR-*` and `NNNN-PLAN-*` files and add 1.
-- **A plan written for an existing MADR reuses that MADR's number** (so
-  `0007-MADR-foo.md` pairs with `0007-PLAN-foo.md`); prefer matching the
-  kebab-title too. A standalone plan with no associated MADR takes the next
-  free number.
-- Never renumber existing files, and never reuse a number except for the
-  MADR↔PLAN pairing. Two numbers (`0011`, `0012`) already carry unrelated
-  records from before this rule was enforced; each notes its twin, and the
-  rule stands — **cite records by full filename, never by number alone**.
+- `NNNN` is a zero-padded 4-digit sequence number shared by every record type.
+  To allocate one, scan the **whole repository** for `NNNN-MADR-*`,
+  `NNNN-PLAN-*`, `NNNN-REPORT-*` and `NNNN-GATES-*` and add 1 to the highest.
+  Never scan a single directory — the sequence is repository-wide and does not
+  restart per directory, and with records currently in two places a
+  directory-scoped scan will hand out a number that is already taken.
+- **A plan or a report written for an existing MADR reuses that MADR's
+  number** (so `0007-MADR-foo.md` pairs with `0007-PLAN-foo.md`); a lone plan
+  matches the kebab-title too. A MADR may carry several plans where one
+  decision is implemented as distinct units of work — they share its number
+  and each takes a slug describing its own scope. A standalone plan or report
+  with no associated MADR takes the next free number.
+- Never renumber existing files, and never reuse a number except for that
+  pairing. Two numbers (`0011`, `0012`) already carry unrelated records from
+  before this rule was enforced; each notes its twin, and the rule stands —
+  **cite records by full filename, never by number alone**, which one number
+  naming a decision, its plans and a report about it makes unavoidable.
+- `0005` already carries `0005-UX-BASELINE-…`, which is a report under an
+  older name. It keeps its number when it becomes `0005-REPORT-…`.
 
 Every record carries YAML frontmatter with a `status:` and a `verified:` date
 (when the status was last checked *against the code*, not when it was
