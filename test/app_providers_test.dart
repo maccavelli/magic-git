@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:remote_magic_git/core/exec/local_command_executor.dart';
+import 'package:remote_magic_git/core/forge/forge.dart';
 import 'package:remote_magic_git/core/git/git_service.dart';
 import 'package:remote_magic_git/core/git/repo_tree.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
@@ -387,4 +388,81 @@ void main() {
       expect(observer.failures, isEmpty);
     });
   });
+
+  group('MADR 0050 — forgeProvider ref.mounted guard', () {
+    const repoPath = '/repo';
+
+    test('disposed (last listener leaves) while the remote-url probe is '
+        'pending: zero failures', () async {
+      final probeGate = Completer<SSHCommandResult>();
+      final observer = _CountingObserver();
+      final container = ProviderContainer(
+        observers: [observer],
+        overrides: [
+          scopedForgeExecutorProvider.overrideWithValue(
+            _GatedExecutor(probeGate),
+          ),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      final sub = container.listen<AsyncValue<Forge>>(
+        forgeProvider(repoPath),
+        (_, _) {},
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      // The only listener leaves while the remote-url probe is still
+      // pending — autoDispose tears the family entry down right away.
+      sub.close();
+      await Future<void>.delayed(Duration.zero);
+
+      // A github.com remote takes the keepAlive branch, which is what
+      // used to call `ref.keepAlive()` on a dead Ref.
+      probeGate.complete(
+        const SSHCommandResult(
+          exitCode: 0,
+          stdout: 'https://github.com/example/repo.git\n',
+          stderr: '',
+        ),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      expect(observer.failures, isEmpty);
+    });
+  });
+}
+
+/// An [SSHCommandExecutor] whose first `execute` call resolves from [gate];
+/// every later call (the self-hosted-host CLI fallback) returns a failing
+/// result immediately, so the double never hangs regardless of the URL.
+class _GatedExecutor extends SSHCommandExecutor {
+  _GatedExecutor(this.gate) : super(SSHClientManager());
+
+  final Completer<SSHCommandResult> gate;
+  var _first = true;
+
+  @override
+  Future<SSHCommandResult> execute({
+    required String repoPath,
+    required List<String> gitArgs,
+    Map<String, String>? extraEnv,
+    String? stdin,
+    Duration timeout = SSHCommandExecutor.defaultTimeout,
+    int retries = 0,
+    ExecLane lane = ExecLane.exclusive,
+    bool compress = false,
+    Duration? activityIdle,
+    OperationDescriptor? operation,
+    OperationEventCallback? onOperationEvent,
+    CommandOutputCallback? onOutput,
+  }) {
+    if (_first) {
+      _first = false;
+      return gate.future;
+    }
+    return Future.value(
+      const SSHCommandResult(exitCode: 1, stdout: '', stderr: ''),
+    );
+  }
 }
