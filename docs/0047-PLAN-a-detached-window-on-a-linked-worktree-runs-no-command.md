@@ -1,6 +1,7 @@
 ---
-status: "in-progress"
+status: "complete"
 date: 2026-09-17
+verified: 2026-09-17
 associated-madr: "0047-MADR-a-detached-window-on-a-linked-worktree-runs-no-command.md"
 ---
 
@@ -192,6 +193,20 @@ green, no regressions. **Commit** `6234f76`.
 to this plan's own two scratch worktrees, which were each removed immediately after their seen-to-fail
 check as usual.
 
+### Phase 2, executed
+
+**Manual, on the maintainer's machine, 2026-09-17.** Repeated MADR 0045's step 7.5 on a remote linked
+worktree: opened it as a detached window from the Worktrees page. Observed: the window populated with
+real repository data (where before this plan it showed `RELAY_DOWN` for every provider), and the host
+still showed exactly one watcher under the worktree's resolved git dir — unchanged from 7.5, confirming
+this plan did not touch the watcher stack.
+
+### Phase 3, executed
+
+MADR 0047 → `status: accepted`, `verified: 2026-09-17` (flipped at the start of implementation, when the
+maintainer approved proceeding). This plan → `status: complete`, `verified: 2026-09-17`, now that
+Phase 2 is done. `docs/README.md` row updated.
+
 ## Implementation Steps
 
 ### Phase 0 — preconditions
@@ -294,17 +309,19 @@ Exit statuses are captured, never piped into a filter. Manually: Phase 2.1, reco
 
 ## Acceptance Criteria
 
-1. A `detachedRepo` window pinned to a path no tab owns and `repoPaths` does not list routes its
-   `execute`/`uploadBytes` calls to its own pinned tab, where it previously `RELAY_DOWN`ed.
-2. Two tabs open, only one pinned: the window's commands reach the pinned tab's session, never the
-   other one's.
-3. A repo-bound window asking for a path that is **not** its own pin still ends in `RELAY_DOWN` —
-   the fix is scoped to the window's own pin, not a general relaxation.
-4. `test/window_bridge_follow_active_test.dart`'s four pre-existing tests pass unmodified: History's
-   ownership-based routing and its mid-switch lagging-request behaviour are untouched.
-5. `flutter analyze` clean, full suite green, every staged Dart file formatted.
-6. Live: MADR 0045 step 7.5 repeated on a remote linked worktree — the detached window populates, and
-   watcher behaviour is unchanged (a single watcher under the worktree's resolved git dir).
+1. **Met.** A `detachedRepo` window pinned to a path no tab owns and `repoPaths` does not list routes
+   its `execute`/`uploadBytes` calls to its own pinned tab, where it previously `RELAY_DOWN`ed — seen
+   to fail against the unmodified tree with the exact `RELAY_DOWN` shape, then passing after the fix.
+2. **Met.** Two tabs open, only one pinned: the window's commands reach the pinned tab's session, never
+   the other one's.
+3. **Met.** A repo-bound window asking for a path that is **not** its own pin still ends in
+   `RELAY_DOWN` — the fix is scoped to the window's own pin, not a general relaxation.
+4. **Met.** `test/window_bridge_follow_active_test.dart`'s four pre-existing tests pass unmodified:
+   History's ownership-based routing and its mid-switch lagging-request behaviour are untouched.
+5. **Met.** `flutter analyze` clean, full suite green (4122 tests), every staged Dart file formatted.
+6. **Met, 2026-09-17.** Live: MADR 0045 step 7.5 repeated on a remote linked worktree on the
+   maintainer's machine — the detached window populated with real repository data, and the host showed
+   exactly one watcher under the worktree's resolved git dir, unchanged from 7.5.
 
 ## Rollout and Rollback
 

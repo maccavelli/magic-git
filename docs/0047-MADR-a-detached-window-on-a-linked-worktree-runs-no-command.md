@@ -216,5 +216,6 @@ incidental:
 * **The guard's history.** `a4c03d7` (2026-07-12) and `test/window_bridge_follow_active_test.dart`,
   which is the contract any fix must leave intact.
 * **Not established.** Whether any non-worktree path can reach the same refusal in practice — F8
-  argues the mechanism is general, but the only path the UI offers today is the worktree one. No
-  implementation exists; this record proposes a decision, and a plan follows only on approval.
+  argues the mechanism is general, but the only path the UI offers today is the worktree one.
+* **Implementation:** [0047-PLAN-a-detached-window-on-a-linked-worktree-runs-no-command.md](0047-PLAN-a-detached-window-on-a-linked-worktree-runs-no-command.md),
+  executed and confirmed live 2026-09-17.
