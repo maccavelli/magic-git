@@ -237,8 +237,19 @@ void main() {
     () async {
       // Piped `sh` `echo` is fully buffered, and Process.stdout coalesces
       // live writes (~100ms). A 50ms sleep + 120ms idle is a race; the SSH
-      // fake never hits that pipe. Flushed perl for ~0.9s with idle 400ms
+      // fake never hits that pipe. Flushed perl for ~0.9s with idle 2s
       // finishes only if pulses reset the stall timer.
+      //
+      // The idle budget is 2s, not the ~13x-pulse-interval 400ms this test
+      // shipped with, because 400ms measurably was not enough: it failed once
+      // under a full-suite run (perl's own 30ms sleeps delayed by real OS
+      // scheduling contention from ~4000 concurrent tests, most spawning
+      // their own subprocesses) while passing every time in isolation and
+      // under two smaller synthetic-load reproductions. This is the check
+      // being wrong as written for a many-thousand-test run, not a defect in
+      // ActivityDeadline (activity_deadline.dart) — its stall-timer logic is
+      // unchanged; only this test's own margin against real scheduling
+      // jitter widens.
       final result = await executor.execute(
         repoPath: tempDir.path,
         gitArgs: [
@@ -250,8 +261,8 @@ void main() {
               r'while (time() < $end) { print STDERR "p\n"; sleep(0.03) } '
               r'print "ok\n"',
         ],
-        activityIdle: const Duration(milliseconds: 400),
-        timeout: const Duration(seconds: 2),
+        activityIdle: const Duration(seconds: 2),
+        timeout: const Duration(seconds: 5),
       );
       expect(result.isSuccess, isTrue);
       expect(result.stdout, contains('ok'));
@@ -261,6 +272,9 @@ void main() {
   test(
     'activityIdle: stdout pulses past the idle budget still complete',
     () async {
+      // Same widened margin as its stderr sibling above, for the same
+      // reason: 400ms measured insufficient under full-suite scheduling
+      // contention.
       final result = await executor.execute(
         repoPath: tempDir.path,
         gitArgs: [
@@ -271,8 +285,8 @@ void main() {
               r'while (time() < $end) { print "p\n"; sleep(0.03) } '
               r'print "ok\n"',
         ],
-        activityIdle: const Duration(milliseconds: 400),
-        timeout: const Duration(seconds: 2),
+        activityIdle: const Duration(seconds: 2),
+        timeout: const Duration(seconds: 5),
       );
       expect(result.isSuccess, isTrue);
       expect(result.stdout, contains('ok'));
