@@ -3676,9 +3676,12 @@ final autoFetchProvider = Provider.autoDispose<void>((ref) {
 /// background isolate.
 final repoStructureProvider = FutureProvider.autoDispose
     .family<RepoNode, String>((ref, repoPath) async {
+      // Registered before the await (MADR 0050): doesn't need the structure
+      // signature, and a provider disposed while it resolves must not touch
+      // `ref` again afterward.
+      final git = ref.watch(gitServiceProvider);
       // Re-run only when the tree's shape (not its contents) changes.
       await ref.watch(statusProvider(repoPath).selectAsync(structureSignature));
-      final git = ref.watch(gitServiceProvider);
       final tree = await _retryAfterForgeAuthIfNeeded(
         ref,
         () => git.listWorkingTree(repoPath),
@@ -4670,13 +4673,17 @@ final branchWorkspacePrefsProvider = FutureProvider.autoDispose
 /// only the first record and remain untouched as a rollback source.
 final repositoryWorkspacePrefsProvider = FutureProvider.autoDispose
     .family<RepositoryWorkspacePrefs, String>((ref, repoPath) async {
+      // Registered before the await (MADR 0050): Riverpod wants every
+      // dependency watched synchronously, and this one doesn't need
+      // `identity` — hoisting it also means a provider disposed while the
+      // identity resolves never touches `ref` again afterward.
+      final legacyPaneWidths = ref.watch(
+        appSettingsProvider.select((settings) => settings.paneWidths),
+      );
       final identity = await ref.watch(
         repositoryUiIdentityProvider(repoPath).future,
       );
       if (identity == null) return const RepositoryWorkspacePrefs();
-      final legacyPaneWidths = ref.watch(
-        appSettingsProvider.select((settings) => settings.paneWidths),
-      );
       return loadRepositoryWorkspacePrefs(
         identity: identity,
         legacyPaneWidths: legacyPaneWidths,

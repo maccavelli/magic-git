@@ -1,10 +1,44 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:remote_magic_git/core/exec/local_command_executor.dart';
+import 'package:remote_magic_git/core/git/git_service.dart';
+import 'package:remote_magic_git/core/git/repo_tree.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/core/settings/app_settings.dart';
+import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
+import 'package:remote_magic_git/core/utils/git_porcelain_parser.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+/// Counts failures Riverpod reports to observers — the MADR 0034 channel a
+/// `ref` used after disposal writes into, and the F3 regression probe below
+/// (MADR 0050) checks stays silent once the hoist lands.
+base class _CountingObserver extends ProviderObserver {
+  final failures = <Object>[];
+
+  @override
+  void providerDidFail(
+    ProviderObserverContext context,
+    Object error,
+    StackTrace stackTrace,
+  ) {
+    failures.add(error);
+  }
+}
+
+/// A [GitService] whose `listWorkingTree` resolves immediately with an empty
+/// tree — enough for [repoStructureProvider] to complete without exercising
+/// `_retryAfterForgeAuthIfNeeded`'s own (separately tracked) catch-block read.
+class _InstantTreeGit extends GitService {
+  _InstantTreeGit() : super(SSHCommandExecutor(SSHClientManager()));
+
+  @override
+  Future<({List<String> files, List<String> ignored})> listWorkingTree(
+    String repoPath,
+  ) async => (files: const <String>[], ignored: const <String>[]);
+}
 
 /// A [LocalCommandExecutor] that returns canned probe output and records
 /// environment-configuration calls — the regression guard for Bug #4
@@ -239,6 +273,83 @@ void main() {
         tracker.isRecent('path/e', DateTime.now(), const Duration(seconds: 5)),
         isFalse,
       );
+    });
+  });
+
+  group('MADR 0050 F3 — repoStructureProvider does not touch ref after '
+      'disposal', () {
+    const repoPath = '/repo';
+
+    GitStatus fakeStatus() => GitStatus(
+      branch: const GitBranchInfo(
+        head: 'main',
+        oid: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      ),
+      files: const [],
+    );
+
+    ProviderContainer buildContainer(
+      Completer<GitStatus> statusGate,
+      _CountingObserver observer,
+    ) => ProviderContainer(
+      observers: [observer],
+      overrides: [
+        statusProvider(repoPath).overrideWith((ref) => statusGate.future),
+        gitServiceProvider.overrideWithValue(_InstantTreeGit()),
+      ],
+    );
+
+    test('rebuilt while the status await is pending: loading -> data, zero '
+        'failures', () async {
+      final statusGate = Completer<GitStatus>();
+      final observer = _CountingObserver();
+      final container = buildContainer(statusGate, observer);
+      addTearDown(container.dispose);
+
+      final states = <AsyncValue<RepoNode>>[];
+      final sub = container.listen<AsyncValue<RepoNode>>(
+        repoStructureProvider(repoPath),
+        (_, next) => states.add(next),
+        fireImmediately: true,
+      );
+      addTearDown(sub.close);
+
+      // Rebuild while the first await is still pending — a live listener
+      // stays attached throughout.
+      container.invalidate(repoStructureProvider(repoPath));
+      await Future<void>.delayed(Duration.zero);
+      statusGate.complete(fakeStatus());
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      expect(observer.failures, isEmpty);
+      expect(states.last, isA<AsyncData<RepoNode>>());
+    });
+
+    test('disposed (last listener leaves) while the status await is pending: '
+        'zero failures — this reported exactly one before the '
+        'ref.watch(gitServiceProvider) hoist', () async {
+      final statusGate = Completer<GitStatus>();
+      final observer = _CountingObserver();
+      final container = buildContainer(statusGate, observer);
+      addTearDown(container.dispose);
+
+      final sub = container.listen<AsyncValue<RepoNode>>(
+        repoStructureProvider(repoPath),
+        (_, _) {},
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      // The only listener leaves while the first await is still pending —
+      // autoDispose tears the family entry down right away.
+      sub.close();
+      await Future<void>.delayed(Duration.zero);
+
+      // Resolve the dependency after disposal — this is what used to hit
+      // `ref.watch(gitServiceProvider)` on a dead Ref (MADR 0050 F3).
+      statusGate.complete(fakeStatus());
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      expect(observer.failures, isEmpty);
     });
   });
 }
