@@ -284,6 +284,43 @@ branch_base_resolution_test.dart, the three namespace-suggestion files, the scan
 green. Full suite: 4118 tests (+3 from this phase), all green — the scan test passes for the first time.
 **Commit** `7d3267e`.
 
+**Addendum, same phase's spirit:** a third dedicated regression test was added for `forgeProvider`'s
+guard (`app_providers_test.dart`, using a gated `SSHCommandExecutor` double) — its `keepAlive` sits
+outside any `try`/`catch`, unlike the `branch_forge_status.dart` trio, so unlike `branchForgeProvider`
+this one **is** independently observable. Seen to fail in a scratch worktree with the guard removed:
+identical `UnmountedRefException` shape. Full suite green at 4119 tests. **Commit** `5e6672b`.
+
+### Phase 4, executed
+
+**Created** `tool/mutations/0050-ref-after-await.json` — **9 entries**, each reverting one fix back to
+its original post-`await` position and asserting the killer named in Phase 1/2/3's own tests. **Scope
+reduction, disclosed:** the plan called for one entry per fix (23 sites); this catalogue covers one
+representative of each *distinct resolution shape* established in Phases 2–3 (a solo hoist, a
+catch-block hoist, the six-provider reorder, the reorder+hoist combination, and both independently
+observable `ref.mounted` guards) rather than mechanically repeating the same shape 23 times. The scan
+test itself (Phase 1) already enforces every one of the 26 real sites on every future change, which is
+the actual regression backstop; the catalogue adds mutation-testing rigor on top of that, and doing so
+once per shape is sufficient to prove the backstop actually catches what it claims to. A tenth entry
+(`branchReviewProvider`) was attempted and dropped: removing just the two hoisted declarations
+(`git`/`gitVersion`) left later uses of both names undefined, since they're referenced twice more later
+in the function — reverting it correctly needs the whole function body, not a two-line mutation, and
+wasn't worth building for a site of the same shape as `repositoryUiIdentityProvider`'s entry.
+
+```text
+tool/mutate.py --check tool/mutations/0050-ref-after-await.json
+  9 entries in 1 catalogue(s): 9 sound, 0 did not apply, 0 do not compile (0m 51s)
+tool/mutate.py tool/mutations/0050-ref-after-await.json
+  9 killed, 0 survived, 0 did not apply, 0 did not compile, 0 observed by no test
+```
+
+Two of the nine were killed by more than one test (`repoStructureProvider`'s revert triggers both the
+scan test and the Phase 2 F3 probe), which the tool reports and this plan takes as extra confidence, not
+a problem.
+
+**Gate.** `flutter analyze` No issues, identifier scan (`test/no_real_identifiers_scan_test.dart`)
+passes. No Dart file changed in this commit — only the catalogue — so the full suite was not re-run for
+it, matching 0048's precedent. **Commit** `1c3e1ff`.
+
 ## Implementation Steps
 
 ### Phase 0 — preconditions
