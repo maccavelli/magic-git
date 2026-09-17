@@ -17,23 +17,37 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   test('no provider body uses ref in a statement after an earlier await', () {
-    // file:line -> reason. A match here is a textual false positive, checked
-    // by hand and recorded, not a live defect:
-    //  - the `ref` use is inside a separate asynchronous context (a
-    //    Timer/Stream callback), not the provider's own build continuation,
-    //    and that callback already guards with `ref.mounted`;
-    //  - the `ref` use is in a branch that never runs alongside the branch
-    //    containing the flagged `await` (this scanner is textual, not
-    //    branch-aware, so an `if`/`else` where only one side awaits reads as
-    //    "after" the other side's await even though they're mutually
-    //    exclusive).
+    // file:line -> reason. A match here has been checked by hand and is not
+    // a live defect, for one of three reasons (MADR 0050's Option C):
+    //  - a textual false positive: the `ref` use is inside a separate
+    //    asynchronous context (a Timer/Stream callback), not the provider's
+    //    own build continuation, and that callback already guards with
+    //    `ref.mounted`;
+    //  - a textual false positive: the `ref` use is in a branch that never
+    //    runs alongside the branch containing the flagged `await` (this
+    //    scanner is textual, not branch-aware, so an `if`/`else` where only
+    //    one side awaits reads as "after" the other side's await even
+    //    though they're mutually exclusive);
+    //  - a real site the scan is right to flag, resolved with a
+    //    `ref.mounted` guard rather than a hoist because the call genuinely
+    //    needs the awaited value (so hoisting would mean doing the work, or
+    //    picking the branch, before knowing what to do) — the guard turns a
+    //    disposed-mid-`await` throw into a quiet early return instead.
     const allowed = <String, String>{
-      'lib/core/providers/app_providers.dart:3593': //
+      'lib/core/providers/app_providers.dart:3596': //
           'autoFetchProvider: the flagged ref calls are inside its '
           'Timer.periodic callback, a separate async context from the '
           "provider's own (synchronous) build, and are already guarded "
           'with `if (!ref.mounted) return;` before each one.',
-      'lib/core/providers/app_providers.dart:5746': //
+      'lib/core/providers/app_providers.dart:4747': //
+          'remoteTagsProvider: `keepAlive`/`onDispose` only make sense once '
+          '`remote` (the awaited value) is known, so they cannot be '
+          'hoisted; guarded with `if (!ref.mounted) return null;` instead.',
+      'lib/core/providers/app_providers.dart:5705': //
+          'forgeProvider: `keepAlive` depends on the awaited `forge`, so it '
+          'cannot be hoisted; guarded with `if (ref.mounted && ...)` '
+          'instead.',
+      'lib/core/providers/app_providers.dart:5788': //
           'forgeRepoListProvider: the flagged read is in the `if (local)` '
           "branch; the scan's first-await search lands on the `else` "
           "branch's await, which never runs in the same call as the "
@@ -43,6 +57,18 @@ void main() {
           'of an early-return `if`; the scan\'s first-await search lands on '
           "the `if` branch's await (`return await _legacyPins(...)`), which "
           'never runs in the same call as the flagged watch.',
+      'lib/core/forge/branch_forge_status.dart:179': //
+          'branchForgeProvider: each switch case watches a different '
+          'provider depending on the awaited `forge`, so none can be '
+          'hoisted without watching all of them regardless of forge — a '
+          'real behaviour change; guarded with `if (!ref.mounted) return '
+          'const {};` instead.',
+      'lib/core/forge/branch_forge_status.dart:219': //
+          'protectedBranchRulesProvider: same shape as branchForgeProvider '
+          'above — guarded, not hoisted, for the same reason.',
+      'lib/core/forge/branch_forge_status.dart:297': //
+          'branchForgeKnowledgeProvider: same shape as branchForgeProvider '
+          'above — guarded, not hoisted, for the same reason.',
     };
 
     final offenders = <String>[];

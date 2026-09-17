@@ -180,6 +180,13 @@ final branchForgeProvider = FutureProvider.autoDispose
     .family<Map<String, BranchForge>, String>((ref, repoPath) async {
       try {
         final forge = await ref.watch(forgeProvider(repoPath).future);
+        // Guarded (MADR 0050): each case below watches a different provider
+        // depending on `forge`, so none of them can be hoisted above this
+        // await without watching all four regardless of which forge it is —
+        // a real behaviour change (extra network activity), not just a
+        // timing one. A provider disposed while the await above was pending
+        // has nothing left to combine for.
+        if (!ref.mounted) return const {};
         switch (forge) {
           case Forge.github:
             final prs = await ref.watch(pullRequestsProvider(repoPath).future);
@@ -217,6 +224,9 @@ final protectedBranchRulesProvider = FutureProvider.autoDispose
       } catch (_) {
         return BranchProtectionRules.unavailable;
       }
+      // Guarded (MADR 0050): same reasoning as branchForgeProvider above —
+      // each case watches a different service depending on `forge`.
+      if (!ref.mounted) return BranchProtectionRules.unavailable;
 
       switch (forge) {
         case Forge.github:
@@ -292,6 +302,9 @@ final branchForgeKnowledgeProvider = FutureProvider.autoDispose
       } catch (_) {
         return BranchForgeKnowledge.unavailable;
       }
+      // Guarded (MADR 0050): same reasoning as branchForgeProvider above —
+      // each case watches different providers depending on `forge`.
+      if (!ref.mounted) return BranchForgeKnowledge.unavailable;
 
       switch (forge) {
         case Forge.github:

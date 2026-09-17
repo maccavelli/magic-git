@@ -495,12 +495,13 @@ final recentRepoRefsProvider = FutureProvider<List<RecentRepoRef>>((ref) async {
 final savedLocalReposProvider = FutureProvider<List<SavedLocalRepo>>((
   ref,
 ) async {
+  // Registered before the await (MADR 0050): a provider disposed while the
+  // list load is pending must not touch `ref` again in the catch below.
+  final log = ref.read(outputLogProvider.notifier);
   try {
     return await ref.watch(localRepoStoreProvider).list();
   } catch (e) {
-    ref
-        .read(outputLogProvider.notifier)
-        .logError('load saved local repos', e.toString());
+    log.logError('load saved local repos', e.toString());
     rethrow;
   }
 }, retry: noProviderRetry);
@@ -518,12 +519,13 @@ final savedLocalReposProvider = FutureProvider<List<SavedLocalRepo>>((
 final savedConnectionsProvider = FutureProvider<List<SavedConnection>>((
   ref,
 ) async {
+  // Registered before the await (MADR 0050): a provider disposed while the
+  // list load is pending must not touch `ref` again in the catch below.
+  final log = ref.read(outputLogProvider.notifier);
   try {
     return await ref.watch(connectionStoreProvider).list();
   } catch (e) {
-    ref
-        .read(outputLogProvider.notifier)
-        .logError('load saved connections', e.toString());
+    log.logError('load saved connections', e.toString());
     rethrow;
   }
 }, retry: noProviderRetry);
@@ -3531,6 +3533,9 @@ final statusProvider = FutureProvider.autoDispose.family<GitStatus, String>((
   ref,
   repoPath,
 ) async {
+  // Registered before the await (MADR 0050): the warning loop below doesn't
+  // need `status`, only the notifier reference.
+  final log = ref.read(outputLogProvider.notifier);
   final status = (await ref.watch(
     repoSnapshotProvider(repoPath).future,
   )).status;
@@ -3542,9 +3547,7 @@ final statusProvider = FutureProvider.autoDispose.family<GitStatus, String>((
   // trace.
   if (status.parseWarnings.isNotEmpty) {
     for (final warning in status.parseWarnings) {
-      ref
-          .read(outputLogProvider.notifier)
-          .logError('git status parse warning', warning);
+      log.logError('git status parse warning', warning);
     }
   }
   // Content-identity memo: a refresh that found *nothing changed* hands back
@@ -3993,10 +3996,13 @@ final refsProvider = FutureProvider.autoDispose.family<List<GitRef>, String>((
   ref,
   repoPath,
 ) async {
+  // Registered before the await (MADR 0050): the warning loop below doesn't
+  // need `snapshot`, only the notifier reference.
+  final log = ref.read(outputLogProvider.notifier);
   final snapshot = await ref.watch(repoSnapshotProvider(repoPath).future);
   final result = RefsResult(snapshot.refs, snapshot.refParseWarnings);
   for (final warning in result.parseWarnings) {
-    ref.read(outputLogProvider.notifier).logInfo('Ref parse warning: $warning');
+    log.logInfo('Ref parse warning: $warning');
   }
   return result.refs;
 }, retry: noProviderRetry);
@@ -4039,19 +4045,39 @@ final branchBaseProvider = FutureProvider.autoDispose
       ref,
       key,
     ) async {
-      final refs = await ref.watch(refsProvider(key.repoPath).future);
+      // Every `ref.watch` registered synchronously, before any await (MADR
+      // 0050) — including the three below whose *await* used to follow an
+      // earlier one. They watch independent providers, so registering (and
+      // so starting) them together rather than one after another is a
+      // harmless, incidental speedup, not a behaviour change in what any of
+      // them resolves to.
+      final git = ref.watch(gitServiceProvider);
+      Object? policy = key.allowForgeFetch
+          ? ref.read(repoMergePolicyCacheProvider(key.repoPath))
+          : ref.watch(repoMergePolicyCacheProvider(key.repoPath));
+      final policyCache = key.allowForgeFetch
+          ? ref.read(repoMergePolicyCacheProvider(key.repoPath).notifier)
+          : null;
+      final refsFuture = ref.watch(refsProvider(key.repoPath).future);
+      final remotesFuture = ref.watch(remotesProvider(key.repoPath).future);
+      final prefsFuture = ref.watch(
+        branchWorkspacePrefsProvider(key.repoPath).future,
+      );
+      final policyFuture = key.allowForgeFetch
+          ? ref.watch(repoMergePolicyProvider(key.repoPath).future)
+          : null;
+
+      final refs = await refsFuture;
       // Remotes/prefs: await when available. Catch so a host without remotes
       // prefs storage does not fail the whole base family. HEAD comes from the
       // refs snapshot (isHead) so we do not depend on statusProvider.
       List<String> remotes = const [];
       try {
-        remotes = await ref.watch(remotesProvider(key.repoPath).future);
+        remotes = await remotesFuture;
       } catch (_) {}
       BranchWorkspacePrefs prefs = const BranchWorkspacePrefs();
       try {
-        prefs = await ref.watch(
-          branchWorkspacePrefsProvider(key.repoPath).future,
-        );
+        prefs = await prefsFuture;
       } catch (_) {}
       final headRef = refs.where((r) => r.isHead).firstOrNull;
       final currentBranch = headRef != null && headRef.isLocalBranch
@@ -4061,18 +4087,11 @@ final branchBaseProvider = FutureProvider.autoDispose
           ? headRef.commitOid
           : null;
 
-      Object? policy = key.allowForgeFetch
-          ? ref.read(repoMergePolicyCacheProvider(key.repoPath))
-          : ref.watch(repoMergePolicyCacheProvider(key.repoPath));
-      if (key.allowForgeFetch) {
+      if (policyFuture != null) {
         try {
-          final fetched = await ref.watch(
-            repoMergePolicyProvider(key.repoPath).future,
-          );
+          final fetched = await policyFuture;
           policy = fetched;
-          ref
-              .read(repoMergePolicyCacheProvider(key.repoPath).notifier)
-              .set(fetched);
+          policyCache!.set(fetched);
         } catch (_) {
           // Forge default is additive. Git candidates still resolve offline.
         }
@@ -4090,7 +4109,6 @@ final branchBaseProvider = FutureProvider.autoDispose
             oid: gitRef.commitOid,
           ),
       ];
-      final git = ref.watch(gitServiceProvider);
       return resolveBranchBase(
         refs: candidates,
         remotes: remotes,
@@ -4120,6 +4138,10 @@ final branchReviewProvider = FutureProvider.autoDispose
       BranchReviewBatchResult,
       ({String repoPath, String baseOid, BranchRefsFingerprint refsFingerprint})
     >((ref, key) async {
+      // Registered before the await (MADR 0050): neither reference below
+      // needs `refs`.
+      final git = ref.read(gitServiceProvider);
+      final gitVersion = ref.read(binaryEnvironmentProvider).versionOf('git');
       // Read (do not watch) refs: this family is already re-keyed by the UI when
       // the local tip fingerprint moves. Watching refs here re-ran the same key
       // against a newer snapshot and threw StateError during ordinary fetch/
@@ -4158,17 +4180,13 @@ final branchReviewProvider = FutureProvider.autoDispose
       // off the connect critical path, so a session's first Branches load takes
       // the fallback and later ones take the fast path — deliberate, since the
       // alternative is a probe on the connect path (MADR 0039 A1).
-      final fastPath = aheadBehindAtomForVersion(
-        ref.read(binaryEnvironmentProvider).versionOf('git'),
+      final fastPath = aheadBehindAtomForVersion(gitVersion);
+      final result = await git.branchReviewSummaries(
+        key.repoPath,
+        baseOid: key.baseOid,
+        branches: validLocals,
+        useAheadBehindAtom: fastPath,
       );
-      final result = await ref
-          .read(gitServiceProvider)
-          .branchReviewSummaries(
-            key.repoPath,
-            baseOid: key.baseOid,
-            branches: validLocals,
-            useAheadBehindAtom: fastPath,
-          );
       final refsByName = {for (final gitRef in refs) gitRef.name: gitRef};
       return BranchReviewBatchResult(
         summariesByRefName: {
@@ -4434,6 +4452,8 @@ final branchMergePreviewProvider = FutureProvider.autoDispose
     .family<BranchMergePreview, BranchMergePreviewKey>((ref, key) async {
       final lruKey = (key.repoPath, key.baseOid, key.branchOid);
       final scope = ref.read(sessionScopeProvider);
+      // Registered before the await (MADR 0050): doesn't need `cap`.
+      final git = ref.watch(gitServiceProvider);
       // What the fetch cost, for cost-aware eviction (MADR 0039 A3).
       final sw = Stopwatch()..start();
       _mergePreviewLru.touch(scope, lruKey, ref.keepAlive());
@@ -4454,13 +4474,11 @@ final branchMergePreviewProvider = FutureProvider.autoDispose
         throw ArgumentError('merge preview requires full Git OIDs');
       }
       try {
-        final preview = await ref
-            .watch(gitServiceProvider)
-            .mergeTreePreview(
-              key.repoPath,
-              baseOid: key.baseOid,
-              branchOid: key.branchOid,
-            );
+        final preview = await git.mergeTreePreview(
+          key.repoPath,
+          baseOid: key.baseOid,
+          branchOid: key.branchOid,
+        );
         _mergePreviewLru.reportSize(
           scope,
           lruKey,
@@ -4618,6 +4636,9 @@ final repositoryUiIdentityProvider = FutureProvider.autoDispose
       final conn = ref.watch(connectionProvider);
       if (conn.sessionEpoch <= 0) return null;
 
+      // Registered before the await (MADR 0050): neither branch below that
+      // reads it depends on `layout`.
+      final sessionScopeId = ref.read(sessionScopeProvider).id;
       final layout = await ref.watch(repoLayoutProvider(repoPath).future);
       final common = layout?.gitCommonDir;
 
@@ -4629,7 +4650,7 @@ final repositoryUiIdentityProvider = FutureProvider.autoDispose
           backend: backend,
           sessionEpoch: conn.sessionEpoch,
           repoPathFallback: repoPath,
-          sessionScopeId: ref.read(sessionScopeProvider).id,
+          sessionScopeId: sessionScopeId,
         );
       }
 
@@ -4647,7 +4668,7 @@ final repositoryUiIdentityProvider = FutureProvider.autoDispose
         backend: backend,
         sessionEpoch: conn.sessionEpoch,
         gitCommonDir: common,
-        sessionScopeId: ref.read(sessionScopeProvider).id,
+        sessionScopeId: sessionScopeId,
       );
     }, retry: noProviderRetry);
 
@@ -4731,6 +4752,13 @@ final remoteTagsProvider = FutureProvider.autoDispose
         ),
       );
       if (remote == null) return null;
+      // Guarded (MADR 0050): `keepAlive`/`onDispose` only make sense once
+      // `remote` is known, so they cannot be hoisted above the await without
+      // pinning every instance regardless of whether it has a remote — a
+      // real behaviour change to MADR 0039's caching posture, not just a
+      // timing one. A provider disposed while the await above was pending
+      // has nothing left to pin or fetch for.
+      if (!ref.mounted) return null;
       final link = ref.keepAlive();
       final timer = Timer(const Duration(minutes: 5), link.close);
       ref.onDispose(timer.cancel);
@@ -5536,6 +5564,10 @@ Future<T> _retryAfterForgeAuthIfNeeded<T>(
     return await load();
   } catch (e) {
     if (!looksLikeAuthFailure(e)) rethrow;
+    // Guarded (MADR 0050 F5): a provider disposed while `load()` was pending
+    // must not touch `ref` in this catch either — the same shape as the
+    // mounted check a few lines below, just on the read side.
+    if (!ref.mounted) rethrow;
     final pending = ref.read(connectionProvider).forgeAuthPending;
     final controller = ref.read(connectionProvider.notifier);
     // `forgeAuthPending` is the UI-visible flag; the gate can complete a
@@ -5735,7 +5767,10 @@ final forgeProvider = FutureProvider.autoDispose.family<Forge, String>((
   // (`unknown`: probe raced a slow CLI; `none`: possibly a transient failure
   // to read the remote) stay autoDispose so they re-probe on next mount.
   // _invalidateRepoState still clears this on every connect/repo switch.
-  if (forge == Forge.github || forge == Forge.gitlab) {
+  // Guarded (MADR 0050): `keepAlive` depends on the detected `forge`, so it
+  // cannot be hoisted above the awaits — a disposed provider has nothing
+  // left to pin.
+  if (ref.mounted && (forge == Forge.github || forge == Forge.gitlab)) {
     ref.keepAlive();
   }
   return forge;
@@ -5799,6 +5834,8 @@ final forgeAuthProvider = FutureProvider.autoDispose
       final executor = local
           ? ref.read(localExecutorProvider)
           : ref.read(activeExecutorProvider);
+      // Registered before either await below (MADR 0050): doesn't need `auth`.
+      final log = ref.read(outputLogProvider.notifier);
       if (local) {
         // Can run before any local session exists (landing wizards) — make
         // sure the executor's PATH can actually see the Mac's gh/glab.
@@ -5807,9 +5844,7 @@ final forgeAuthProvider = FutureProvider.autoDispose
       final auth = await AuthProbeService(executor).probeForgeCli(forge);
       // Surfaced so "why didn't my host prefill" / "why did the guard stop
       // me" are answerable from the output log instead of being invisible.
-      ref
-          .read(outputLogProvider.notifier)
-          .logInfo('${auth.tool} auth: ${auth.detail}');
+      log.logInfo('${auth.tool} auth: ${auth.detail}');
       return auth;
     }, retry: noProviderRetry);
 
@@ -5884,14 +5919,26 @@ final namespaceSuggestionsProvider = FutureProvider.autoDispose
       key,
     ) async {
       final (forge, host, local, connectionId) = key;
-      final all = await ref.watch(
+      // Every `ref.watch`/`ref.read` registered synchronously, before any
+      // await (MADR 0050) — `savedConnectionsProvider` is watched
+      // unconditionally (Riverpod wants a watch registered regardless of a
+      // runtime branch) and only *awaited* conditionally below, and the
+      // history/executor references don't need `all`.
+      final allFuture = ref.watch(
         forgeNamespacesProvider((forge, host, local)).future,
       );
+      final savedConnectionsFuture = ref.watch(savedConnectionsProvider.future);
+      final history = ref.read(namespaceHistoryProvider);
+      final executor = local
+          ? ref.read(localExecutorProvider)
+          : ref.read(activeExecutorProvider);
+
+      final all = await allFuture;
 
       SavedConnection? connection;
       if (connectionId != null) {
         try {
-          final saved = await ref.watch(savedConnectionsProvider.future);
+          final saved = await savedConnectionsFuture;
           for (final c in saved) {
             if (c.id == connectionId) connection = c;
           }
@@ -5913,7 +5960,6 @@ final namespaceSuggestionsProvider = FutureProvider.autoDispose
 
       // Local history first: it is free, works offline, and is already ordered
       // most-recent-first.
-      final history = ref.read(namespaceHistoryProvider);
       final historyTimes = await history.recentTimes(
         forge: forge,
         host: host,
@@ -5928,9 +5974,6 @@ final namespaceSuggestionsProvider = FutureProvider.autoDispose
       }
 
       // Then the forge's own view of recent activity.
-      final executor = local
-          ? ref.read(localExecutorProvider)
-          : ref.read(activeExecutorProvider);
       final fromForge = switch (forge) {
         Forge.gitlab => await GlabService(
           executor,
@@ -6007,17 +6050,19 @@ final namespaceSearchProvider = FutureProvider.autoDispose
 final localAuthStatusProvider = FutureProvider.autoDispose<TargetAuth>((
   ref,
 ) async {
+  // Registered before the await (MADR 0050): neither reference below needs
+  // the environment-ensure result.
+  final executor = ref.read(localExecutorProvider);
+  final log = ref.read(outputLogProvider.notifier);
   await ref.read(localEnvironmentProvider).ensure();
   final auth = await AuthProbeService(
-    ref.read(localExecutorProvider),
+    executor,
   ).probe(label: 'This Mac', isLocal: true);
-  ref
-      .read(outputLogProvider.notifier)
-      .logInfo(
-        'auth (this Mac): '
-        'gh ${auth.gh.authenticated ? auth.gh.host : 'signed out'}, '
-        'glab ${auth.glab.authenticated ? auth.glab.host : 'signed out'}',
-      );
+  log.logInfo(
+    'auth (this Mac): '
+    'gh ${auth.gh.authenticated ? auth.gh.host : 'signed out'}, '
+    'glab ${auth.glab.authenticated ? auth.glab.host : 'signed out'}',
+  );
   return auth;
 }, retry: noProviderRetry);
 
@@ -6040,6 +6085,14 @@ final sessionAuthStatusProvider = FutureProvider.autoDispose<TargetAuth?>((
       : (label ?? host ?? 'Connected host');
   String? glabHostname;
   final path = repoPath;
+  // Registered before the (conditional) await (MADR 0050): doesn't need
+  // `url`/`glabHostname`.
+  //
+  // Scoped, not raw: `cwd` below is the repo path, which AuthProbeService
+  // passes straight through as the command's repoPath — the same key the scope
+  // overlay is registered under. Unscoped, an Enterprise host could not be
+  // resolved from a bare/dotfiles repo (0022 H2).
+  final executor = ref.read(scopedForgeExecutorProvider);
   if (path != null) {
     final url = await ref.watch(originRemoteUrlProvider(path).future);
     final h = url == null ? null : forgeHostFromRemoteUrl(url);
@@ -6047,11 +6100,7 @@ final sessionAuthStatusProvider = FutureProvider.autoDispose<TargetAuth?>((
       glabHostname = h;
     }
   }
-  // Scoped, not raw: `cwd` below is the repo path, which AuthProbeService
-  // passes straight through as the command's repoPath — the same key the scope
-  // overlay is registered under. Unscoped, an Enterprise host could not be
-  // resolved from a bare/dotfiles repo (0022 H2).
-  return AuthProbeService(ref.read(scopedForgeExecutorProvider)).probe(
+  return AuthProbeService(executor).probe(
     label: display,
     isLocal: isLocal,
     // Run from the repo when there is one so a repo-scoped gh/glab host
@@ -6167,8 +6216,13 @@ final projectMilestonesProvider = FutureProvider.autoDispose
       final gh = ref.watch(ghServiceProvider);
       final glab = ref.watch(glabServiceProvider);
       final allHistory = ref.watch(projectMilestonesScopeProvider(repoPath));
+      // Reordered (MADR 0050): forgeProvider awaits its own
+      // _forgeAuthReady internally, so watching it first — before this
+      // provider's own separate wait — removes the post-await watch without
+      // changing behaviour.
+      final forge = await ref.watch(forgeProvider(repoPath).future);
       await _forgeAuthReady(ref);
-      switch (await ref.watch(forgeProvider(repoPath).future)) {
+      switch (forge) {
         case Forge.github:
           return gh.listMilestones(repoPath, allHistory: allHistory);
         case Forge.gitlab:
@@ -6197,8 +6251,13 @@ final projectLabelsProvider = FutureProvider.autoDispose
       }
       final gh = ref.watch(ghServiceProvider);
       final glab = ref.watch(glabServiceProvider);
+      // Reordered (MADR 0050): forgeProvider awaits its own
+      // _forgeAuthReady internally, so watching it first — before this
+      // provider's own separate wait — removes the post-await watch without
+      // changing behaviour.
+      final forge = await ref.watch(forgeProvider(repoPath).future);
       await _forgeAuthReady(ref);
-      switch (await ref.watch(forgeProvider(repoPath).future)) {
+      switch (forge) {
         case Forge.github:
           return gh.listLabels(repoPath);
         case Forge.gitlab:
@@ -6222,8 +6281,13 @@ final projectReleasesProvider = FutureProvider.autoDispose
       }
       final gh = ref.watch(ghServiceProvider);
       final glab = ref.watch(glabServiceProvider);
+      // Reordered (MADR 0050): forgeProvider awaits its own
+      // _forgeAuthReady internally, so watching it first — before this
+      // provider's own separate wait — removes the post-await watch without
+      // changing behaviour.
+      final forge = await ref.watch(forgeProvider(repoPath).future);
       await _forgeAuthReady(ref);
-      switch (await ref.watch(forgeProvider(repoPath).future)) {
+      switch (forge) {
         case Forge.github:
           return gh.listReleases(repoPath);
         case Forge.gitlab:
@@ -6241,8 +6305,13 @@ final issueDetailProvider = FutureProvider.autoDispose
       final (repoPath, id) = key;
       final gh = ref.watch(ghServiceProvider);
       final glab = ref.watch(glabServiceProvider);
+      // Reordered (MADR 0050): forgeProvider awaits its own
+      // _forgeAuthReady internally, so watching it first — before this
+      // provider's own separate wait — removes the post-await watch without
+      // changing behaviour.
+      final forge = await ref.watch(forgeProvider(repoPath).future);
       await _forgeAuthReady(ref);
-      switch (await ref.watch(forgeProvider(repoPath).future)) {
+      switch (forge) {
         case Forge.github:
           return gh.issueDetail(repoPath, id);
         case Forge.gitlab:
@@ -6259,8 +6328,13 @@ final issueCommentsProvider = FutureProvider.autoDispose
       final (repoPath, id) = key;
       final gh = ref.watch(ghServiceProvider);
       final glab = ref.watch(glabServiceProvider);
+      // Reordered (MADR 0050): forgeProvider awaits its own
+      // _forgeAuthReady internally, so watching it first — before this
+      // provider's own separate wait — removes the post-await watch without
+      // changing behaviour.
+      final forge = await ref.watch(forgeProvider(repoPath).future);
       await _forgeAuthReady(ref);
-      switch (await ref.watch(forgeProvider(repoPath).future)) {
+      switch (forge) {
         case Forge.github:
           return gh.listIssueComments(repoPath, id);
         case Forge.gitlab:
@@ -6278,8 +6352,13 @@ final changeRequestCommentsProvider = FutureProvider.autoDispose
       final (repoPath, id) = key;
       final gh = ref.watch(ghServiceProvider);
       final glab = ref.watch(glabServiceProvider);
+      // Reordered (MADR 0050): forgeProvider awaits its own
+      // _forgeAuthReady internally, so watching it first — before this
+      // provider's own separate wait — removes the post-await watch without
+      // changing behaviour.
+      final forge = await ref.watch(forgeProvider(repoPath).future);
       await _forgeAuthReady(ref);
-      switch (await ref.watch(forgeProvider(repoPath).future)) {
+      switch (forge) {
         case Forge.github:
           return gh.listPullRequestComments(repoPath, id);
         case Forge.gitlab:
@@ -6313,16 +6392,23 @@ final mergeRequestDetailProvider = FutureProvider.autoDispose
 /// Failures surface as AsyncError — callers treat null/error as open method set.
 final repoMergePolicyProvider = FutureProvider.autoDispose
     .family<Object, String>((ref, repoPath) async {
+      // Registered before any await (MADR 0050), matching its siblings
+      // above (projectMilestonesProvider etc.): forgeProvider awaits its own
+      // _forgeAuthReady internally, so watching it first removes the
+      // post-await watch, and neither service reference nor the cache
+      // notifier needs an awaited value.
+      final gh = ref.watch(ghServiceProvider);
+      final glab = ref.watch(glabServiceProvider);
+      final cache = ref.read(repoMergePolicyCacheProvider(repoPath).notifier);
+      final forge = await ref.watch(forgeProvider(repoPath).future);
       await _forgeAuthReady(ref);
-      final policy = switch (await ref.watch(forgeProvider(repoPath).future)) {
-        Forge.github =>
-          await ref.watch(ghServiceProvider).repoMergePolicy(repoPath),
-        Forge.gitlab =>
-          await ref.watch(glabServiceProvider).repoMergePolicy(repoPath),
+      final policy = switch (forge) {
+        Forge.github => await gh.repoMergePolicy(repoPath),
+        Forge.gitlab => await glab.repoMergePolicy(repoPath),
         Forge.none || Forge.unknown => throw StateError(
           'No forge configured for this repository.',
         ),
       };
-      ref.read(repoMergePolicyCacheProvider(repoPath).notifier).set(policy);
+      cache.set(policy);
       return policy;
     }, retry: noProviderRetry);

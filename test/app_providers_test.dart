@@ -352,4 +352,39 @@ void main() {
       expect(observer.failures, isEmpty);
     });
   });
+
+  group('MADR 0050 — remoteTagsProvider ref.mounted guard', () {
+    const repoPath = '/repo';
+
+    test('disposed (last listener leaves) while the remotes await is pending: '
+        'zero failures', () async {
+      final remotesGate = Completer<List<String>>();
+      final observer = _CountingObserver();
+      final container = ProviderContainer(
+        observers: [observer],
+        overrides: [
+          remotesProvider(repoPath).overrideWith((ref) => remotesGate.future),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      final sub = container.listen<AsyncValue<Map<String, String>?>>(
+        remoteTagsProvider(repoPath),
+        (_, _) {},
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      // The only listener leaves while the remotes await is still pending
+      // — autoDispose tears the family entry down right away.
+      sub.close();
+      await Future<void>.delayed(Duration.zero);
+
+      // A non-empty list takes the `remote != null` branch, which is what
+      // used to hit `ref.keepAlive()` on a dead Ref.
+      remotesGate.complete(['origin']);
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+
+      expect(observer.failures, isEmpty);
+    });
+  });
 }
