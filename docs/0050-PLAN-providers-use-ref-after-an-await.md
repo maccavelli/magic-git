@@ -181,6 +181,39 @@ scan and allow-listed with the same shape of reason.
 **Gate.** `dart format` clean, `flutter analyze` No issues. **Commit** `ec8e916` (with Phase 0's fix,
 above — both test-only, one commit).
 
+### Phase 2, executed
+
+**Modified.** `repositoryWorkspacePrefsProvider` and `repoStructureProvider`: each moves its post-`await`
+`ref.watch` (respectively `appSettingsProvider.select(...)` and `gitServiceProvider`) to before the
+`await`, exactly as the MADR specifies.
+
+**Created.** `test/app_providers_test.dart` gains the F3 regression probe against the real
+`repoStructureProvider`, with `statusProvider(repoPath)` overridden to a `Completer`-controlled future
+and `gitServiceProvider` overridden to `_InstantTreeGit` (an immediate empty tree, so
+`_retryAfterForgeAuthIfNeeded`'s own separately-tracked catch-block read is never exercised) and a
+`_CountingObserver` recording every `providerDidFail`: (a) invalidated while the status await is still
+pending, with a listener attached throughout — `loading -> data`, zero failures; (b) the last listener
+leaves while the status await is still pending — zero failures.
+
+**Seen to fail**, in a detached scratch worktree with only the hoist reverted (the worktree's
+`app_providers.dart` was still unfixed at this point, since Phase 2 had not yet committed): case (a)
+passed unchanged, case (b) failed with the exact predicted shape —
+
+```text
+Expected: empty
+  Actual: [UnmountedRefException:Cannot use the Ref of FutureProvider<RepoNode>#64342(/repo) after it
+          has been disposed. …]
+```
+
+— one failure, matching MADR F3's verbatim report.
+
+**Gate.** `dart format` clean (after fixing three compile errors the first draft had: `RepoNode` needed
+importing from `repo_tree.dart`, `ProviderObserver` is a `base` class in this Riverpod version so
+`_CountingObserver` needs the same modifier, and Dart has no `String * int` — `'a' * 40` was replaced
+with a full 40-character literal). `flutter analyze` No issues. Targeted tests (the two new plus every
+test file touching either provider) green. Full suite: only the still-unresolved scan test failed, as
+expected — 4115 tests total (+2 from this phase), no other regressions. **Commit** `ef4c1da`.
+
 ## Implementation Steps
 
 ### Phase 0 — preconditions
