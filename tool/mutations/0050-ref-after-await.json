@@ -1,0 +1,84 @@
+[
+  {
+    "label": "repositoryWorkspacePrefsProvider: legacyPaneWidths watched after the identity await",
+    "file": "lib/core/providers/app_providers.dart",
+    "find": "      // Registered before the await (MADR 0050): Riverpod wants every\n      // dependency watched synchronously, and this one doesn't need\n      // `identity` — hoisting it also means a provider disposed while the\n      // identity resolves never touches `ref` again afterward.\n      final legacyPaneWidths = ref.watch(\n        appSettingsProvider.select((settings) => settings.paneWidths),\n      );\n      final identity = await ref.watch(\n        repositoryUiIdentityProvider(repoPath).future,\n      );\n      if (identity == null) return const RepositoryWorkspacePrefs();\n",
+    "replace": "      final identity = await ref.watch(\n        repositoryUiIdentityProvider(repoPath).future,\n      );\n      if (identity == null) return const RepositoryWorkspacePrefs();\n      final legacyPaneWidths = ref.watch(\n        appSettingsProvider.select((settings) => settings.paneWidths),\n      );\n",
+    "tests": [
+      "test/provider_ref_after_await_scan_test.dart"
+    ]
+  },
+  {
+    "label": "repoStructureProvider: gitServiceProvider watched after the structure-signature await",
+    "file": "lib/core/providers/app_providers.dart",
+    "find": "      // Registered before the await (MADR 0050): doesn't need the structure\n      // signature, and a provider disposed while it resolves must not touch\n      // `ref` again afterward.\n      final git = ref.watch(gitServiceProvider);\n      // Re-run only when the tree's shape (not its contents) changes.\n      await ref.watch(statusProvider(repoPath).selectAsync(structureSignature));\n",
+    "replace": "      // Re-run only when the tree's shape (not its contents) changes.\n      await ref.watch(statusProvider(repoPath).selectAsync(structureSignature));\n      final git = ref.watch(gitServiceProvider);\n",
+    "tests": [
+      "test/provider_ref_after_await_scan_test.dart",
+      "test/app_providers_test.dart"
+    ]
+  },
+  {
+    "label": "statusProvider: the output-log notifier read after the snapshot await",
+    "file": "lib/core/providers/app_providers.dart",
+    "find": "  // Registered before the await (MADR 0050): the warning loop below doesn't\n  // need `status`, only the notifier reference.\n  final log = ref.read(outputLogProvider.notifier);\n  final status = (await ref.watch(\n    repoSnapshotProvider(repoPath).future,\n  )).status;\n",
+    "replace": "  final status = (await ref.watch(\n    repoSnapshotProvider(repoPath).future,\n  )).status;\n  final log = ref.read(outputLogProvider.notifier);\n",
+    "tests": [
+      "test/provider_ref_after_await_scan_test.dart"
+    ]
+  },
+  {
+    "label": "savedLocalReposProvider: the output-log notifier read in the catch block",
+    "file": "lib/core/providers/app_providers.dart",
+    "find": "  // Registered before the await (MADR 0050): a provider disposed while the\n  // list load is pending must not touch `ref` again in the catch below.\n  final log = ref.read(outputLogProvider.notifier);\n  try {\n    return await ref.watch(localRepoStoreProvider).list();\n  } catch (e) {\n    log.logError('load saved local repos', e.toString());\n",
+    "replace": "  try {\n    return await ref.watch(localRepoStoreProvider).list();\n  } catch (e) {\n    ref\n        .read(outputLogProvider.notifier)\n        .logError('load saved local repos', e.toString());\n",
+    "tests": [
+      "test/provider_ref_after_await_scan_test.dart"
+    ]
+  },
+  {
+    "label": "repositoryUiIdentityProvider: sessionScopeId read after the layout await",
+    "file": "lib/core/providers/app_providers.dart",
+    "find": "      // Registered before the await (MADR 0050): neither branch below that\n      // reads it depends on `layout`.\n      final sessionScopeId = ref.read(sessionScopeProvider).id;\n      final layout = await ref.watch(repoLayoutProvider(repoPath).future);\n",
+    "replace": "      final layout = await ref.watch(repoLayoutProvider(repoPath).future);\n      final sessionScopeId = ref.read(sessionScopeProvider).id;\n",
+    "tests": [
+      "test/provider_ref_after_await_scan_test.dart"
+    ]
+  },
+  {
+    "label": "projectMilestonesProvider: forgeProvider watched after _forgeAuthReady's await",
+    "file": "lib/core/providers/app_providers.dart",
+    "find": "      // Reordered (MADR 0050): forgeProvider awaits its own\n      // _forgeAuthReady internally, so watching it first — before this\n      // provider's own separate wait — removes the post-await watch without\n      // changing behaviour.\n      final forge = await ref.watch(forgeProvider(repoPath).future);\n      await _forgeAuthReady(ref);\n      switch (forge) {\n        case Forge.github:\n          return gh.listMilestones(repoPath, allHistory: allHistory);\n",
+    "replace": "      await _forgeAuthReady(ref);\n      switch (await ref.watch(forgeProvider(repoPath).future)) {\n        case Forge.github:\n          return gh.listMilestones(repoPath, allHistory: allHistory);\n",
+    "tests": [
+      "test/provider_ref_after_await_scan_test.dart"
+    ]
+  },
+  {
+    "label": "repoMergePolicyProvider: gh/glab/cache watched after the forge await",
+    "file": "lib/core/providers/app_providers.dart",
+    "find": "      // Registered before any await (MADR 0050), matching its siblings\n      // above (projectMilestonesProvider etc.): forgeProvider awaits its own\n      // _forgeAuthReady internally, so watching it first removes the\n      // post-await watch, and neither service reference nor the cache\n      // notifier needs an awaited value.\n      final gh = ref.watch(ghServiceProvider);\n      final glab = ref.watch(glabServiceProvider);\n      final cache = ref.read(repoMergePolicyCacheProvider(repoPath).notifier);\n      final forge = await ref.watch(forgeProvider(repoPath).future);\n      await _forgeAuthReady(ref);\n      final policy = switch (forge) {\n        Forge.github => await gh.repoMergePolicy(repoPath),\n        Forge.gitlab => await glab.repoMergePolicy(repoPath),\n        Forge.none || Forge.unknown => throw StateError(\n          'No forge configured for this repository.',\n        ),\n      };\n      cache.set(policy);\n",
+    "replace": "      await _forgeAuthReady(ref);\n      final policy = switch (await ref.watch(forgeProvider(repoPath).future)) {\n        Forge.github =>\n          await ref.watch(ghServiceProvider).repoMergePolicy(repoPath),\n        Forge.gitlab =>\n          await ref.watch(glabServiceProvider).repoMergePolicy(repoPath),\n        Forge.none || Forge.unknown => throw StateError(\n          'No forge configured for this repository.',\n        ),\n      };\n      ref.read(repoMergePolicyCacheProvider(repoPath).notifier).set(policy);\n",
+    "tests": [
+      "test/provider_ref_after_await_scan_test.dart"
+    ]
+  },
+  {
+    "label": "remoteTagsProvider: keepAlive/onDispose unguarded after the remotes await",
+    "file": "lib/core/providers/app_providers.dart",
+    "find": "      if (remote == null) return null;\n      // Guarded (MADR 0050): `keepAlive`/`onDispose` only make sense once\n      // `remote` is known, so they cannot be hoisted above the await without\n      // pinning every instance regardless of whether it has a remote — a\n      // real behaviour change to MADR 0039's caching posture, not just a\n      // timing one. A provider disposed while the await above was pending\n      // has nothing left to pin or fetch for.\n      if (!ref.mounted) return null;\n      final link = ref.keepAlive();\n",
+    "replace": "      if (remote == null) return null;\n      final link = ref.keepAlive();\n",
+    "tests": [
+      "test/app_providers_test.dart"
+    ]
+  },
+  {
+    "label": "forgeProvider: keepAlive unguarded after the detect() await",
+    "file": "lib/core/providers/app_providers.dart",
+    "find": "  // Guarded (MADR 0050): `keepAlive` depends on the detected `forge`, so it\n  // cannot be hoisted above the awaits — a disposed provider has nothing\n  // left to pin.\n  if (ref.mounted && (forge == Forge.github || forge == Forge.gitlab)) {\n    ref.keepAlive();\n  }\n",
+    "replace": "  if (forge == Forge.github || forge == Forge.gitlab) {\n    ref.keepAlive();\n  }\n",
+    "tests": [
+      "test/app_providers_test.dart"
+    ]
+  }
+]
