@@ -4,7 +4,7 @@ date: 2026-09-12
 decision-makers: [Maintainer]
 consulted: []
 informed: [Magic Git contributors]
-verified: 2026-09-12
+verified: 2026-09-17
 ---
 
 # Preferred editor and preferred terminal are settings, stored by bundle identifier — and the system default stays the default

@@ -1,10 +1,10 @@
 ---
-status: "proposed"
+status: "accepted"
 date: 2026-09-12
 decision-makers: [Maintainer]
 consulted: []
 informed: [Magic Git contributors]
-verified: 2026-09-12
+verified: 2026-09-17
 ---
 
 # Providers touch `ref` after an `await`: the cost is a misleading log line, and the fix is to register dependencies synchronously

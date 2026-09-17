@@ -1,7 +1,8 @@
 ---
-status: "in-progress"
+status: "complete"
 date: 2026-09-12
 associated-madr: "0048-MADR-preferred-editor-and-terminal-as-settings.md"
+verified: 2026-09-17
 ---
 
 # Implement: preferred editor and preferred terminal as settings
@@ -470,6 +471,13 @@ the choice, that the chosen terminal opens at the worktree directory, and that a
 application falls back and says so once. Acceptance criterion 11 waits on them, and with it this
 plan's status.
 
+**5.4, closed 2026-09-17.** 5.4(a) was established along the way, during deviations (b)-(d): choosing
+WezTerm and Cursor through the picker required selecting the `.app` itself. 5.4(c) retired with the
+terminal setting (deviation (d)). 5.4(b) and 5.4(d) — the two items deviation (b) had retracted a
+false pass on — are now confirmed by the maintainer on the real machine: a file whose system default
+is not the chosen editor opens in the chosen editor, and an editor chosen then deleted/moved falls
+back to the system default and reports the notice once. Acceptance criterion 11 is met.
+
 #### Deviation (b) — the launch reads the choice before it has loaded (2026-09-12)
 
 **Found.** With phases 1–6 shipped and running, the maintainer reported "Open in Terminal" opening
@@ -696,9 +704,10 @@ tool/mutate.py           9 killed, 0 survived, 0 did not apply, 0 did not compil
 **Gate.** `dart format` clean, `flutter analyze` No issues, affected tests `00:07 +50`, full suite
 `03:30 +4092 ~3`. **Commit** `b8c54be`.
 
-**What the maintainer still owes**, now smaller: 5.4(b) — a chosen editor opens a file whose system
+**What the maintainer still owed**, now smaller: 5.4(b) — a chosen editor opens a file whose system
 default is something else — and 5.4(d), a chosen editor that has been deleted falls back and says so
-once. The terminal checks (5.4(c)) are retired with the setting.
+once. The terminal checks (5.4(c)) are retired with the setting. **Closed 2026-09-17** — see Phase 5's
+5.4 note above.
 
 ### Phase 6, executed
 
@@ -729,7 +738,7 @@ affected test files eight times, each in its own isolated worktree. **Commit** `
 | 8 | **Met.** `the rows read System default and Terminal when nothing is chosen` and `a stored choice is shown by name, not by bundle id` |
 | 9 | **Met.** catalogue 0048: 8 killed, 0 survived, 0 did not apply |
 | 10 | **Met.** analyze clean and the full suite green at every phase commit — with deviation (a)'s caveat on what a green suite currently proves |
-| 11 | **Outstanding** — step 5.4 is the maintainer's to run |
+| 11 | **Met**, 2026-09-17 — 5.4(a) established during the deviations, 5.4(c) retired with the terminal setting, 5.4(b) and 5.4(d) confirmed by the maintainer on the real machine |
 
 
 ## Verification
@@ -767,6 +776,7 @@ Exit statuses are captured, never piped into a filter.
 9. Catalogue 0048 reports `0 survived, 0 did not apply`, and every other catalogue still does.
 10. `flutter analyze` clean, full suite green, every staged Dart file formatted.
 11. Step 5.4's manual checks pass on the maintainer's Mac, with (a)'s result recorded either way.
+    **Met 2026-09-17.**
 
 ## Rollout and Rollback
 
