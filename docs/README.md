@@ -36,7 +36,7 @@ residuals or maintainer-only steps — 0010's Phase 7 is the standing example.
 | 0009 | [UI/UX debug-pass backlog](0009-MADR-ui-ux-debug-pass-backlog.md) | `accepted` | [plan](0009-PLAN-ui-ux-debug-pass-backlog.md) | `executed` |
 | 0010 | [In-app Help Book rewrite](0010-MADR-in-app-help-book-rewrite.md) | `accepted` | [plan](0010-PLAN-in-app-help-book-rewrite.md) | `executed` through Phase 6; **Phase 7 open** |
 | 0011 | [SSH transport stability hardening](0011-MADR-ssh-transport-stability-hardening.md) | `accepted` | [plan](0011-PLAN-ssh-transport-stability-hardening.md) | `executed` |
-| 0011 | [Toolbar slot schema migration](0011-MADR-toolbar-slot-schema-migration.md) ⚠ | `accepted` | — | |
+| 0011 | [Toolbar slot schema migration](0011-MADR-toolbar-slot-schema-migration.md) ⚠ | `accepted` | *(none — implementation and confirmation recorded in the MADR itself)* | `executed` — a v1→v2 preference-record migration (`currentVersion`/`minReadableVersion`/`defaultVisibleToolbarSlots` in `lib/core/settings/repository_workspace_prefs.dart`) repairing a hidden-toolbar defect on load; confirmed present in code and by its own named test group (`test/repository_workspace_prefs_test.dart`) 2026-09-17 |
 | 0012 | [Adopt dartssh2 3.3.0](0012-MADR-adopt-dartssh2-v3.md) | `accepted` | [plan](0012-PLAN-adopt-dartssh2-v3.md) | `executed` |
 | 0012 | [Focused commit composer sheet](0012-MADR-commit-composer-focused-sheet.md) ⚠ | `accepted` | [plan](0012-PLAN-commit-composer-focused-sheet.md) | `executed` |
 | 0013 | [Prefer dartssh2 over dartssh3](0013-MADR-prefer-dartssh2-v3-over-dartssh3.md) | `accepted` | [plan](0013-PLAN-prefer-dartssh2-v3-over-dartssh3.md) | `executed` |
