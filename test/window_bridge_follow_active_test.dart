@@ -13,6 +13,7 @@ import 'package:remote_magic_git/core/providers/window_manager_bridge.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 import 'package:remote_magic_git/core/window/window_channels.dart';
+import 'package:remote_magic_git/core/window/window_kind.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class _MutableConnection extends ConnectionController {
@@ -367,5 +368,141 @@ void main() {
     expect(execB.repos, [
       '/shared',
     ], reason: 'only the earlier owned request ran');
+  });
+
+  test('a detachedRepo window routes to its own pinned tab for a path no tab '
+      'owns (MADR 0047)', () async {
+    final execA = _FakeExecutor('A');
+    final containerA = ProviderContainer(
+      overrides: [
+        connectionProvider.overrideWith(
+          () => _MutableConnection(_connected('/a')),
+        ),
+        activeExecutorProvider.overrideWithValue(execA),
+      ],
+    );
+    final bridgeContainer = ProviderContainer();
+    addTearDown(containerA.dispose);
+    addTearDown(bridgeContainer.dispose);
+
+    const activeTab = 'A';
+    final byTab = {'A': containerA};
+    final bridge = bridgeContainer.read(windowManagerBridgeProvider.notifier)
+      ..sessionContainerFor = ((t) => byTab[t])
+      ..activeTabId = (() => activeTab)
+      // No open tab holds the worktree path — the case `_sessionOwns` and
+      // `containerForRepo` both refuse today.
+      ..containerForRepo = ((_) => null);
+
+    // Detached window opened from tab A, pinned to a linked worktree — a path
+    // that is neither tab A's active repo nor in any session's `repoPaths`.
+    await bridge.openDetachedRepo('/repo/wt');
+    expect(bridge.state.single.kind, WindowKind.detachedRepo);
+    expect(bridge.state.single.repoPath, '/repo/wt');
+    expect(bridge.state.single.tabId, 'A');
+
+    final reply = await deliverHubCall(
+      'execute',
+      encodeExecuteRequest(_req('/repo/wt')),
+    );
+    expect(
+      decodeExecuteResponse((reply as Map).cast<Object?, Object?>()).stdout,
+      'served-by-A',
+      reason:
+          'the window\'s own pin routes to its pinned tab, where today '
+          'this RELAY_DOWNs',
+    );
+    expect(execA.repos, ['/repo/wt']);
+  });
+
+  test(
+    "a detachedRepo window's own pin still wins with a second, unrelated tab "
+    'open',
+    () async {
+      final execA = _FakeExecutor('A');
+      final execB = _FakeExecutor('B');
+      final containerA = ProviderContainer(
+        overrides: [
+          connectionProvider.overrideWith(
+            () => _MutableConnection(_connected('/a')),
+          ),
+          activeExecutorProvider.overrideWithValue(execA),
+        ],
+      );
+      final containerB = ProviderContainer(
+        overrides: [
+          connectionProvider.overrideWith(
+            () => _MutableConnection(_connected('/b')),
+          ),
+          activeExecutorProvider.overrideWithValue(execB),
+        ],
+      );
+      final bridgeContainer = ProviderContainer();
+      addTearDown(containerA.dispose);
+      addTearDown(containerB.dispose);
+      addTearDown(bridgeContainer.dispose);
+
+      const activeTab = 'A';
+      final byTab = {'A': containerA, 'B': containerB};
+      final bridge = bridgeContainer.read(windowManagerBridgeProvider.notifier)
+        ..sessionContainerFor = ((t) => byTab[t])
+        ..activeTabId = (() => activeTab)
+        ..containerForRepo = ((_) => null);
+
+      await bridge.openDetachedRepo('/repo/wt');
+      expect(bridge.state.single.tabId, 'A');
+
+      await deliverHubCall('execute', encodeExecuteRequest(_req('/repo/wt')));
+      expect(execA.repos, ['/repo/wt'], reason: 'routed to the pinned tab');
+      expect(
+        execB.repos,
+        isEmpty,
+        reason: 'an unrelated open tab never runs the window\'s command',
+      );
+    },
+  );
+
+  test('a detachedRepo window asking for a path that is not its own pin still '
+      'gets RELAY_DOWN', () async {
+    final execA = _FakeExecutor('A');
+    final containerA = ProviderContainer(
+      overrides: [
+        connectionProvider.overrideWith(
+          () => _MutableConnection(_connected('/a')),
+        ),
+        activeExecutorProvider.overrideWithValue(execA),
+      ],
+    );
+    final bridgeContainer = ProviderContainer();
+    addTearDown(containerA.dispose);
+    addTearDown(bridgeContainer.dispose);
+
+    const activeTab = 'A';
+    final byTab = {'A': containerA};
+    final bridge = bridgeContainer.read(windowManagerBridgeProvider.notifier)
+      ..sessionContainerFor = ((t) => byTab[t])
+      ..activeTabId = (() => activeTab)
+      ..containerForRepo = ((_) => null);
+
+    await bridge.openDetachedRepo('/repo/wt');
+
+    var threw = false;
+    try {
+      await deliverHubCall(
+        'execute',
+        encodeExecuteRequest(_req('/somewhere/else')),
+      );
+    } catch (_) {
+      // RELAY_DOWN surfaces as a decode error on the reply — expected.
+      threw = true;
+    }
+    expect(
+      threw,
+      isTrue,
+      reason:
+          'the own-pin exception is scoped to the window\'s own pin, not a '
+          'general relaxation',
+    );
+    expect(execA.repos, isEmpty);
   });
 }

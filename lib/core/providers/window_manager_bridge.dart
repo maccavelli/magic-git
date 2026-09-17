@@ -576,6 +576,10 @@ class WindowManagerBridge extends Notifier<List<WindowHandle>> {
         //  - prefer the pinned tab when its live session actually OWNS the repo
         //    — this pins to the right host when the same path is open on two
         //    connections, and is the normal fast path;
+        //  - otherwise, for a repo-bound (non-singleton) window whose own pin
+        //    IS the requested repo, its pinned tab still — this is the MADR
+        //    0047 case: a worktree the pinned tab already watches but does not
+        //    "own" by `_sessionOwns` (it's not in `repoPaths`);
         //  - otherwise the (first) open tab that holds the repo — this routes a
         //    follow-active window's lagging request for the PREVIOUS repo to
         //    whichever tab still has it, mid-switch;
@@ -583,7 +587,11 @@ class WindowManagerBridge extends Notifier<List<WindowHandle>> {
         // Crucially there is NO "fall back to the pinned tab regardless" branch:
         // running `git -C <repo>` against a session that doesn't own it would hit
         // the wrong host (or silently the wrong repo). RELAY_DOWN is the safe end.
-        final execContainer = _execContainerFor(container, request.repoPath);
+        final execContainer = _execContainerFor(
+          container,
+          request.repoPath,
+          handle,
+        );
         if (execContainer == null) throw _relayDown();
         try {
           // Re-inject the scoped/dotfiles GIT_DIR/GIT_WORK_TREE overlay here.
@@ -641,6 +649,7 @@ class WindowManagerBridge extends Notifier<List<WindowHandle>> {
         final uploadContainer = _execContainerFor(
           container,
           upload.routingRepo,
+          handle,
         );
         if (uploadContainer == null) throw _relayDown();
         try {
@@ -777,14 +786,29 @@ class WindowManagerBridge extends Notifier<List<WindowHandle>> {
 
   /// Picks the session container to run a proxied `execute` for [repoPath] on.
   /// See the routing comment in `_onHubCall`. Prefers [pinned] when its session
-  /// owns the repo, else any open tab that holds it, else null (RELAY_DOWN).
+  /// owns the repo, then [pinned] again when [repoPath] is [handle]'s own pin
+  /// (MADR 0047), else any open tab that holds it, else null (RELAY_DOWN).
   ProviderContainer? _execContainerFor(
     ProviderContainer? pinned,
     String repoPath,
+    WindowHandle? handle,
   ) {
     if (pinned != null && _sessionOwns(pinned, repoPath)) return pinned;
+    if (pinned != null &&
+        handle != null &&
+        _isOwnPin(handle, repoPath) &&
+        pinned.read(connectionProvider).isConnected) {
+      return pinned;
+    }
     return containerForRepo(repoPath);
   }
+
+  /// Whether [repoPath] is [handle]'s own pinned path on a repo-bound
+  /// (non-singleton) window (MADR 0047, option A). History is excluded by
+  /// `isSingleton`: its lagging-request behaviour during a repo switch is
+  /// `_sessionOwns`/`containerForRepo` only, unchanged by this branch.
+  bool _isOwnPin(WindowHandle handle, String repoPath) =>
+      !handle.kind.isSingleton && handle.repoPath == repoPath;
 
   /// Whether [container]'s live connection currently serves [repoPath] — its
   /// active repo or one of the connection's known repos (a single host can hold
