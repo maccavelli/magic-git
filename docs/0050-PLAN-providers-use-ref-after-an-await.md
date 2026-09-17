@@ -1,5 +1,5 @@
 ---
-status: "in-progress"
+status: "complete"
 date: 2026-09-17
 verified: 2026-09-17
 associated-madr: "0050-MADR-providers-use-ref-after-an-await.md"
@@ -339,9 +339,10 @@ answered the same question in a bounded time.)
 
 `docs/README.md`'s row updated to reflect execution through Phase 4 and the one outstanding item.
 
-**This plan's status stays `in-progress`, not `complete`**, matching the same convention 0048 used:
-acceptance criterion 6 (the manual "open and quickly leave a remote worktree tab" check) is the
-maintainer's to run, and the plan does not claim `complete` until it is. Every other criterion is met.
+**Closed 2026-09-17.** The maintainer ran acceptance criterion 6 on the real machine — a remote worktree
+tab opened and closed quickly, Output pane stayed clean — after fixing an unrelated Xcode 27 /
+CoreSimulator version mismatch that was blocking the build (`sudo xcodebuild -runFirstLaunch`, outside
+this plan's scope). All six acceptance criteria are now met; this plan's status moves to `complete`.
 
 ## Implementation Steps
 
@@ -533,9 +534,8 @@ recorded either way, since this is the symptom that opened the record.
    below.
 5. **Met.** `flutter analyze` clean at every phase; full suite green (4119 tests, up from the 4113
    baseline); every staged Dart file formatted before each commit.
-6. **Outstanding — the maintainer's own check.** Opening and quickly leaving a remote worktree tab
-   should produce no Output-pane error. Nothing in this plan's automated gates can drive a live remote
-   session, so this is unverified until run on the maintainer's machine.
+6. **Met, 2026-09-17.** Opening and quickly leaving a remote worktree tab on the maintainer's machine:
+   Output pane stayed clean, no error logged.
 
 ## Rollout and Rollback
 
