@@ -145,6 +145,53 @@ tab owns — exactly this plan's gap. `container.read(windowManagerBridgeProvide
 .openDetachedRepo([repoPath])` is the public entry point the app itself uses
 (`WorktreesView._openInWindow`), confirmed at `window_manager_bridge.dart:153`.
 
+## Execution Record
+
+Approved and executed starting 2026-09-17.
+
+### Phase 0, executed
+
+`Flutter 3.47.2` matched `FLUTTER_VERSION`; `flutter pub get --enforce-lockfile` resolved clean;
+`lib/`, `test/` were clean. Baseline `flutter test`: 4119 tests, 0 failures.
+
+### Phase 1, executed
+
+**Modified.** `_execContainerFor` gains a nullable `WindowHandle? handle` parameter and a second
+short-circuit — `pinned` when `_isOwnPin(handle, repoPath)` (a repo-bound, non-singleton window whose
+own pin is the requested path) and `pinned`'s connection is still connected — between the existing
+ownership check and the `containerForRepo` fallback. A new one-line predicate, `_isOwnPin`, names the
+condition. Both call sites in `_onHubCall` (`execute`, `uploadBytes`) now pass `handle`, which was
+already in scope at both. The routing comment above the `execute` call gained the MADR's own third
+bullet, quoted rather than re-derived.
+
+**Created.** Three tests in `test/window_bridge_follow_active_test.dart`, reusing the existing harness
+(`_MutableConnection`, `_FakeExecutor`, `_connected`, `_req`, `deliverHubCall`) verbatim — no new
+harness needed, matching the plan's Grounding section: `'a detachedRepo window routes to its own
+pinned tab for a path no tab owns (MADR 0047)'`, `"a detachedRepo window's own pin still wins with a
+second, unrelated tab open"`, `'a detachedRepo window asking for a path that is not its own pin still
+gets RELAY_DOWN'`. The file's four pre-existing tests run unmodified alongside them.
+
+**Seen to fail**, in a detached scratch worktree with only the fix reverted (copying just the modified
+test file onto the unmodified `HEAD`): the new "routes to its own pinned tab" test failed with the
+exact predicted shape —
+
+```text
+PlatformException(RELAY_DOWN, the window's tab has closed, null, null)
+```
+
+**Gate.** One compile fix along the way: `WindowKind` needed its own import in the test file (not
+re-exported by `window_manager_bridge.dart`), caught by the first test run and fixed before formatting.
+`dart format` clean (one import-ordering lint from `flutter analyze` fixed by re-sorting). `flutter
+analyze` No issues. Targeted tests — `window_bridge_follow_active_test.dart`,
+`window_manager_bridge_test.dart`, `tabs_host_test.dart` — 42/42 green. Full suite: 4122 tests (+3), all
+green, no regressions. **Commit** `6234f76`.
+
+**Incidental cleanup.** Removed an orphaned scratch worktree at
+`/private/var/folders/.../T/mutate-37rrpqcx`, left behind by an earlier `tool/mutate.py` run for the
+0050 plan that was stopped mid-check (via `TaskStop`) before it reached its own cleanup step — unrelated
+to this plan's own two scratch worktrees, which were each removed immediately after their seen-to-fail
+check as usual.
+
 ## Implementation Steps
 
 ### Phase 0 — preconditions
