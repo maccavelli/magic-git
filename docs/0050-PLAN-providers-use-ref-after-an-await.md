@@ -214,6 +214,76 @@ with a full 40-character literal). `flutter analyze` No issues. Targeted tests (
 test file touching either provider) green. Full suite: only the still-unresolved scan test failed, as
 expected — 4115 tests total (+2 from this phase), no other regressions. **Commit** `ef4c1da`.
 
+### Phase 3, executed
+
+**Resolved every one of the 26 sites Phase 1's real scan reported**, plus one it now also flags
+(`pinnedBranchesProvider`, a branch-exclusive false positive, allow-listed the same way as
+`forgeRepoListProvider`):
+
+* **Simple hoists (12 sites):** `savedLocalReposProvider`, `savedConnectionsProvider`,
+  `_retryAfterForgeAuthIfNeeded` (a `ref.mounted` guard, matching its own later guard's idiom — it is a
+  helper, not a scanned provider, but MADR F5 named it), `statusProvider`, `refsProvider`,
+  `branchReviewProvider`, `branchMergePreviewProvider`, `repositoryUiIdentityProvider`,
+  `localAuthStatusProvider`, `sessionAuthStatusProvider`, `forgeAuthProvider` — each moved a
+  `ref`-independent-of-the-awaited-value read/watch (mostly `outputLogProvider.notifier`, a service
+  reference, or `sessionScopeProvider`) to before its await.
+* **The six-provider batch (3.2):** `projectMilestonesProvider`, `projectLabelsProvider`,
+  `projectReleasesProvider`, `issueDetailProvider`, `issueCommentsProvider`,
+  `changeRequestCommentsProvider` — identical two-line reorder (watch `forgeProvider` first, await
+  `_forgeAuthReady` second), applied in one `replace_all` edit since the anchor text was verbatim
+  identical across all six.
+* **`repoMergePolicyProvider` (3.3):** brought in line with its six siblings — hoisted `gh`/`glab`
+  watches and the cache notifier read to the top, applied the same reorder.
+* **`branchBaseProvider` (3.4):** every `ref.watch`/`ref.read` — including the three whose *await* used
+  to follow an earlier one (`remotesProvider`, `branchWorkspacePrefsProvider`,
+  `repoMergePolicyProvider`) — registered synchronously up front, awaited afterward. **Disclosed
+  deviation from "no behavioural change":** since watching a provider starts its build, this makes the
+  three fetches start together rather than strictly after `refsProvider` resolves — a real timing change
+  (each is independent of the others' results, so the values are unaffected). Verified against
+  `branch_base_resolution_test.dart`, unchanged, 7/7 green.
+* **`namespaceSuggestionsProvider` (3.4):** `savedConnectionsProvider` is now watched unconditionally
+  (Riverpod's own guidance — a watch should not be conditional) and only *awaited* inside the
+  `connectionId != null` branch; `namespaceHistoryProvider` and the local/active executor read also
+  hoisted. **Same disclosed class of deviation:** `savedConnectionsProvider` is now watched (and so
+  built) even when `connectionId == null`, where before it was skipped entirely — likely inconsequential
+  since the provider is commonly already active elsewhere in the app, but a real timing difference.
+  Verified against `create_repo_namespace_search_test.dart` / `namespace_backfill_wiring_test.dart` /
+  `namespace_suggestions_test.dart`, unchanged, 40/40 green.
+* **`remoteTagsProvider`'s `keepAlive`/`onDispose` and `forgeProvider`'s `keepAlive` (3.4):** guarded
+  with `ref.mounted` rather than hoisted — both depend on the awaited value (whether there's a remote;
+  which forge) to decide *whether* to pin the provider at all, and hoisting unconditionally would pin
+  every instance regardless, a real change to MADR 0039's caching posture. `remoteTagsProvider`'s
+  `ref.read(gitServiceProvider)` was hoisted normally (it doesn't need the awaited value).
+* **The `branch_forge_status.dart` trio (found by Phase 1's real scan, 3.4):** `branchForgeProvider`,
+  `protectedBranchRulesProvider`, `branchForgeKnowledgeProvider` — each guarded with `ref.mounted`
+  immediately after their shared `forgeProvider` await, before the per-forge `switch`, since each
+  `switch` case watches a *different* provider depending on the awaited forge and hoisting all of them
+  unconditionally would mean fetching every forge's data regardless of which one the repo actually uses.
+
+**Seen to fail**, in two detached scratch worktrees, for the two guard classes:
+
+* `remoteTagsProvider`'s guard (a genuine disposal-throw site): removed, and the new
+  `MADR 0050 — remoteTagsProvider ref.mounted guard` test failed with the exact predicted
+  `UnmountedRefException`, one failure.
+* `branchForgeProvider`'s guard: removed, and the equivalent test **still passed, zero failures** —
+  because `branchForgeProvider`'s own outer `try { … } catch (_) { return const {}; }` already absorbs
+  the disposed-Ref exception before it reaches Riverpod's failure-reporting observer. **Recorded
+  honestly, not silently accepted**: for this specific site (and, by the same catch-per-case shape,
+  `protectedBranchRulesProvider` and `branchForgeKnowledgeProvider` — not independently re-verified,
+  since they share the identical pattern), the guard is a correctness improvement against the scan's
+  general rule (F5's "late watch" concern) and a defensive simplification, but the "seen to fail"
+  evidence it prevents an *observable* failure only holds for `remoteTagsProvider` and `forgeProvider`
+  (whose `keepAlive` sits outside any catch). The other five 3.1/3.2/3.3 hoists were not independently
+  probed beyond the scan test itself and their existing test-suite coverage, per the plan's own 3.7 —
+  each is a mechanical, same-shape hoist already exercised by `branch_review`/`branch_merge_preview`/
+  `repository_ui_identity`/auth-status/forge-auth-covering tests, which all stayed green.
+
+**Gate.** `dart format` clean. `flutter analyze` No issues. Targeted tests across every touched provider
+(app_providers_test.dart, branch_forge_status_test.dart, branch_forge_knowledge_test.dart,
+branch_base_resolution_test.dart, the three namespace-suggestion files, the scan test itself): 80/80
+green. Full suite: 4118 tests (+3 from this phase), all green — the scan test passes for the first time.
+**Commit** `7d3267e`.
+
 ## Implementation Steps
 
 ### Phase 0 — preconditions
