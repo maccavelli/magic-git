@@ -201,6 +201,12 @@ turns out not to be but the next one may be.
   nothing, silently. `AGENTS.md` documents this hazard for `app_providers.dart` only. Anyone
   investigating by search will be misled the same way this analysis briefly was, and the file list in
   `AGENTS.md` should either name both or be replaced by a check that finds them.
-* **Not established.** Whether any of the other 26 sites currently throws in practice. The scan in C is
-  what would answer that; F4 counts shape, not occurrences.
-* **No implementation exists.** This record proposes a decision; a plan follows only on approval.
+* **Established by the plan's Phase 1 scan.** The real count was 26 sites (23 in `app_providers.dart`,
+  matching this record's hand count exactly, plus 3 more in `lib/core/forge/branch_forge_status.dart`
+  a narrower hand-written glob had missed) against 28 raw textual matches — the other 2 were false
+  positives (an already-guarded `Timer` callback, a branch-exclusive `if`/`else`). Of the 26, most threw
+  when disposed mid-await and are now fixed by hoisting; a few (`branchForgeProvider` and its two
+  siblings) never surfaced an observable failure at all, because their own broad `catch` blocks already
+  absorbed the exception — verified by removing their guard and observing no change.
+* **Implementation:** [0050-PLAN-providers-use-ref-after-an-await.md](0050-PLAN-providers-use-ref-after-an-await.md),
+  executed through Phase 5.

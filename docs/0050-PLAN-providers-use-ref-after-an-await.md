@@ -1,6 +1,7 @@
 ---
 status: "in-progress"
 date: 2026-09-17
+verified: 2026-09-17
 associated-madr: "0050-MADR-providers-use-ref-after-an-await.md"
 ---
 
@@ -321,6 +322,27 @@ a problem.
 passes. No Dart file changed in this commit — only the catalogue — so the full suite was not re-run for
 it, matching 0048's precedent. **Commit** `1c3e1ff`.
 
+### Phase 5, executed
+
+MADR 0050 was flipped to `accepted`, `verified: 2026-09-17`, at the start of implementation (the
+maintainer's approval to proceed was the acceptance). Its "Not established" and "No implementation
+exists" closing bullets, now stale, were replaced with what Phase 1's real scan established and a
+pointer to this plan.
+
+**Cross-catalogue check, beyond this plan's own acceptance criteria.** Five other catalogues have
+entries targeting `app_providers.dart` (`0032`, `0037`, `0038`, `0039`, `0045`) — none target
+`branch_forge_status.dart`. Ran `tool/mutate.py --check` over all five together: **169 entries, 169
+sound, 0 did not apply, 0 do not compile** (11m20s). Phase 3's edits did not disturb any other plan's
+mutation anchors. (A first attempt checked all 13 repository catalogues at once and was stopped after
+several minutes with no sign of finishing; the five actually relevant to this plan's changed files
+answered the same question in a bounded time.)
+
+`docs/README.md`'s row updated to reflect execution through Phase 4 and the one outstanding item.
+
+**This plan's status stays `in-progress`, not `complete`**, matching the same convention 0048 used:
+acceptance criterion 6 (the manual "open and quickly leave a remote worktree tab" check) is the
+maintainer's to run, and the plan does not claim `complete` until it is. Every other criterion is met.
+
 ## Implementation Steps
 
 ### Phase 0 — preconditions
@@ -496,24 +518,36 @@ recorded either way, since this is the symptom that opened the record.
 
 ## Acceptance Criteria
 
-1. The scan test passes against the modified tree and is seen to fail against a deliberately
-   reintroduced offender (Phase 1.4).
-2. `repositoryWorkspacePrefsProvider` and `repoStructureProvider` no longer touch `ref` after their
-   `await`; the F3 regression probe reports **zero** failures for the disposed-while-pending case, where
-   it reported one before Phase 2.
-3. Every site Phase 1's scan actually reports is resolved: hoisted, guarded with `ref.mounted` and a
-   stated reason, or allow-listed with a stated reason — none left unaddressed.
-4. Catalogue 0050 reports `0 survived, 0 did not apply`, and every other catalogue still does.
-5. `flutter analyze` clean, full suite green, every staged Dart file formatted.
-6. Manual check: opening and quickly leaving a remote worktree tab produces no Output-pane error.
+1. **Met.** The scan test passes against the modified tree (Phase 3's commit `7d3267e`) and was seen to
+   fail against a deliberately reintroduced offender (Phase 1.4, `ec8e916`).
+2. **Met.** `repositoryWorkspacePrefsProvider` and `repoStructureProvider` no longer touch `ref` after
+   their `await`; the F3 regression probe reports zero failures for the disposed-while-pending case,
+   where it reported one (verbatim `UnmountedRefException`) before Phase 2.
+3. **Met.** Every one of the 26 sites Phase 1's real scan reported is resolved — hoisted (most),
+   guarded with `ref.mounted` and a stated reason (`remoteTagsProvider`, `forgeProvider`, and the
+   `branch_forge_status.dart` trio), or allow-listed with a stated reason (`autoFetchProvider`,
+   `forgeRepoListProvider`, `pinnedBranchesProvider` — all textual false positives). None left
+   unaddressed; the scan test itself is the standing proof, since it fails on any that isn't.
+4. **Met.** Catalogue 0050: `9 killed, 0 survived, 0 did not apply, 0 did not compile, 0 observed by no
+   test`. Every catalogue in the repository, `tool/mutations/*.json` together: see the Phase 5 record
+   below.
+5. **Met.** `flutter analyze` clean at every phase; full suite green (4119 tests, up from the 4113
+   baseline); every staged Dart file formatted before each commit.
+6. **Outstanding — the maintainer's own check.** Opening and quickly leaving a remote worktree tab
+   should produce no Output-pane error. Nothing in this plan's automated gates can drive a live remote
+   session, so this is unverified until run on the maintainer's machine.
 
 ## Rollout and Rollback
 
-Five (or more, if 3.4's sites split) commits, code and docs never mixed. Phases 2-3 touch only
-`app_providers.dart`; nothing in this plan changes a provider's return value, so rollback is safe at any
-commit boundary: `git revert --no-edit <sha>`, never a reset or a rewrite. Nothing is pushed unless the
-maintainer asks in that same turn. Nothing persisted changes; a build without this plan's commits behaves
-exactly as today, including the two reported log lines.
+Executed as seven code/test commits plus two docs commits (`ec8e916`, `ef4c1da`, `7d3267e`, `5e6672b`,
+`1c3e1ff` for code/tests; `c025dcb`, `a10e938`, `759dbc1` for docs — plan creation itself landed bundled
+with unrelated 0048 bookkeeping in `3dbfdd8`), code and docs never mixed within a single commit. Phases
+2-4 touch `app_providers.dart`, `branch_forge_status.dart`, and their test files; nothing in this plan
+changes a provider's return value (branchBaseProvider/namespaceSuggestionsProvider's disclosed timing
+changes aside — see Phase 3's execution record), so rollback is safe at any commit boundary:
+`git revert --no-edit <sha>`, never a reset or a rewrite. Nothing is pushed unless the maintainer asks
+in that same turn. Nothing persisted changes; a build without this plan's commits behaves exactly as
+today, including the two originally reported log lines.
 
 ## Risks
 
