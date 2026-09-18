@@ -315,7 +315,40 @@ GitService method, no new abort/continue logic, just a second place the existing
   reconciliation dialog itself, and does not answer the specific "my clones are out of sync" problem
   this record exists for — it answers "will my next merge conflict," a related but separate question.
 * Bad, because it costs continuous background git work (a `merge-tree`-style check per branch pair) with
-  no natural cache-invalidation story yet designed, which C's on-demand `merge-base` call avoids.
+  no natural cache-invalidation story yet designed, which C avoids by reusing the merge-base check
+  already run on demand by the existing merge-preview path (Amendment 0051.1).
+
+## Amendments
+
+### 0051.1 — three things already built, found while drafting the plan (2026-09-17)
+
+**What this record assumed.** That `merge-base`/unrelated-histories detection needed a new
+`GitService.mergeBase()` method (F10, Decision Outcome item 2); that fixing the upstream defect meant
+conditionally hiding whichever of Publish/Set-upstream doesn't apply (Decision Outcome item 1); and, more
+implicitly, that the "Reconcile…" dialog (item 3) was new UI to build from nothing.
+
+**What the plan-drafting investigation found.** All three already exist, in whole or in the load-bearing
+part:
+
+1. **`merge-base` and unrelated-histories detection already exist and already render.**
+   `GitService._mergeTreePreviewUnlocked` already runs `git merge-base` and returns
+   `BranchMergePreview.unrelated()` when it finds none; a separate `ComparisonAncestry.unrelated` flag is
+   already computed and the detail pane already shows "No common ancestor…" for it — with no action
+   attached, which is the actual gap. No new `mergeBase()` method is needed; the only new primitive is
+   `allowUnrelatedHistories` as a `merge()` parameter, wired to the display that already exists.
+2. **The "Reconcile…" dialog is largely already built.** `_dropOnCurrent` (the drag-and-drop "combine
+   branches" flow) already offers a named Merge-vs-Rebase choice through the generic `chooseAction<T>`
+   dialog primitive and a `DropOp` enum — it is wired only from drag-and-drop, not from either menu. The
+   plan extends this existing mechanism (a third "Reset to upstream" choice, new menu call sites) instead
+   of inventing new dialog machinery.
+3. **The upstream fix is narrower than F6/the Decision Outcome stated.** `_publishBranch`'s menu
+   visibility is already gated on `upstream == null` — already correct, nothing to hide. `_setUpstream` is
+   a free-text prompt (not fixed to `origin/<name>`) that simply never validates its typed target against
+   the real ref list before calling `git branch --set-upstream-to`. The fix is that validation and its
+   error message, not conditional menu-item visibility.
+
+**Decision unchanged.** Option C stands; this only corrects how much of it already exists, which is more
+than F10 credited, and narrows the plan's actual new-code surface accordingly.
 
 ## More Information
 
