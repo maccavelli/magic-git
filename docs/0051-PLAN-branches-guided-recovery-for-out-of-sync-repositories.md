@@ -459,6 +459,58 @@ files: clean. Targeted: `branches_sync_state_test.dart` 10/10, `workspace_golden
 `flutter test`: 4135 passed, 3 skipped, 0 failed.
 **Commit** `0888f72`.
 
+### Phase 5, executed
+
+**Checked against the primitives first, as 5.1 required.** `chooseAction`, `git.reset(repoPath, hash,
+mode:)`, `runGuarded` and `_runRebaseOnto` match the sketch. The one difference is that `confirmAction`'s
+flag is `destructive`, not `isDestructive`. The sketch already allowed for that ("or whatever it's
+actually called"), so it was a spelling correction, not a shape change, and not escalated. The hard reset
+is journaled (`UndoOpKind.resetHard`, with a pre-reset snapshot), so the dialog's "Reversible with ⌘Z"
+line is true.
+
+**Modified.** `branches_view.dart`: `ReconcileOp` and `_reconcile`/`_runResetToUpstream` per 5.1, wired
+as `onReconcile` into both `BranchNavigator` and `BranchDetail`. `branch_navigator.dart` (context menu)
+and `branch_detail.dart` (Advanced menu): a **Reconcile…** item right after the non-head merge block,
+gated `b.isHead && classifyBranchSyncStateCoarse(b) == BranchSyncState.diverged` (5.2).
+
+**Correction, not escalated — where unrelated histories are told apart.** 5.2 routes
+`unrelatedHistories` to Phase 4's flow instead of the chooser. After Phase 3's command-budget resolution,
+though, a menu only has the coarse state, and coarse `diverged` covers both cases. So both menus gate on
+coarse `diverged`, which is exactly "diverged or unrelated", and `_reconcile` resolves the real state
+itself when invoked (`classifyBranchSyncStateAsync`, under `runAction` so a failed `merge-base` surfaces
+as an error rather than being swallowed). Unrelated histories then go to `_mergeAllowUnrelated`, and
+Rebase/Reset are never offered for them. The `merge-base` costs one call on the user's click, never per
+painted row, so the Browse budget Phase 3 protected is untouched. This implements 5.2's routing as
+written; only the point where the distinction is resolved moved.
+
+**Created.** `test/branches_reconcile_test.dart`, nine tests (5.4):
+- Reconcile is offered on a diverged current branch in both menus, and absent in both menus for a
+  diverged non-current branch and for an up-to-date current branch.
+- Merge calls `merge('origin/main', normal)`, and Rebase calls `rebaseOnto('origin/main')`.
+- Reset shows its own "Reset to origin/main?" confirmation ("discards 2 commits") and does not reset
+  until "Reset" is pressed, then calls `reset('origin/main', hard)`. Cancelling that confirmation resets
+  nothing.
+- Cancel in the chooser does nothing.
+- Unrelated histories skip the chooser and land in the Phase 4 dialog, where confirming merges with the
+  flag set.
+
+**Seen to fail** (5.3 and beyond), in a detached scratch worktree at `7a13968` carrying this phase's
+files, one mutation at a time. The driving script asserts each regex matched exactly once and that the
+substitution landed, and confirms each failure was not a compile error:
+- *Context-menu head gate removed*: the non-current-branch test failed, `Found 1 widget with text
+  "Reconcile…"`, reason "context menu".
+- *Advanced-menu head gate removed*: the same test failed at the "Advanced menu" assertion, so each
+  menu's gate is proven separately.
+- *Reset's confirmation removed*: `Actual: [(origin/main, ResetMode.hard)]`, "nothing before the
+  confirm".
+- *Unrelated-histories routing removed*: the chooser "Reconcile with origin/main" appeared where the
+  Phase 4 dialog should have.
+
+**Gate.** `flutter analyze`: no issues. `dart format --set-exit-if-changed` on all four touched Dart
+files: clean. Targeted: `branches_reconcile_test.dart` 9/9. Full `flutter test`: 4144 passed (+9),
+3 skipped, 0 failed.
+**Commit** `8e6f84f`.
+
 ## Implementation Steps
 
 ### Phase 0 — preconditions
