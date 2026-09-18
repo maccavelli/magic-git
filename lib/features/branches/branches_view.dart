@@ -23,6 +23,7 @@ import '../common/adaptive_workspace_layout.dart';
 import '../common/branch_switch.dart';
 import '../common/busy_action.dart';
 import '../common/inline_action_button.dart';
+import '../common/pending_op_banner.dart';
 import '../common/prompt_form_sheet.dart';
 import '../common/prompt_text_sheet.dart';
 import '../common/ref_name_validation.dart';
@@ -616,7 +617,7 @@ class _BranchesViewState extends ConsumerState<BranchesView>
       refCount: refs.length,
       supplement: supplement,
     );
-    return RepositoryWorkspaceScaffold(
+    final scaffold = RepositoryWorkspaceScaffold(
       repositoryContext: RepositoryContextBar(
         snapshot: snapshot,
         primaryAction: RepositoryPrimaryAction(
@@ -635,6 +636,38 @@ class _BranchesViewState extends ConsumerState<BranchesView>
       onPreferencesChanged: workspace.onChanged,
       workspaceOptionsEnabled: true,
     );
+    // Repo-wide, not per row: mid-rebase HEAD is detached and no branch row
+    // is current. Above the scaffold rather than in its context slot, which
+    // a worktree tab (where a rebase is as likely) does not render.
+    final pending = ref.watch(pendingOpProvider(repoPath)).value;
+    if (pending == null || pending == PendingOp.none) return scaffold;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        PendingOpBanner(
+          op: pending,
+          onContinue: () => _continuePending(pending),
+          onAbort: () => _abortPending(pending),
+        ),
+        Expanded(child: scaffold),
+      ],
+    );
+  }
+
+  Future<void> _abortPending(PendingOp op) async {
+    final ok = await confirmAbortPendingOp(context, op);
+    if (!ok || !mounted) return;
+    final git = ref.read(gitServiceProvider);
+    await runGuarded(() => abortPendingOp(git, repoPath, op));
+  }
+
+  Future<void> _continuePending(PendingOp op) async {
+    final step = continuePendingOp(ref.read(gitServiceProvider), op);
+    if (step == null) return;
+    final (label, run) = step;
+    await runLogged(label, (log) async {
+      log.logResult(label, await run(repoPath));
+    });
   }
 
   Widget _multiSelectDetail(

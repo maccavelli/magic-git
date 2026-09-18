@@ -29,6 +29,7 @@ import '../common/image_diff_view.dart';
 import '../common/inline_action_button.dart';
 import '../common/list_keyboard_nav.dart';
 import '../common/panel_shortcuts.dart';
+import '../common/pending_op_banner.dart';
 import '../common/repository_context.dart';
 import '../common/repository_context_bar.dart';
 import '../common/repository_workspace_scaffold.dart';
@@ -1466,106 +1467,30 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
     }
   }
 
-  static String _pendingVerb(PendingOp op) => switch (op) {
-    PendingOp.merge => 'Merge',
-    PendingOp.cherryPick => 'Cherry-pick',
-    PendingOp.revert => 'Revert',
-    PendingOp.rebase => 'Rebase',
-    PendingOp.am => 'Patch application',
-    PendingOp.none => '',
-  };
-
   Future<void> _abortPending(PendingOp op) async {
-    final verb = _pendingVerb(op);
-    final ok = await confirmAction(
-      context,
-      title: 'Abort $verb',
-      message:
-          'Abort the in-progress ${verb.toLowerCase()} and discard its changes?',
-      confirmLabel: 'Abort',
-    );
+    final ok = await confirmAbortPendingOp(context, op);
     if (!ok || !mounted) return;
     final git = ref.read(gitServiceProvider);
     // Only clear the selected conflict once the abort actually succeeds —
     // clearing it upfront left the conflict panel stale (still showing a
     // conflict the abort never actually resolved) on failure, with no
     // rebuild to reflect that.
-    if (await runGuarded(
-      () => switch (op) {
-        PendingOp.merge => git.mergeAbort(repoPath),
-        PendingOp.cherryPick => git.cherryPickAbort(repoPath),
-        PendingOp.revert => git.revertAbort(repoPath),
-        PendingOp.rebase => git.rebaseAbort(repoPath),
-        PendingOp.am => git.amAbort(repoPath),
-        PendingOp.none => Future<void>.value(),
-      },
-    )) {
+    if (await runGuarded(() => abortPendingOp(git, repoPath, op))) {
       if (!mounted) return;
       _clearSelection();
     }
   }
 
-  /// The matching `--continue` for whichever operation is paused — the
-  /// prepared message (MERGE_MSG / the sequencer's) commits as-is, so a
-  /// hand-resolved conflict needs no composer round-trip (0009 M14).
   Future<void> _continuePending(PendingOp op) async {
-    final git = ref.read(gitServiceProvider);
-    final (label, run) = switch (op) {
-      PendingOp.rebase => ('git rebase --continue', git.rebaseContinue),
-      PendingOp.merge => ('git merge --continue', git.mergeContinue),
-      PendingOp.cherryPick => (
-        'git cherry-pick --continue',
-        git.cherryPickContinue,
-      ),
-      PendingOp.revert => ('git revert --continue', git.revertContinue),
-      PendingOp.am => ('git am --continue', git.amContinue),
-      // The banner only renders for a real pending op.
-      PendingOp.none => ('', git.rebaseContinue),
-    };
-    if (op == PendingOp.none) return;
+    // The banner only renders for a real pending op.
+    final step = continuePendingOp(ref.read(gitServiceProvider), op);
+    if (step == null) return;
+    final (label, run) = step;
     final ok = await runLogged(label, (log) async {
       log.logResult(label, await run(repoPath));
     });
     // Same reasoning as _abortPending: only clear on success.
     if (ok && mounted) _clearSelection();
-  }
-
-  /// Banner shown while a merge/cherry-pick/revert/rebase is mid-flight (usually
-  /// after a conflict), offering to continue (rebase) and/or abort.
-  Widget _pendingBanner(BuildContext context, PendingOp op) {
-    final typography = MacosTheme.of(context).typography;
-    final verb = _pendingVerb(op);
-    final hint =
-        '$verb in progress — resolve conflicts, then continue, or abort.';
-    return Container(
-      color: MacosColors.systemOrangeColor.withValues(alpha: 0.14),
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      child: Row(
-        children: [
-          const MacosIcon(
-            CupertinoIcons.exclamationmark_triangle,
-            size: 15,
-            color: MacosColors.systemOrangeColor,
-          ),
-          const SizedBox(width: 8),
-          Expanded(child: Text(hint, style: typography.caption1)),
-          InlineActionButton(
-            label: 'Continue',
-            icon: CupertinoIcons.play,
-            onPressed: () => _continuePending(op),
-          ),
-          const SizedBox(width: 8),
-          InlineActionButton(
-            label: 'Abort $verb',
-            // Aborting throws the in-progress operation (and any conflict
-            // resolution done so far) away — it gets the red.
-            icon: CupertinoIcons.arrow_uturn_left,
-            tone: InlineActionTone.destructive,
-            onPressed: () => _abortPending(op),
-          ),
-        ],
-      ),
-    );
   }
 
   @override
@@ -1956,7 +1881,11 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
               if (sessionWarning != null)
                 _warningBanner(context, sessionWarning),
               if (pending != null && pending != PendingOp.none)
-                _pendingBanner(context, pending),
+                PendingOpBanner(
+                  op: pending,
+                  onContinue: () => _continuePending(pending),
+                  onAbort: () => _abortPending(pending),
+                ),
               statusArea,
               if (status != null && !status.isClean)
                 _commitBar(

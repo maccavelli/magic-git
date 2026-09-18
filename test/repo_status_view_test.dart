@@ -122,6 +122,14 @@ class _FakeGitService extends GitService {
     mergeAbortCalled = true;
   }
 
+  bool mergeContinueCalled = false;
+
+  @override
+  Future<SSHCommandResult> mergeContinue(String repoPath) async {
+    mergeContinueCalled = true;
+    return const SSHCommandResult(exitCode: 0, stdout: '', stderr: '');
+  }
+
   @override
   Future<void> resolveConflict(
     String repoPath,
@@ -780,6 +788,52 @@ void main() {
       expect(git.mergeAbortCalled, isTrue);
     },
   );
+
+  // MADR 0051 Phase 7 moved the banner and the op→GitService dispatch into a
+  // shared module; each view still runs them itself, and Status must still
+  // drop the selected conflict once the operation actually ends.
+  group('the pending-op banner clears the selected conflict on success', () {
+    Future<_FakeGitService> pumpWithSelectedConflict(
+      WidgetTester tester,
+    ) async {
+      final git = _FakeGitService()..pendingOp0 = PendingOp.merge;
+      await _pump(
+        tester,
+        git: git,
+        status: _statusWith(
+          conflicted: const [
+            GitFileStatus(path: 'lib/c.dart', statusX: 'U', statusY: 'U'),
+          ],
+        ),
+      );
+      await tester.tap(find.text('lib/c.dart'));
+      await tester.pumpAndSettle();
+      expect(find.text('Mark Resolved'), findsOneWidget);
+      return git;
+    }
+
+    testWidgets('after Abort', (tester) async {
+      final git = await pumpWithSelectedConflict(tester);
+
+      await tester.tap(find.text('Abort Merge'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Abort').last);
+      await tester.pumpAndSettle();
+
+      expect(git.mergeAbortCalled, isTrue);
+      expect(find.text('Mark Resolved'), findsNothing);
+    });
+
+    testWidgets('after Continue', (tester) async {
+      final git = await pumpWithSelectedConflict(tester);
+
+      await tester.tap(find.text('Continue'));
+      await tester.pumpAndSettle();
+
+      expect(git.mergeContinueCalled, isTrue);
+      expect(find.text('Mark Resolved'), findsNothing);
+    });
+  });
 
   testWidgets(
     'a watch tick shortly after this app\'s own action is suppressed (the '
