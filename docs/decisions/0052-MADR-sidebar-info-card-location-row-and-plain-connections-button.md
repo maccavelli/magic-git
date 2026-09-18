@@ -1,5 +1,5 @@
 ---
-status: "proposed"
+status: "accepted"
 date: 2026-09-18
 decision-makers: [Maintainer]
 consulted: []
@@ -7,7 +7,7 @@ informed: [Magic Git contributors]
 verified: 2026-09-18
 ---
 
-# The sidebar info card shows the repository's own label and a new "Location" row, and the connections-manager button becomes a fixed "Connections" label
+# The sidebar info card gains a "Location" row, the connections-manager button becomes a fixed "Connections" label, and every surface names the repository the same way
 
 ## Context and Problem Statement
 
@@ -35,9 +35,13 @@ The maintainer asked to split those jobs:
   Repository shows the current repo;
 - make the button always read **Connections**, opening the manager as it does now.
 
-On review (2026-09-18) the maintainer added a third change to scope:
-- the **Repository** row shows the repository's label when the user has set one, and the last
-  directory of the repo path otherwise. Today it always shows the directory (F7).
+On review (2026-09-18) the maintainer briefly added repository labels to the Repository row, then
+withdrew them (F7), and set a requirement in their place:
+- the **tab title, the Repository row and the status bar show the same name** for the repository (F8).
+
+Asked how a tab alias fits that requirement, the maintainer chose (2026-09-18) that the Repository row
+and the status bar **follow the tab alias**: every surface shows the alias when the tab has one, and
+the last directory of the repo path otherwise.
 
 This record evaluates that request against the code and proposes how to do it.
 
@@ -103,48 +107,52 @@ panes).
 
 The card gains one row of the Repository row's shape, about 40 pt: 8 pt vertical padding each side,
 plus a caption line and a body line. This is an estimate from the padding and type styles, not a
-measurement. The main window's minimum size is 640×480 (`app_providers.dart:97-98`). The sidebar's nav
-rail is built with the sidebar's scroll controller (`app_shell.dart:1059-1066`), so the extra height
-should shorten the rail's viewport rather than overflow. That is an expectation to verify, not an
-observed fact.
+measurement. The main window's minimum size is 640×480 (`app_providers.dart:97-98`), but the sidebar
+is hidden at that width: it declares `windowBreakpoint: 760` (`app_shell.dart:1043`), and macos_ui hides
+it while `width <= windowBreakpoint` (`macos_ui-2.2.2/lib/src/layout/window.dart:232`). The shortest
+window that shows the sidebar is therefore **761×480**, and that is where the extra height matters.
+The sidebar's nav rail is built with the sidebar's scroll controller (`app_shell.dart:1059-1066`), so
+the extra height should shorten the rail's viewport rather than overflow. That is an expectation to
+verify, not an observed fact.
 
-### F7 — Repository labels exist, and the Repository row ignores them
+### F7 — Repository labels exist, and are out of scope
 
-Users can give a repository a label in two places, and both are persisted:
+Users can label a repository in two places: a repo on a saved SSH connection
+(`SavedConnection.repoLabels`, `lib/core/storage/saved_connection.dart`) and a saved local repo
+(`SavedLocalRepo.label`, `lib/core/storage/saved_local_repo.dart:138`). The connections manager's tiles
+show those labels (`connection_switcher.dart:522,694`). The Repository row does not: it renders
+`basename(repoPath)` (`current_repo_indicator.dart:54`).
 
-- **A repo on a saved SSH connection.** `SavedConnection.repoLabels` maps repo path to label
-  (`lib/core/storage/saved_connection.dart`). It is edited in `EditRemoteRepoSheet`'s "Label" field
-  (`lib/features/switcher/edit_entry_sheets.dart:368`). The helper `repoDisplayName(path)` already
-  returns the label, or the basename when unset (`saved_connection.dart:136-141`).
-- **A saved local repo.** `SavedLocalRepo.label`, edited in the local repo sheet
-  (`edit_entry_sheets.dart:507`). The getter `displayName` returns it, or the basename when unset
-  (`lib/core/storage/saved_local_repo.dart:138`).
+A revision of this record, on 2026-09-18, put labels into the Repository row. The maintainer withdrew
+that the same day, in favour of the requirement in F8: the row keeps the directory name, and
+user-provided repository labels are out of scope for this record.
 
-"Label" and "friendly name" are the same field in each case; the UI calls it "Label" and the code
-comments call it a friendly name.
+### F8 — Three surfaces name the repository, and one of them can diverge
 
-The connections manager's tiles use both helpers (`connection_switcher.dart:522,694`). The Repository
-row does not: it renders `basename(repoPath)` unconditionally (`current_repo_indicator.dart:54`). So a
-repo labelled "Website" is "Website" in the manager and `www-src` in the sidebar.
+The maintainer's requirement is that **the tab title, the Repository row and the status bar show the
+same name**. The status bar is the repository context bar at the top of each workspace pane
+(`lib/features/common/repository_context_bar.dart:319`, `snapshot.repositoryName`). Today:
 
-Three facts decide how the row can find the label:
+| surface | how the name is derived |
+|---|---|
+| Repository row | `basename(repoPath)` (`current_repo_indicator.dart:54`) |
+| status bar | the last non-empty path segment, hand-written in seven places: `repo_status_view.dart:1648-1651`, `history_view.dart:1590`, `branches_view.dart:605`, `stash_view.dart:373`, `worktrees_view.dart:791`, `forge_workspace.dart:84`, and `worktrees_view.dart:747` for a selected worktree. Every pane but Status prefixes it with `Repository: `. |
+| tab title | the **tab alias** if one is set, else `basename(tab.repoPath)` (`lib/features/tabs/tab_strip.dart:136-139`) |
+| window title | the tab alias if set, else the last path segment (`lib/features/tabs/tabs_host.dart:30-42`) |
 
-- **`ConnectionState` has no repo label.** For SSH, `connectionLabel` is the *connection's* display
-  name (F3), so reading it for the repo would be wrong. For local, it is the repo label, but only as a
-  snapshot taken at connect time: renaming the repo mid-session would not reach it.
-- **`connectionId` identifies the saved entry.** For SSH it is the `SavedConnection.id`
-  (`app_providers.dart:2170`). For a saved local repo it is the `SavedLocalRepo.id`: every saved-local
-  open passes `id: repo.id` (`connection_switcher.dart:1097,1131`, `connection_landing.dart:302`,
-  `saved_workspace_actions.dart:196`, `workspace_open_in_tab.dart:95`, `workspace_flow.dart:180`). An
-  unsaved local open passes `id: null` but may still pass a typed label (`local_repo_form.dart:679-684`).
-- **A session can change repo without reconnecting.** `setRepoPath` switches the active repo and
-  appends to `repoPaths` (`app_providers.dart:2477-2481`), from the manager, the command palette and
-  the clone/create flow. A local session starts with `repoPaths: [repoPath]` (`app_providers.dart:2087`),
-  so its saved label names `repoPaths.first` and nothing else.
-
-Both saved stores are already loaded providers (`savedConnectionsProvider`,
-`savedLocalReposProvider`), read by the manager and by `ConnectionSwitcher` itself, so looking a label
-up costs no command.
+- **The Repository row and the status bar agree today**, because `basename`
+  (`lib/core/utils/posix_path.dart:31-34`) and the inline expressions compute the same thing: drop
+  empty segments, take the last, fall back to the whole path. They agree by duplication, not by
+  construction. Nothing in the test suite would notice one of the seven copies drifting.
+- **The tab title can disagree.** A tab alias is a user-set name: "Rename Tab" in the Saved Workspaces
+  sheet (`lib/features/tabs/saved_workspaces_sheet.dart:225-244`), persisted per saved repository by
+  `SavedWorkspaceStore.setAlias` (`lib/core/storage/saved_workspace_store.dart:90`). With an alias set,
+  the tab and the window title show the alias while the Repository row and status bar show the
+  directory. The maintainer resolved this by having the row and status bar follow the alias (see
+  Context). The alias is a *tab* name, set deliberately for that tab; it is not the repository labels
+  that F7 leaves out of scope.
+- **The Worktrees pane's `Worktree: <name>` is not a mismatch.** It names the worktree selected in that
+  pane, a different checkout, by the same last-segment rule.
 
 ## Decision Drivers
 
@@ -153,9 +161,9 @@ up costs no command.
 * No new data fetches: read what `connectionProvider` and `savedConnectionsProvider` already hold.
 * Consistency with the Repository row: same caption/value/glyph/tooltip idiom.
 * Show the connection itself, meaning the machine, and use the app's existing "this Mac" wording.
-* Show a repository the way the user named it, everywhere the card names it.
-* A renamed label shows immediately, without reconnecting.
-* Hold at the 640×480 minimum window without overflow.
+* The tab title, window title, Repository row and status bar name the repository identically, by
+  construction rather than by duplicated code (F8).
+* Hold at 761×480, the smallest window that shows the sidebar, without overflow (F6).
 
 ## Considered Options
 
@@ -172,52 +180,39 @@ Chosen option: **A**, because it is the only option that separates state from ac
 card then carries both "where" facts, and the button's label becomes a stable noun naming what it opens,
 at the cost of one row of height and a small, contained code change.
 
-The Repository row's label is part of the decision under every option; it is described below, with the
-ways of resolving it that were considered.
-
 ### What the Repository row shows
 
-The value is the repository's label when the user has set one, and the last directory of the repo path
-otherwise. The glyph, status cluster and tooltip (the full path, plus the status summary) are unchanged,
-so the path stays one hover away when a label hides it.
+The tab alias when the tab has one, else the last directory of the repo path, from the shared provider
+below. The glyph, status cluster and tooltip are unchanged; the tooltip's full path keeps the directory
+one hover away when an alias hides it. The row's layout moves into the shared card row (see Card
+structure).
 
-| session | value |
+### One repository name, from one provider
+
+Every surface that names the active repository takes the name from a single derived provider in
+`lib/features/tabs/tab_ui_providers.dart`, beside `tabAliasProvider`:
+
+- `repositoryDisplayName(repoPath, {alias})`, a pure function: the trimmed alias when non-empty, else
+  `basename(repoPath)`;
+- `repositoryDisplayNameProvider`, a `Provider.family<String, String>` keyed by repo path: it watches
+  `tabAliasProvider` and the session's `repoPath`, and applies the alias **only when the key equals
+  the session's `repoPath`**. A pane naming any other path gets its basename.
+
+The consumers:
+
+| surface | change |
 |---|---|
-| saved SSH connection | that connection's `repoDisplayName(repoPath)`: the repo's label, else the basename |
-| ad-hoc SSH connection | the basename; there is no saved entry to hold a label |
-| saved local repo, on the repo it opened | that `SavedLocalRepo`'s `displayName`: the label, else the basename |
-| unsaved local open with a typed label | `connectionLabel`, the label typed for this session |
-| any other case | the basename |
+| Repository row | `ref.watch(repositoryDisplayNameProvider(repoPath))` in place of `basename(repoPath)` |
+| status bar, six panes | Status, History, Branches, Stashes, Worktrees and Forge build `repositoryName` from the provider, each keeping its existing `Repository: ` prefix, or none for Status. The seven hand-written segment expressions (F8) go. |
+| status bar, Worktrees selected worktree | unchanged: `Worktree: <basename>` names a different checkout |
+| tab title | `tab.container.read(repositoryDisplayNameProvider(tab.repoPath!))` in place of `aliasFor(tab) ?? basename(tab.repoPath!)`. `New Tab` and `Connecting…` are unchanged. |
+| window title | `windowTitleProvider` watches the provider in place of its inline alias-or-segment logic |
 
-The rules are implemented once, as a pure function that takes the connection state and the two saved
-lists and returns the name. For example `repoDisplayNameFor(connection, savedConnections,
-savedLocalRepos)`, beside the storage helpers in `lib/core/storage/`. The row watches both saved
-providers and calls it. Two rules are deliberate:
-
-- **SSH never falls back to `connectionLabel`**: that is the connection's name, not the repo's (F3).
-- **A local label applies only to `repoPaths.first`**, the path the session opened. If the session later
-  switches repo, the saved local repo's label no longer describes it, and the row shows that repo's
-  basename (F7).
-
-#### Resolving the label: options considered
-
-* **Resolve from the saved stores by `connectionId` (chosen).** Good, because a label edited in the
-  manager shows at once, since the row watches the same providers the manager's tiles do. Good,
-  because it touches no connect path. Bad, because the lookup needs the two rules above to avoid
-  showing the wrong name.
-* **Read `ConnectionState.connectionLabel`.** Rejected: for SSH it is the connection's name, so a repo
-  would be shown as "Build box"; for local it goes stale when the label is edited.
-* **Add a `repoLabel` field to `ConnectionState`.** Rejected: every connect path (eight call sites of
-  `connectLocal`, plus `connectToSaved`, `setRepoPath` and reconnect) would have to thread it through.
-  It would still go stale on an edit unless every edit path also wrote to the live state.
-
-#### Scope boundary
-
-This changes the **Repository row only**. Tab titles (`tab_strip.dart:139`), window titles and the
-command palette still derive names from the basename, for local and remote alike. That was a
-deliberate boundary when remote labels were added. The shared function makes extending it a small
-follow-up, but whether to is a separate decision: a tab title is also a disambiguator between tabs,
-and two tabs on the same labelled repo would share a title.
+Why this source is correct: `tabAliasProvider` is per tab, lives in the tab's own container (the
+same container that mounts that tab's `AppShell`), and is already re-synced on every connection change
+and every alias edit (`tabs_controller.dart:203-247,404-424`). After an SSH tab switches repo, the
+alias identity follows the new repo (`tabs_controller.dart:409-415`). So the provider is exactly as
+current as the tab title already is.
 
 ### What the Location row shows
 
@@ -260,9 +255,10 @@ its own. `LogoutButton` is untouched.
 * Good, because the button's label names the action, identically in every session.
 * Good, because the card answers "which repo, where" in one glance, and the tooltip carries the full
   `user@host:port` that no surface shows today.
-* Good, because a repository reads the same in the sidebar as in the connections manager, under the
-  name the user gave it.
-* Good, because it needs no new provider, fetch or command: it costs zero round trips.
+* Good, because it needs no new fetch or command: the one new provider derives from state already in
+  memory, so it costs zero round trips.
+* Good, because the four names agree by construction, and seven duplicated expressions collapse into
+  one function.
 * Neutral, because the tests change: the two label tests in `connection_switcher_test.dart` move to
   the Location row's tests and are rewritten for the new values (the host, unchanged, and `This Mac`), and a
   fixed-label test replaces them on the button.
@@ -270,8 +266,8 @@ its own. `LogoutButton` is untouched.
   viewport at small window sizes (F6).
 * Bad, because two saved connections to the same host as different users show the same value; only
   the tooltip's `username@` tells them apart.
-* Bad, because the sidebar and the tab strip can now name the same repo differently: the row shows the
-  label, while the tab keeps the basename (see the scope boundary above).
+* Bad, because once a tab has an alias, the directory name appears only in tooltips (the Repository
+  row's and the status bar's). That follows directly from the maintainer's choice.
 
 ### Confirmation
 
@@ -279,13 +275,15 @@ its own. `LogoutButton` is untouched.
   glyph and tooltip, including a labelled saved connection showing its host and not its label.
 * A widget test that the button reads `Connections` for both an SSH and a local session, and that
   tapping it still opens `ConnectionsPanel`.
-* A layout test that the sidebar bottom stack, pumped at the 640×480 minimum, reports no overflow.
+* A layout test that the connected shell, pumped at 761×480, shows the whole bottom stack with no
+  overflow (F6).
 * The existing `current_repo_indicator_test.dart` cases pass unchanged.
-* Unit tests for the name function, one per row of the Repository table, plus the two edge cases:
-  an SSH session whose connection has a label but whose repo has none shows the basename, not the
-  connection's name; and a local session switched off `repoPaths.first` shows the new repo's basename,
-  not the saved label.
-* A widget test that editing a label in the saved store updates the Repository row without a reconnect.
+* Unit tests for `repositoryDisplayName` and `repositoryDisplayNameProvider`: no alias gives the
+  basename, including for a trailing-slash path; an alias wins; a blank alias falls back; and the alias
+  does not apply to a path other than the session's.
+* A parity test in one tab container: with no alias, then with an alias, the Repository row, a pane's
+  status bar `repositoryName` (less its `Repository: ` prefix), the tab title and the window title's
+  name all show the same text. A saved repository label must not change any of them.
 * The new tests are seen to fail before the change (the button test against today's host label; the
   Location tests against a tree where the row does not exist).
 
@@ -328,12 +326,18 @@ its own. `LogoutButton` is untouched.
   the Repository row's status dot. `ConnectionState.reconnecting` exists, but a dropped connection
   already replaces the content area with `_ReconnectingOverlay` (`app_shell.dart:1112-1120`), so a
   second indicator would duplicate it. Revisit only if the overlay changes.
-* **Included on review:** repository labels in the Repository row. A first draft of this record
-  excluded them, citing the boundary under which tab titles, window titles and this row all used the
-  basename. The maintainer moved the row across that boundary on 2026-09-18. Tab and window titles stay
-  on the basename (see the scope boundary above).
+* **Withdrawn on review:** repository labels in the Repository row (F7). The rejected design resolved
+  the label live from the saved stores by `connectionId`. It is recorded in this file's history
+  (`626f64b`) if labels are taken up later, together with its two traps: for SSH, `connectionLabel` is
+  the connection's name, not the repo's, and a local repo's label applies only to `repoPaths.first`.
+* **Tab alias: the options put to the maintainer (2026-09-18).**
+  - *Match only un-aliased tabs.* Rejected: it leaves the requirement unmet exactly when the user has
+    named a tab.
+  - *The row and status bar follow the alias.* **Chosen.**
+  - *Retire tab aliases.* Rejected: it removes a feature, and existing aliases would silently stop
+    showing.
 * **Multi-tab:** the Location row reads `connectionProvider` in the same scope as the Repository row,
   so it follows the active tab exactly as that row already does.
 * Related: [0008-MADR-unified-repository-chrome.md](../0008-MADR-unified-repository-chrome.md) for the app's chrome.
-* The implementation plan, `0052-PLAN-sidebar-info-card-location-and-repository-labels.md`, is written
-  once this record is accepted.
+* The implementation plan, `0052-PLAN-sidebar-info-card-location-row-and-plain-connections-button.md`, is its
+  implementation plan.
