@@ -1,5 +1,5 @@
 ---
-status: "proposed"
+status: "executed"
 date: 2026-09-18
 associated-madr: "0052-MADR-sidebar-info-card-location-row-and-plain-connections-button.md"
 ---
@@ -584,3 +584,48 @@ issues found (exit 0). Full `flutter test`: `+4181 ~3: All tests passed!` (exit 
 
 M3.3 uses an inline `split('/')` rather than `basename`, since the file no longer imports
 `posix_path.dart`; the effect is identical.
+
+### Phase 4, executed
+
+**Code commit** `10dc081`. In `ConnectionSwitcher`:
+- the four-field `select` became `isConnected` only;
+- the `label` computation and its stale comment ("the label is the repo name") are gone;
+- the `Text` reads `'Connections'`;
+- the class doc says the label is fixed and the location lives in the card.
+
+The early `SizedBox.shrink()`, glyph, style, `HoverPop` and `onPressed` are unchanged.
+
+**Red first.** The two old label tests were replaced by B1–B3 and run before the change. B1 and B2
+failed with `Found 0 widgets with text "Connections"`; B3 passed, as intended.
+
+**Plan inconsistency, resolved by the plan's own intent.** Step 1 asks B3 both to "tap
+`find.text('Connections')`" and to pass *before* the change. Before the change there is no
+`Connections` text, so both cannot hold. B3 taps `find.byType(ConnectionSwitcher)` instead, which
+keeps the purpose the plan gives it: pinning, across the change, that the button still opens the
+manager. As a consequence, step 4's claim that M4.1 fails "B1, B2 and B3" cannot hold either: M4.1
+changes only the label, which B3 no longer reads. The label is guarded by B1 and B2.
+
+**Gate.** `dart format`: 0 changed. `flutter analyze`: No issues found (exit 0). Targeted: `+16: All
+tests passed!`. Full `flutter test`: `+4182 ~3: All tests passed!` (exit 0), +1 net: two tests
+replaced by three.
+
+**Mutation** (scratch worktree at `10dc081`, removed afterwards). **M4.1**, `'Connections'` →
+`'Manage'`, is **killed**: B1 and B2 fail (`[E]` on both).
+
+### Phase 5, executed
+
+**Final gate**, on `10dc081`: `flutter analyze` "No issues found!" (exit 0). Full `flutter test`:
+`+4182 ~3: All tests passed!` (exit 0). That is **+22 on the Phase 0 baseline of 4160**, the figure step
+1 predicted: 10 + 1 + 6 + 3 + 1 + 1.
+
+**Status is `executed`, not `complete`.** Every automated criterion holds, and every mutation M1.1–M4.1
+failed its named test; the only exception is B3, as explained under Phase 4. The Verification
+section's manual check has not been run; only the maintainer can run it:
+- in the built app, the card reads Repository / Location, and the button reads Connections;
+- after **Rename Tab**, the tab, window title, Repository row and status bar all change together.
+
+This plan becomes `complete` once that check is done.
+
+**Commits:** `2eed288` (records), `f7d7b9d`, `54508dc`, `5124375` and `10dc081` (code), with one
+execution-record commit per phase. None of them is pushed.
+
