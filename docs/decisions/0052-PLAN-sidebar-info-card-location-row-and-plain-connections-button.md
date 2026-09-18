@@ -629,3 +629,41 @@ This plan becomes `complete` once that check is done.
 **Commits:** `2eed288` (records), `f7d7b9d`, `54508dc`, `5124375` and `10dc081` (code), with one
 execution-record commit per phase. None of them is pushed.
 
+### Post-execution change (2026-09-18): location glyph parity, MADR Amendment 0052.1
+
+The maintainer reported mismatched glyphs across the tab, status bar and Location row. This was a new
+request after execution, not a deviation. It was executed under the same conventions:
+
+**Code commit** `83c55ff`, 14 files:
+- new: `lib/features/common/session_location.dart`;
+- `repository_context.dart`: the `isLocal` field;
+- `repository_context_bar.dart`, `tab_strip.dart` and `current_repo_indicator.dart`: the glyph now
+  comes from `sessionLocationIcon`;
+- the six pane files, seven sites: `isLocal: connection.isLocal`;
+- tests: the parity test gains P4 (remote) and P5 (local) and mounts `SessionInfoCard` in place of the
+  bare row; the source test gains the snapshot `isLocal` scan; L3 expects `folder`.
+
+**Red first.**
+- The scan found all 7 snapshot constructions and failed on `repo_status_view.dart builds a snapshot
+  without isLocal`.
+- P4 failed on `reason: both tab chips` (the tab showed `desktopcomputer`).
+- P5 failed on `reason: Location row` (it showed `desktopcomputer`): the tab and status bar already
+  showed `folder` for local. That is exactly the reported bug.
+
+**Gate.** `dart format` set one file, then reported 0 changed. `flutter analyze`: No issues found; the
+first run caught a `const` constructor around the function call, which was fixed. Full `flutter
+test`: `+4185 ~3: All tests passed!` (+3).
+
+**Goldens cannot see this change.** The 48 goldens passed unchanged. `flutter test` does not load the
+icon font, so every glyph renders as the same placeholder box, and an icon swap is invisible to a
+golden. The parity test asserts the `IconData` each surface is given, which is what can fail.
+
+**Mutations** (scratch worktree at `83c55ff`, removed afterwards), all **killed**:
+
+| # | mutation | failing test | on |
+|---|---|---|---|
+| I1 | swap the glyphs in `sessionLocationIcon` | P4, P5 | all surfaces |
+| I2 | tab strip back to `desktopcomputer` | P4 | `reason: both tab chips` |
+| I3 | status bar back to a fixed `folder` | P4 | `reason: status bar` |
+| I4 | drop `isLocal:` from the Stashes snapshot | the snapshot scan | Stashes |
+

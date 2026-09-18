@@ -223,7 +223,7 @@ value, trailing slot, and a tooltip.
 |---|---|---|---|
 | saved SSH | `host` | `CupertinoIcons.globe` | `username@host:port` from the saved connection |
 | ad-hoc SSH | `host` | `CupertinoIcons.globe` | `host` |
-| local | `This Mac` | `CupertinoIcons.desktopcomputer` | `On this Mac` |
+| local | `This Mac` | ~~`CupertinoIcons.desktopcomputer`~~ `CupertinoIcons.folder` (Amendment 0052.1) | `On this Mac` |
 
 For SSH the value is the hostname, as the button shows today; the saved connection's label is not
 used. The maintainer decided this on review (2026-09-18): the row exists to show the *connection*,
@@ -341,3 +341,31 @@ its own. `LogoutButton` is untouched.
 * Related: [0008-MADR-unified-repository-chrome.md](../0008-MADR-unified-repository-chrome.md) for the app's chrome.
 * The implementation plan, `0052-PLAN-sidebar-info-card-location-row-and-plain-connections-button.md`, is its
   implementation plan.
+
+## Amendment 0052.1 (2026-09-18): one location glyph on the tab, status bar and Location row
+
+**What the maintainer observed.** With a remote repo open, three surfaces showed three different
+glyphs for the same place:
+- the tab chip showed `desktopcomputer` for remote and `folder` for local
+  (`lib/features/tabs/tab_strip.dart`);
+- the status bar showed `folder` always, since the snapshot it renders carried no local/remote fact
+  (`repository_context_bar.dart`);
+- the Location row showed `globe` for remote and `desktopcomputer` for local, as this record specified.
+
+**Decision.** The three surfaces show one glyph: **`CupertinoIcons.globe` for a remote repo and
+`CupertinoIcons.folder` for a local one.** The local Location glyph changes from `desktopcomputer`
+(struck through in the table above); remote is unchanged.
+
+**How it is built.**
+- `sessionLocationIcon({required bool isLocal})` in `lib/features/common/session_location.dart` is the
+  one source for all three surfaces.
+- `RepositoryContextSnapshot` gains `isLocal` (default `false`), and all seven constructions pass
+  `connection.isLocal`.
+- A source scan (`test/repository_name_source_test.dart`) fails if a construction omits it: the
+  default would silently draw a globe for a local repo.
+
+**Not changed.** The connections manager's SSH tiles (`connection_switcher.dart:417,581`) and the
+landing page's recent list (`connection_landing.dart:337`) still use `desktopcomputer` for remote.
+They are outside the three surfaces the maintainer named. The Repository row keeps `folder_fill`: it
+is the repository's glyph, not the location's.
+
