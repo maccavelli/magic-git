@@ -47,6 +47,16 @@ class _FakeGit extends GitService {
   final List<(String, String)> renames = [];
   final List<(String, String)> remoteDeletes = [];
   final List<MergeMode> merges = [];
+  final List<(String, String)> upstreamsSet = [];
+
+  @override
+  Future<void> setUpstream(
+    String repoPath,
+    String branch,
+    String upstream,
+  ) async {
+    upstreamsSet.add((branch, upstream));
+  }
 
   @override
   Future<void> renameBranch(
@@ -175,4 +185,48 @@ void main() {
 
     expect(git.merges, [MergeMode.ffOnly]);
   });
+
+  testWidgets('Set upstream refuses a target with no matching remote-tracking '
+      'branch, naming Publish instead', (tester) async {
+    final git = await _pump(tester);
+
+    // "main"'s default target (origin/main) has no matching entry in the
+    // fixture's ref list — only origin/feature exists as a remote branch.
+    await _rightClick(tester, find.text('main'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Set upstream…'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('No remote-tracking branch'), findsOneWidget);
+    expect(find.textContaining('use Publish instead'), findsOneWidget);
+
+    // The confirm button is disabled while the problem stands — nothing
+    // reaches the service.
+    await tester.tap(find.text('Set Upstream'), warnIfMissed: false);
+    await tester.pumpAndSettle();
+    expect(git.upstreamsSet, isEmpty);
+  });
+
+  testWidgets(
+    'Set upstream accepts a target that matches a real remote-tracking '
+    'branch',
+    (tester) async {
+      final git = await _pump(tester);
+
+      await _rightClick(tester, find.text('main'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Set upstream…'));
+      await tester.pumpAndSettle();
+
+      final field = find.byType(MacosTextField).last;
+      await tester.enterText(field, 'origin/feature');
+      await tester.pumpAndSettle();
+      expect(find.textContaining('No remote-tracking branch'), findsNothing);
+
+      await tester.tap(find.text('Set Upstream'));
+      await tester.pumpAndSettle();
+
+      expect(git.upstreamsSet, [('main', 'origin/feature')]);
+    },
+  );
 }

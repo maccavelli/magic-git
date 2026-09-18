@@ -676,7 +676,22 @@ void main() {
   testWidgets(
     'the current branch offers Set upstream via its right-click menu',
     (tester) async {
-      final git = await _pump(tester);
+      // MADR 0051: Set upstream now validates its target against the real
+      // ref list, so the pre-filled default only submits when a matching
+      // remote-tracking branch actually exists — add one here rather than
+      // to the shared `_refs` fixture other tests in this file also use.
+      final git = await _pump(
+        tester,
+        refs: const [
+          ..._refs,
+          GitRef(
+            name: 'refs/remotes/origin/main',
+            oid: 'aaa',
+            isHead: false,
+            subject: 's',
+          ),
+        ],
+      );
 
       await _rightClick(tester, find.text('main'));
       await tester.pumpAndSettle();

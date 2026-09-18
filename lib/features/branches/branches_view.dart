@@ -1660,7 +1660,25 @@ class _BranchesViewState extends ConsumerState<BranchesView>
           'The remote-tracking branch (remote/branch) that pull, push, and '
           'the ahead/behind badges follow.',
       confirmLabel: 'Set Upstream',
-      validate: refNameProblem,
+      // `git branch --set-upstream-to` only points at a remote-tracking ref
+      // that already exists — it cannot create one. A branch that has never
+      // been pushed has no such ref yet, so validate the typed target
+      // against the real ref list and name Publish as the actual fix rather
+      // than let this fail with git's raw --set-upstream-to error (MADR
+      // 0051 F6/Amendment 0051.1).
+      validate: (value) {
+        final problem = refNameProblem(value);
+        if (problem != null) return problem;
+        final refs = ref.read(refsProvider(repoPath)).value ?? const [];
+        final exists = refs.any(
+          (r) => r.isRemote && r.shortName == value.trim(),
+        );
+        if (!exists) {
+          return 'No remote-tracking branch "$value" exists yet. If this '
+              'branch has never been pushed, use Publish instead.';
+        }
+        return null;
+      },
     );
     if (target == null || !mounted) return;
     await runGuarded(() => git.setUpstream(repoPath, name, target));
