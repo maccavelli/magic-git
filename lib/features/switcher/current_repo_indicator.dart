@@ -2,13 +2,94 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
 import '../../core/providers/app_providers.dart';
+import '../../core/storage/saved_connection.dart';
 import '../../core/utils/git_porcelain_parser.dart';
-import '../../core/utils/posix_path.dart';
+import '../tabs/tab_ui_providers.dart';
 
-/// A passive bottom-of-sidebar indicator showing the active repository, so the
-/// user can tell at a glance where they're working. Sits directly above the
-/// [ConnectionSwitcher]. Renders nothing until a repo is selected; the full
-/// path is available on hover (repos can share a basename across directories).
+/// The passive info card at the bottom of the sidebar, directly above the
+/// Connections button: which repository ([CurrentRepoIndicator]) and where it
+/// is ([CurrentLocationIndicator]), so the user can tell at a glance where
+/// they're working (MADR 0052). One top border for the card, not per row.
+class SessionInfoCard extends StatelessWidget {
+  const SessionInfoCard({super.key});
+
+  @override
+  Widget build(BuildContext context) => Container(
+    decoration: const BoxDecoration(
+      border: Border(top: BorderSide(color: MacosColors.separatorColor)),
+    ),
+    padding: const EdgeInsets.symmetric(vertical: 4),
+    child: const Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [CurrentRepoIndicator(), CurrentLocationIndicator()],
+    ),
+  );
+}
+
+/// One card row: a blue glyph, a grey caption over a bold single-line value,
+/// an optional trailing cluster, and a tooltip. Shared so the card's rows
+/// cannot drift apart in padding or type.
+class _InfoRow extends StatelessWidget {
+  final IconData icon;
+  final String caption;
+  final String value;
+  final String tooltip;
+  final Widget? trailing;
+
+  const _InfoRow({
+    required this.icon,
+    required this.caption,
+    required this.value,
+    required this.tooltip,
+    this.trailing,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final typography = MacosTheme.of(context).typography;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+      child: MacosTooltip(
+        message: tooltip,
+        child: Row(
+          children: [
+            MacosIcon(icon, size: 15, color: MacosColors.systemBlueColor),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    caption,
+                    style: typography.caption1.copyWith(
+                      color: MacosColors.systemGrayColor,
+                    ),
+                  ),
+                  Text(
+                    value,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: typography.body.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            ?trailing,
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// The card's Repository row: the active repository under the one name the
+/// tab title, window title and status bar also show — the tab alias when set,
+/// else the directory ([repositoryDisplayNameProvider]). Renders nothing until
+/// a repo is selected; the full path is on hover, so the directory stays one
+/// hover away when an alias hides it.
 ///
 /// A trailing status cluster surfaces the active repo's working-tree state —
 /// a dirty/conflict dot and ahead/behind counts — reusing the already-resolved
@@ -24,47 +105,12 @@ class CurrentRepoIndicator extends ConsumerWidget {
     final typography = MacosTheme.of(context).typography;
     // The active repo's status is already fetched for its panels — reuse it.
     final status = ref.watch(statusProvider(repoPath)).value;
-    return Container(
-      decoration: const BoxDecoration(
-        border: Border(top: BorderSide(color: MacosColors.separatorColor)),
-      ),
-      padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
-      child: MacosTooltip(
-        message: _tooltip(repoPath, status),
-        child: Row(
-          children: [
-            const MacosIcon(
-              CupertinoIcons.folder_fill,
-              size: 15,
-              color: MacosColors.systemBlueColor,
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Repository',
-                    style: typography.caption1.copyWith(
-                      color: MacosColors.systemGrayColor,
-                    ),
-                  ),
-                  Text(
-                    basename(repoPath),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: typography.body.copyWith(
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            if (status != null) _statusCluster(typography, status),
-          ],
-        ),
-      ),
+    return _InfoRow(
+      icon: CupertinoIcons.folder_fill,
+      caption: 'Repository',
+      value: ref.watch(repositoryDisplayNameProvider(repoPath)),
+      tooltip: _tooltip(repoPath, status),
+      trailing: status == null ? null : _statusCluster(typography, status),
     );
   }
 
@@ -130,5 +176,43 @@ class CurrentRepoIndicator extends ConsumerWidget {
     if (status.branch.behind > 0) parts.add('${status.branch.behind} behind');
     if (parts.isEmpty) return '$repoPath\nClean, in sync';
     return '$repoPath\n${parts.join(' · ')}';
+  }
+}
+
+/// The card's Location row: where the session is. The SSH host (with
+/// `user@host:port` on hover for a saved connection), or This Mac for a local
+/// session — the connection itself, not the name it was given (MADR 0052).
+class CurrentLocationIndicator extends ConsumerWidget {
+  const CurrentLocationIndicator({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final (isLocal, host, connectionId, connectionLabel) = ref.watch(
+      connectionProvider.select(
+        (c) => (c.isLocal, c.host, c.connectionId, c.connectionLabel),
+      ),
+    );
+    if (isLocal) {
+      return const _InfoRow(
+        icon: CupertinoIcons.desktopcomputer,
+        caption: 'Location',
+        value: 'This Mac',
+        tooltip: 'On this Mac',
+      );
+    }
+    final saved =
+        ref.watch(savedConnectionsProvider).value ?? const <SavedConnection>[];
+    final conn = connectionId == null
+        ? null
+        : saved.where((c) => c.id == connectionId).firstOrNull;
+    final value = host ?? connectionLabel ?? 'Connected';
+    return _InfoRow(
+      icon: CupertinoIcons.globe,
+      caption: 'Location',
+      value: value,
+      tooltip: conn == null
+          ? value
+          : '${conn.username}@${conn.host}:${conn.port}',
+    );
   }
 }

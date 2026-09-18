@@ -2,9 +2,11 @@ import 'package:flutter/widgets.dart' hide ConnectionState;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
+import 'package:remote_magic_git/core/git/watch_event.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/features/app_shell.dart';
 import 'package:remote_magic_git/features/connection/connection_landing.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 /// A ConnectionController stuck at a fixed state, so the shell can be pumped
 /// mid-drop without running a real connect or auto-reconnect loop.
@@ -150,6 +152,52 @@ void main() {
     await tester.pump();
 
     expect(stub.stopReconnectCalls, 1);
+    await _unmount(tester);
+  });
+
+  // MADR 0052: the info card grew a Location row. 761×480 is the smallest
+  // window that shows the sidebar (it hides while width <= 760), so this is
+  // where the bottom stack is tightest. Deliberately NOT drained with
+  // _drainTestFontOverflow: an overflow here is exactly what is under test.
+  testWidgets('the connected sidebar shows the whole info card and button '
+      'stack at 761x480', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    tester.view.physicalSize = const Size(761, 480);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          connectionProvider.overrideWith(
+            () => _StubConnection(
+              const ConnectionState(
+                phase: ConnectionPhase.connected,
+                backend: ConnectionBackend.ssh,
+                host: 'build01.example.com',
+                repoPath: '/srv/repo',
+                repoPaths: ['/srv/repo'],
+              ),
+            ),
+          ),
+          repoWatchProvider(
+            '/srv/repo',
+          ).overrideWith((ref) => const Stream<RepoWatchEvent>.empty()),
+          savedConnectionsProvider.overrideWith((ref) async => const []),
+          savedLocalReposProvider.overrideWith((ref) async => const []),
+        ],
+        child: const MacosApp(
+          debugShowCheckedModeBanner: false,
+          home: SizedBox.expand(child: AppShell()),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(find.text('Location'), findsOneWidget);
+    expect(tester.getRect(find.text('Location')).top, greaterThanOrEqualTo(0));
+    expect(tester.getRect(find.text('Logout')).bottom, lessThanOrEqualTo(480));
+    expect(tester.takeException(), isNull);
     await _unmount(tester);
   });
 }

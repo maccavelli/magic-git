@@ -1044,13 +1044,14 @@ class _AppShellState extends ConsumerState<AppShell> {
         top: const SidebarBranding(),
         // The connections switcher only makes sense once connected — hide it on
         // the landing page.
-        // Current-repository indicator sits directly above the connections
-        // button so the active repo is always visible at a glance.
+        // The session info card (Repository over Location) sits directly above
+        // the Connections button, so the active repo and where it lives are
+        // always visible at a glance (MADR 0052).
         bottom: connected
             ? const Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  CurrentRepoIndicator(),
+                  SessionInfoCard(),
                   ConnectionSwitcher(),
                   LogoutButton(),
                 ],
