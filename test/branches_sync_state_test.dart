@@ -35,10 +35,51 @@ class _FakeGit extends GitService {
   /// diverged/unrelated-histories distinction.
   final bool commonAncestor;
 
+  /// Every `merge` call: (branch, allowUnrelatedHistories).
+  final List<(String, bool)> merges = [];
+
   @override
   Future<bool> haveCommonAncestor(String repoPath, String a, String b) async {
     return commonAncestor;
   }
+
+  @override
+  Future<SSHCommandResult> merge(
+    String repoPath,
+    String branch, {
+    MergeMode mode = MergeMode.normal,
+    bool allowUnrelatedHistories = false,
+  }) async {
+    merges.add((branch, allowUnrelatedHistories));
+    return const SSHCommandResult(exitCode: 0, stdout: '', stderr: '');
+  }
+}
+
+/// The current branch, ahead and behind an upstream it shares no history
+/// with — the only shape where "Merge (allow unrelated histories)…" is
+/// offered, since `git merge` targets HEAD.
+const _unrelatedHead = GitRef(
+  name: 'refs/heads/main',
+  oid: 'head1',
+  isHead: true,
+  subject: 's',
+  upstream: 'origin/main',
+  ahead: 2,
+  behind: 1,
+);
+const _unrelatedHeadRemote = GitRef(
+  name: 'refs/remotes/origin/main',
+  oid: 'r1',
+  isHead: false,
+  subject: 's',
+);
+
+Future<_FakeGit> _pumpUnrelatedHeadSelected(WidgetTester tester) async {
+  final git = _FakeGit(commonAncestor: false);
+  await _pump(tester, const [_unrelatedHead, _unrelatedHeadRemote], git: git);
+  await tester.tap(find.text('main').first);
+  await tester.pumpAndSettle();
+  return git;
 }
 
 Future<void> _pump(
@@ -238,6 +279,51 @@ void main() {
       await tester.tap(find.text('unrelated'));
       await tester.pumpAndSettle();
       expect(find.textContaining('share no common history'), findsOneWidget);
+      // Not the current branch: `git merge` would target HEAD, not this
+      // branch, so the unrelated-histories merge is not offered.
+      expect(find.text('Merge (allow unrelated histories)…'), findsNothing);
     },
   );
+
+  group('Merge (allow unrelated histories)', () {
+    testWidgets('tapping the action alone never merges — a confirmation '
+        'naming the risk comes first', (tester) async {
+      final git = await _pumpUnrelatedHeadSelected(tester);
+
+      await tester.tap(find.text('Merge (allow unrelated histories)…'));
+      await tester.pumpAndSettle();
+
+      expect(git.merges, isEmpty, reason: 'nothing before the confirm');
+      expect(find.text('Merge unrelated histories'), findsOneWidget);
+      expect(find.textContaining('share no common commit'), findsOneWidget);
+      expect(
+        find.textContaining('extensive file-level conflicts'),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('cancelling the confirmation never merges', (tester) async {
+      final git = await _pumpUnrelatedHeadSelected(tester);
+
+      await tester.tap(find.text('Merge (allow unrelated histories)…'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Cancel'));
+      await tester.pumpAndSettle();
+
+      expect(git.merges, isEmpty);
+    });
+
+    testWidgets('confirming merges the upstream with the flag set', (
+      tester,
+    ) async {
+      final git = await _pumpUnrelatedHeadSelected(tester);
+
+      await tester.tap(find.text('Merge (allow unrelated histories)…'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Merge Anyway'));
+      await tester.pumpAndSettle();
+
+      expect(git.merges, [('origin/main', true)]);
+    });
+  });
 }

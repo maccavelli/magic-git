@@ -85,6 +85,7 @@ class _FakeGit extends GitService {
     String repoPath,
     String branch, {
     MergeMode mode = MergeMode.normal,
+    bool allowUnrelatedHistories = false,
   }) async {
     merges.add(mode);
     return const SSHCommandResult(exitCode: 0, stdout: '', stderr: '');

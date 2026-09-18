@@ -4755,6 +4755,7 @@ printf 'EC\n%d %d\n' "$ns" "$nu"
     String repoPath,
     String branch, {
     MergeMode mode = MergeMode.normal,
+    bool allowUnrelatedHistories = false,
   }) {
     final args = [
       'git',
@@ -4764,6 +4765,7 @@ printf 'EC\n%d %d\n' "$ns" "$nu"
       if (mode == MergeMode.noFf) '--no-ff',
       if (mode == MergeMode.ffOnly) '--ff-only',
       if (mode == MergeMode.squash) '--squash',
+      if (allowUnrelatedHistories) '--allow-unrelated-histories',
       '--end-of-options',
       branch,
     ];

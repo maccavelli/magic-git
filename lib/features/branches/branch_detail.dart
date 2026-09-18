@@ -112,6 +112,7 @@ class BranchDetail extends ConsumerWidget {
   final void Function(String) onCheckoutInNewWorktree;
   final void Function(GitService, GitRef) onCheckoutRemote;
   final void Function(GitService, String, MergeMode) onMerge;
+  final void Function(GitService, String) onMergeAllowUnrelated;
   final void Function(GitService, GitRef) onSetUpstream;
   final void Function(GitService, String) onUnsetUpstream;
   final void Function(GitService, String) onRenameBranch;
@@ -151,6 +152,7 @@ class BranchDetail extends ConsumerWidget {
     required this.onCheckoutInNewWorktree,
     required this.onCheckoutRemote,
     required this.onMerge,
+    required this.onMergeAllowUnrelated,
     required this.onSetUpstream,
     required this.onUnsetUpstream,
     required this.onRenameBranch,
@@ -635,6 +637,14 @@ class BranchDetail extends ConsumerWidget {
               MacosColors.systemOrangeColor,
               CupertinoIcons.exclamationmark_triangle,
               'This branch and ${b.upstream} share no common history.',
+              // `git merge` targets HEAD, so merging the upstream in is only
+              // meaningful when this branch is the current one.
+              actionLabel: b.isHead
+                  ? 'Merge (allow unrelated histories)…'
+                  : null,
+              onAction: busy
+                  ? null
+                  : () => onMergeAllowUnrelated(git, b.upstream!),
             )
           : _calloutBox(
               context,
@@ -952,12 +962,19 @@ class BranchDetail extends ConsumerWidget {
     tone: tone,
   );
 
+  /// [actionLabel]/[onAction] add an [InlineActionButton] below the text —
+  /// this codebase's small-button standard (no prior `_calloutBox` call had
+  /// one to follow, despite MADR 0051's plan assuming otherwise; this is the
+  /// first).
   Widget _calloutBox(
     BuildContext context,
     Color color,
     IconData icon,
-    String text,
-  ) {
+    String text, {
+    String? actionLabel,
+    IconData? actionIcon,
+    VoidCallback? onAction,
+  }) {
     final typography = MacosTheme.of(context).typography;
     return Container(
       padding: const EdgeInsets.all(12),
@@ -971,7 +988,24 @@ class BranchDetail extends ConsumerWidget {
         children: [
           MacosIcon(icon, size: 16, color: color),
           const SizedBox(width: 10),
-          Expanded(child: Text(text, style: typography.caption1)),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(text, style: typography.caption1),
+                if (actionLabel != null) ...[
+                  const SizedBox(height: 6),
+                  InlineActionButton(
+                    label: actionLabel,
+                    icon: actionIcon ?? CupertinoIcons.arrow_merge,
+                    onPressed: onAction,
+                    // The label ellipsizes in a narrow pane; hover restores it.
+                    tooltip: actionLabel,
+                  ),
+                ],
+              ],
+            ),
+          ),
         ],
       ),
     );

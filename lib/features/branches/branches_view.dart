@@ -564,6 +564,7 @@ class _BranchesViewState extends ConsumerState<BranchesView>
             onCheckoutInNewWorktree: _checkoutInNewWorktree,
             onCheckoutRemote: (g, r) => _checkoutRemote(vm, g, r),
             onMerge: _mergeBranch,
+            onMergeAllowUnrelated: _mergeAllowUnrelated,
             onSetUpstream: _setUpstream,
             onUnsetUpstream: _unsetUpstream,
             onRenameBranch: _renameBranch,
@@ -1392,6 +1393,38 @@ class _BranchesViewState extends ConsumerState<BranchesView>
       label,
       (log) async =>
           log.logResult(label, await git.merge(repoPath, branch, mode: mode)),
+    );
+  }
+
+  /// Always behind an explicit confirmation naming the risk — never a default
+  /// or pre-confirmed action (MADR 0051, Decision Outcome part 3).
+  Future<void> _mergeAllowUnrelated(GitService git, String branch) async {
+    if (busy) return;
+    final ok = await confirmAction(
+      context,
+      title: 'Merge unrelated histories',
+      message:
+          '"$branch" and the current branch share no common commit. Merging '
+          'combines two independent histories and may produce extensive '
+          'file-level conflicts.',
+      confirmLabel: 'Merge Anyway',
+    );
+    if (!ok) return;
+    await _runMergeAllowUnrelated(git, branch);
+  }
+
+  Future<void> _runMergeAllowUnrelated(GitService git, String branch) async {
+    final label = [
+      'git merge',
+      '--allow-unrelated-histories',
+      branch,
+    ].join(' ');
+    await runLogged(
+      label,
+      (log) async => log.logResult(
+        label,
+        await git.merge(repoPath, branch, allowUnrelatedHistories: true),
+      ),
     );
   }
 

@@ -60,6 +60,9 @@ class InlineActionButton extends StatefulWidget {
 }
 
 class _InlineActionButtonState extends State<InlineActionButton> {
+  /// Far wider than any real label, so an unbounded parent sees no change.
+  static const double _unboundedMaxWidth = 10000;
+
   bool _hovered = false;
   bool _pressed = false;
 
@@ -167,22 +170,34 @@ class _InlineActionButtonState extends State<InlineActionButton> {
                   ),
               ],
             ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                MacosIcon(widget.icon, size: 9, color: fg),
-                const SizedBox(width: 4),
-                Text(
-                  widget.label,
-                  style: theme.typography.body.copyWith(
-                    fontSize: 11,
-                    height: 1.0,
-                    fontWeight: FontWeight.w600,
-                    letterSpacing: 0.1,
-                    color: fg,
+            // The label ellipsizes when the parent bounds the width. Most of
+            // these buttons sit in a parent Row, which hands its children an
+            // UNBOUNDED width, where a Flexible label would assert; LimitedBox
+            // bounds only that case, so the label keeps its natural width there.
+            child: LimitedBox(
+              maxWidth: _unboundedMaxWidth,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  MacosIcon(widget.icon, size: 9, color: fg),
+                  const SizedBox(width: 4),
+                  Flexible(
+                    child: Text(
+                      widget.label,
+                      maxLines: 1,
+                      softWrap: false,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.typography.body.copyWith(
+                        fontSize: 11,
+                        height: 1.0,
+                        fontWeight: FontWeight.w600,
+                        letterSpacing: 0.1,
+                        color: fg,
+                      ),
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ),

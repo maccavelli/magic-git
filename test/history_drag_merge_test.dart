@@ -51,6 +51,7 @@ class _DragFakeGit extends GitService with FakeRefsSnapshot {
     String repoPath,
     String branch, {
     MergeMode mode = MergeMode.normal,
+    bool allowUnrelatedHistories = false,
   }) async {
     mergedBranches.add((branch, mode));
     return const SSHCommandResult(exitCode: 0, stdout: '', stderr: '');
