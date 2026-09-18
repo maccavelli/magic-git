@@ -145,6 +145,11 @@ class RepositoryContextSnapshot {
   final String repositoryName;
   final String? connectionLabel;
   final String? hostLabel;
+
+  /// Whether the repository is on this Mac rather than a remote host. Picks
+  /// the bar's location glyph through `sessionLocationIcon`, so it matches the
+  /// tab and the sidebar Location row (MADR 0052, amendment 0052.1).
+  final bool isLocal;
   final String branchLabel;
   final String? upstreamLabel;
   final int ahead;
@@ -185,6 +190,7 @@ class RepositoryContextSnapshot {
     required this.repositoryName,
     this.connectionLabel,
     this.hostLabel,
+    this.isLocal = false,
     required this.branchLabel,
     this.upstreamLabel,
     this.ahead = 0,

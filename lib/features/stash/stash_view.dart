@@ -373,6 +373,7 @@ class _StashViewState extends ConsumerState<StashView> with BusyActionState {
       repositoryName:
           'Repository: ${ref.watch(repositoryDisplayNameProvider(repoPath))}',
       connectionLabel: connection.connectionLabel,
+      isLocal: connection.isLocal,
       hostLabel: connection.isLocal ? 'On this Mac' : connection.host,
       branchLabel: head == null ? 'Repository' : 'Branch: ${head.shortName}',
       upstreamLabel: head?.upstream,

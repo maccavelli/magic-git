@@ -35,6 +35,40 @@ List<_Site> _repositoryNameSites() {
   return sites;
 }
 
+/// The argument text of every `RepositoryContextSnapshot(...)` construction
+/// in `lib/`, from the opening parenthesis to its balanced close.
+List<_Site> _snapshotConstructions() {
+  final sites = <_Site>[];
+  final files = Directory('lib')
+      .listSync(recursive: true)
+      .whereType<File>()
+      .where((f) => f.path.endsWith('.dart'));
+  for (final file in files) {
+    final source = file.readAsStringSync();
+    var from = 0;
+    while (true) {
+      final at = source.indexOf('RepositoryContextSnapshot(', from);
+      if (at < 0) break;
+      from = at + 1;
+      // The class's own constructor declaration is not a construction.
+      if (source.substring(0, at).trimRight().endsWith('const') &&
+          source.startsWith('RepositoryContextSnapshot({', at)) {
+        continue;
+      }
+      final open = at + 'RepositoryContextSnapshot'.length;
+      var depth = 0;
+      var end = open;
+      for (; end < source.length; end++) {
+        if (source[end] == '(') depth++;
+        if (source[end] == ')') depth--;
+        if (depth == 0) break;
+      }
+      sites.add((file: file.path, text: source.substring(open, end + 1)));
+    }
+  }
+  return sites;
+}
+
 void main() {
   test('every repository status-bar name comes from the shared provider', () {
     final sites = _repositoryNameSites();
@@ -63,6 +97,27 @@ void main() {
         site.text,
         isNot(contains(".split('/')")),
         reason: '${site.file} splits the path by hand:\n${site.text}',
+      );
+    }
+  });
+
+  // MADR 0052 amendment 0052.1: the status bar's location glyph comes from
+  // the snapshot's isLocal, which defaults to remote — so a construction that
+  // forgets it shows a globe for a local repo. Every construction states it.
+  test('every repository context snapshot states whether it is local', () {
+    final sites = _snapshotConstructions();
+    expect(
+      sites,
+      hasLength(7),
+      reason:
+          'expected the seven pane snapshots; a new one must state isLocal:\n'
+          '${sites.map((s) => s.file).join('\n')}',
+    );
+    for (final site in sites) {
+      expect(
+        site.text,
+        contains('isLocal:'),
+        reason: '${site.file} builds a snapshot without isLocal',
       );
     }
   });

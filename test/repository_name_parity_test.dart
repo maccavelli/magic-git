@@ -1,7 +1,9 @@
 // MADR 0052: in one tab, the tab title, the sidebar Repository row, a pane's
 // status bar and the window title all show the same repository name — the
 // tab alias when set, else the directory — and a saved repository label
-// renames none of them.
+// renames none of them. The tab, status bar and Location row also show the
+// same location glyph: a globe for a remote repo, a folder for a local one
+// (amendment 0052.1).
 
 import 'package:flutter/cupertino.dart' hide ConnectionState;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -13,6 +15,7 @@ import 'package:remote_magic_git/core/storage/saved_connection.dart';
 import 'package:remote_magic_git/core/storage/saved_workspace_set.dart';
 import 'package:remote_magic_git/core/storage/saved_workspace_store.dart';
 import 'package:remote_magic_git/core/utils/git_porcelain_parser.dart';
+import 'package:remote_magic_git/features/common/repository_context_bar.dart';
 import 'package:remote_magic_git/features/stash/stash_view.dart';
 import 'package:remote_magic_git/features/switcher/current_repo_indicator.dart';
 import 'package:remote_magic_git/features/tabs/tab_strip.dart';
@@ -24,17 +27,29 @@ import 'package:shared_preferences/shared_preferences.dart';
 const _repo = '/srv/backend-src';
 
 class _StubConnection extends ConnectionController {
+  _StubConnection(this._state);
+  final ConnectionState _state;
   @override
-  ConnectionState build() => const ConnectionState(
-    phase: ConnectionPhase.connected,
-    backend: ConnectionBackend.ssh,
-    host: 'build01.example.com',
-    connectionId: 'c1',
-    connectionLabel: 'Build box',
-    repoPath: _repo,
-    repoPaths: [_repo],
-  );
+  ConnectionState build() => _state;
 }
+
+const _remote = ConnectionState(
+  phase: ConnectionPhase.connected,
+  backend: ConnectionBackend.ssh,
+  host: 'build01.example.com',
+  connectionId: 'c1',
+  connectionLabel: 'Build box',
+  repoPath: _repo,
+  repoPaths: [_repo],
+);
+
+const _local = ConnectionState(
+  phase: ConnectionPhase.connected,
+  backend: ConnectionBackend.local,
+  connectionId: 'l1',
+  repoPath: _repo,
+  repoPaths: [_repo],
+);
 
 const _saved = SavedConnection(
   id: 'c1',
@@ -50,8 +65,12 @@ const _saved = SavedConnection(
 /// strip renders (it hides with a single tab), pumped with that tab's own
 /// container around the strip, the Repository row and the Stashes pane.
 Future<({TabsController controller, RepoTab tab})> _pump(
-  WidgetTester tester,
-) async {
+  WidgetTester tester, {
+  ConnectionState state = _remote,
+}) async {
+  final kind = state.isLocal
+      ? SavedRepositoryKind.local
+      : SavedRepositoryKind.ssh;
   SharedPreferences.setMockInitialValues({});
   tester.view.physicalSize = const Size(1200, 800);
   tester.view.devicePixelRatio = 1;
@@ -62,7 +81,7 @@ Future<({TabsController controller, RepoTab tab})> _pump(
     containerFactory: (overrides) => ProviderContainer(
       retry: (_, _) => null,
       overrides: [
-        connectionProvider.overrideWith(_StubConnection.new),
+        connectionProvider.overrideWith(() => _StubConnection(state)),
         statusProvider.overrideWith(
           (ref, repo) async => GitStatus(
             branch: const GitBranchInfo(head: 'main'),
@@ -86,15 +105,15 @@ Future<({TabsController controller, RepoTab tab})> _pump(
   await controller.aliasesReady;
   controller.ensureInitialTab();
   final tab = controller.openOrFocus(
-    connectionId: 'c1',
+    connectionId: state.connectionId,
     repoPath: _repo,
-    savedKind: SavedRepositoryKind.ssh,
+    savedKind: kind,
     connect: (_) {},
   );
   controller.openOrFocus(
-    connectionId: 'c1',
+    connectionId: state.connectionId,
     repoPath: '/srv/other',
-    savedKind: SavedRepositoryKind.ssh,
+    savedKind: kind,
     connect: (_) {},
   );
   controller.activate(tab.id);
@@ -109,7 +128,7 @@ Future<({TabsController controller, RepoTab tab})> _pump(
           home: Column(
             children: [
               TabStrip(),
-              SizedBox(height: 60, child: CurrentRepoIndicator()),
+              SizedBox(height: 120, child: SessionInfoCard()),
               Expanded(child: StashView(repoPath: _repo)),
             ],
           ),
@@ -144,6 +163,33 @@ void _expectEverywhere(WidgetTester tester, RepoTab tab, String name) {
   );
 }
 
+/// Asserts the tab, the status bar and the Location row each show [icon],
+/// and that neither [others] glyph appears anywhere.
+void _expectLocationIcon(IconData icon, List<IconData> others) {
+  Finder iconIn(Type surface, IconData glyph) => find.descendant(
+    of: find.byType(surface),
+    matching: find.byWidgetPredicate((w) => w is MacosIcon && w.icon == glyph),
+  );
+  expect(iconIn(TabStrip, icon), findsNWidgets(2), reason: 'both tab chips');
+  expect(
+    iconIn(RepositoryContextBar, icon),
+    findsOneWidget,
+    reason: 'status bar',
+  );
+  expect(
+    iconIn(CurrentLocationIndicator, icon),
+    findsOneWidget,
+    reason: 'Location row',
+  );
+  for (final other in others) {
+    expect(
+      find.byWidgetPredicate((w) => w is MacosIcon && w.icon == other),
+      findsNothing,
+      reason: 'a stray ${other.codePoint} glyph',
+    );
+  }
+}
+
 void main() {
   testWidgets('P1 with no alias every surface shows the directory', (
     tester,
@@ -167,5 +213,20 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Website'), findsNothing);
     expect(find.text('Repository: Website'), findsNothing);
+  });
+
+  testWidgets('P4 a remote repo shows the globe on tab, status bar and '
+      'Location row', (tester) async {
+    await _pump(tester);
+    _expectLocationIcon(CupertinoIcons.globe, [CupertinoIcons.desktopcomputer]);
+  });
+
+  testWidgets('P5 a local repo shows the folder on tab, status bar and '
+      'Location row', (tester) async {
+    await _pump(tester, state: _local);
+    _expectLocationIcon(CupertinoIcons.folder, [
+      CupertinoIcons.globe,
+      CupertinoIcons.desktopcomputer,
+    ]);
   });
 }

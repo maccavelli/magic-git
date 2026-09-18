@@ -84,6 +84,7 @@ class ForgeRepositoryWorkspace extends ConsumerWidget {
       repositoryName:
           'Repository: ${ref.watch(repositoryDisplayNameProvider(repoPath))}',
       connectionLabel: connection.connectionLabel,
+      isLocal: connection.isLocal,
       hostLabel: connection.isLocal ? 'On this Mac' : connection.host,
       branchLabel: branch == null
           ? '…'

@@ -125,7 +125,9 @@ void main() {
 
     expect(find.text('This Mac'), findsOneWidget);
     expect(_tooltip('On this Mac'), findsOneWidget);
-    expect(_icon(CupertinoIcons.desktopcomputer), findsOneWidget);
+    // The local glyph matches the tab and status bar (amendment 0052.1).
+    expect(_icon(CupertinoIcons.folder), findsOneWidget);
+    expect(_icon(CupertinoIcons.desktopcomputer), findsNothing);
     expect(find.text('Local'), findsNothing);
     expect(find.text('my-local-repo'), findsNothing);
   });

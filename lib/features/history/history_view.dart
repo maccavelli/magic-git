@@ -1591,6 +1591,7 @@ class _HistoryViewState extends ConsumerState<HistoryView>
             repositoryName:
                 'Repository: ${ref.watch(repositoryDisplayNameProvider(widget.repoPath))}',
             connectionLabel: connection.connectionLabel,
+            isLocal: connection.isLocal,
             hostLabel: connection.isLocal ? 'On this Mac' : connection.host,
             branchLabel: head == null
                 ? 'Detached HEAD'

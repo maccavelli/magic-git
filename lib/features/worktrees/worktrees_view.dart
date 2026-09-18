@@ -748,6 +748,7 @@ class _WorktreesViewState extends ConsumerState<WorktreesView>
                 repositoryName:
                     'Worktree: ${tabParts.isEmpty ? selectedPath : tabParts.last}',
                 connectionLabel: connection.connectionLabel,
+                isLocal: connection.isLocal,
                 hostLabel: connection.isLocal ? 'On this Mac' : connection.host,
                 branchLabel: tabWorktree == null
                     ? 'Worktree'
@@ -791,6 +792,7 @@ class _WorktreesViewState extends ConsumerState<WorktreesView>
       repositoryName:
           'Repository: ${ref.watch(repositoryDisplayNameProvider(repoPath))}',
       connectionLabel: connection.connectionLabel,
+      isLocal: connection.isLocal,
       hostLabel: connection.isLocal ? 'On this Mac' : connection.host,
       branchLabel: main == null ? 'Worktrees' : 'Main: ${main.branchLabel}',
       connected: connection.isConnected,

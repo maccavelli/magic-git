@@ -7,6 +7,7 @@ import 'package:macos_ui/macos_ui.dart';
 
 import '../../core/providers/app_providers.dart';
 import '../common/session_exit_guard.dart';
+import '../common/session_location.dart';
 import '../common/tappable.dart';
 import 'tab_ui_providers.dart';
 import 'tabs_controller.dart';
@@ -210,9 +211,7 @@ class _TabChipBody extends ConsumerWidget {
               MacosIcon(
                 tab.isBlank
                     ? CupertinoIcons.plus_app
-                    : isLocal
-                    ? CupertinoIcons.folder
-                    : CupertinoIcons.desktopcomputer,
+                    : sessionLocationIcon(isLocal: isLocal),
                 size: 13,
                 color: active
                     ? MacosColors.systemBlueColor

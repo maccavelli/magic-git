@@ -1650,6 +1650,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
       repositoryPath: repoPath,
       repositoryName: ref.watch(repositoryDisplayNameProvider(repoPath)),
       connectionLabel: connection.connectionLabel,
+      isLocal: connection.isLocal,
       hostLabel: connection.isLocal ? 'On this Mac' : connection.host,
       branchLabel: branch == null
           ? 'Loading branch…'

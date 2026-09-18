@@ -604,6 +604,7 @@ class _BranchesViewState extends ConsumerState<BranchesView>
       repositoryName:
           'Repository: ${ref.watch(repositoryDisplayNameProvider(repoPath))}',
       connectionLabel: connection.connectionLabel,
+      isLocal: connection.isLocal,
       hostLabel: connection.isLocal ? 'On this Mac' : connection.host,
       branchLabel: head == null ? 'Detached HEAD' : 'Branch: ${head.shortName}',
       upstreamLabel: head?.upstream,

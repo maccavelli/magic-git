@@ -4,6 +4,7 @@ import 'package:macos_ui/macos_ui.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/storage/saved_connection.dart';
 import '../../core/utils/git_porcelain_parser.dart';
+import '../common/session_location.dart';
 import '../tabs/tab_ui_providers.dart';
 
 /// The passive info card at the bottom of the sidebar, directly above the
@@ -193,8 +194,8 @@ class CurrentLocationIndicator extends ConsumerWidget {
       ),
     );
     if (isLocal) {
-      return const _InfoRow(
-        icon: CupertinoIcons.desktopcomputer,
+      return _InfoRow(
+        icon: sessionLocationIcon(isLocal: true),
         caption: 'Location',
         value: 'This Mac',
         tooltip: 'On this Mac',
@@ -207,7 +208,7 @@ class CurrentLocationIndicator extends ConsumerWidget {
         : saved.where((c) => c.id == connectionId).firstOrNull;
     final value = host ?? connectionLabel ?? 'Connected';
     return _InfoRow(
-      icon: CupertinoIcons.globe,
+      icon: sessionLocationIcon(isLocal: false),
       caption: 'Location',
       value: value,
       tooltip: conn == null

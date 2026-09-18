@@ -12,6 +12,7 @@ import 'link_status_chip.dart';
 import 'repository_context.dart';
 import 'repository_workspace_models.dart';
 import 'repository_workspace_scaffold.dart';
+import 'session_location.dart';
 import 'tappable.dart';
 import 'tool_icon_button.dart';
 import 'workspace_appearance.dart';
@@ -312,7 +313,7 @@ class _RepositoryIdentity extends StatelessWidget {
             ),
             const SizedBox(width: 8),
           ],
-          const MacosIcon(CupertinoIcons.folder, size: 16),
+          MacosIcon(sessionLocationIcon(isLocal: snapshot.isLocal), size: 16),
           const SizedBox(width: 6),
           Flexible(
             child: Text(
