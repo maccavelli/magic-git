@@ -577,6 +577,84 @@ Reading the logs confirmed the intended assertion failed in both.
 `branches_stale_cleanup_test.dart` 5/5. Full `flutter test`: 4149 passed (+5), 3 skipped, 0 failed.
 **Commit** `6e5d2af`.
 
+### Phase 7, executed
+
+**Deviation found and reported, 2026-09-17 — the banner's actions are not self-contained.** 7.1 says
+`_pendingBanner` "needs none [state] beyond what `pendingOpProvider` supplies" and can move "verbatim".
+Both claims are false. `_abortPending`/`_continuePending` (`repo_status_view.dart:1478`, `:1511`) run
+inside the view's `BusyActionState`: `runGuarded`/`runLogged`, the busy gate and the post-action refresh.
+The view also calls them outside the banner, from its `repository.abortPending` menu command (`:1822`)
+and its `continueOperation` primary action (`:2143`). A verbatim move would break both and split the busy
+gate across two states. Reported with two resolutions: share the UI and the op→`GitService` dispatch
+while each view keeps a thin execution pair inside its own busy gate, versus a banner owning its actions
+with its own gate. **User selected: share UI and dispatch, keep execution per view.**
+
+**Deviation found and reported, 2026-09-17 — no row to put a rebase indicator on.** 7.3 places a
+row-level indicator on the affected branch. Reproduced in a scratch repo: mid-rebase, HEAD is detached
+(`git status`: `## HEAD (no branch)`), `for-each-ref`'s `%(HEAD)` marks no branch (`[ ] feature`,
+`[ ] main`), and so no `GitRef` has `isHead`. Only `.git/rebase-merge/head-name` (`refs/heads/feature`)
+records the branch, and `pendingOpProvider` doesn't expose it. 7.3 and 7.5 also refer to "the same
+Continue/Abort dialog Status already has". There is none: Status has banner buttons plus a
+confirm-before-abort. Reported with three resolutions: one full-width banner across the top of Branches,
+as on Status; a detail-pane banner plus a navigator-header chip opening a new chooser; or the row-level
+design with new `head-name` plumbing in `GitService` and the providers. **User selected: full-width
+banner atop Branches.** This replaces 7.3's two surfaces with one. ~~7.5's row-indicator test~~ becomes
+a banner test.
+
+**Correction, not escalated — the banner sits above the scaffold, not in its context slot.** The natural
+home, `RepositoryWorkspaceScaffold`'s `repositoryContext` slot, is not rendered in a worktree tab
+(`NestedWorkspaceScope`, `repository_workspace_scaffold.dart:138-148`). That is exactly where a linked
+worktree's rebase would need the banner. Branches therefore returns `Column[PendingOpBanner,
+Expanded(scaffold)]`, full-width in both modes, without touching the shared scaffold. Its text, colours
+and buttons are Status's own, unchanged.
+
+**Created.** `lib/features/common/pending_op_banner.dart`, holding everything the two views share:
+- `pendingOpVerb`;
+- `confirmAbortPendingOp`, Status's "Abort {verb}" dialog;
+- `abortPendingOp`, the op→`--abort` dispatch;
+- `continuePendingOp`, the op→`--continue` dispatch and its log label, `null` for `none`;
+- `PendingOpBanner`, stateless, taking `op`, `onContinue` and `onAbort`, with the body moved verbatim
+  from Status's `_pendingBanner`.
+
+**Modified.**
+- `repo_status_view.dart`: `_pendingVerb`/`_pendingBanner` are gone (−101 lines).
+  `_abortPending`/`_continuePending` are now thin wrappers over the shared dispatch, inside the view's own
+  `runGuarded`/`runLogged`, and still clear the selection only on success. The banner call site uses
+  `PendingOpBanner`. The `repository.abortPending` menu command and the `continueOperation` primary
+  action call the same two methods, unchanged.
+- `branches_view.dart`: watches `pendingOpProvider(repoPath)` and shows the banner, with its own thin
+  pair inside its own busy gate. Its `refreshAfterMutation` re-fetches `repoSnapshotProvider`, which
+  `pendingOpProvider` derives from, so the banner clears once the operation ends.
+
+**Created/updated tests.**
+- `test/pending_op_banner_test.dart`, ten tests (7.4, 7.5 as amended):
+  - For every op, the verb, the `--abort` and the `--continue` with its label; `none` does nothing.
+  - The banner names the op and wires both buttons.
+  - `confirmAbortPendingOp` returns true on Abort and false on Cancel.
+  - On Branches: the banner shows mid-rebase with **no** branch marked current (the detached-HEAD case
+    reproduced above), and Continue runs `rebaseContinue`. Abort waits for its confirmation, cancelling
+    aborts nothing, and there is no banner when nothing is pending.
+- `test/repo_status_view_test.dart`: its only existing banner test, "Abort confirms then calls
+  mergeAbort", still passes unchanged. 7.4 expected to migrate tests, but a grep found this one and
+  nothing on Continue or on clearing the selection. So the guard 7.6 presupposes did not exist yet. Two
+  tests now cover it: with a conflicted file selected, Abort (confirmed) and Continue each clear the
+  selection ("Mark Resolved" disappears). The fake gained a `mergeContinue` recorder.
+
+**Seen to fail** (7.6 and beyond), in a detached scratch worktree at `2831901` carrying this phase's
+files, one asserted-and-verified mutation at a time. The script now collapses whitespace before its
+reason check, fixing the Phase 6 wrap artefact:
+- *Status abort no longer clears the selection* (7.6): `Found 1 widget with text "Mark Resolved"`.
+- *Status continue no longer clears the selection*: the same.
+- *Branches banner removed*: `Found 0 widgets with text containing Rebase in progress`.
+- *Branches abort skips its confirmation*: `Actual: ['rebaseAbort']`, "nothing before the confirm".
+- *Shared abort dispatch mis-wired* (rebase → `mergeAbort`): `Expected: ['rebaseAbort'] Actual:
+  ['mergeAbort']`.
+
+**Gate.** `flutter analyze`: no issues. `dart format --set-exit-if-changed`: clean. Targeted:
+`pending_op_banner_test.dart` plus `repo_status_view_test.dart`, 75/75. Full `flutter test`: 4159 passed
+(+10), 3 skipped, 0 failed.
+**Commit** `9ece179`.
+
 ## Implementation Steps
 
 ### Phase 0 — preconditions
@@ -1022,7 +1100,7 @@ calls `deleteBranch` for each; cancelling calls it for none; no branches newly g
 
 ### Phase 7 — extract `PendingOpBanner` and surface it in Branches
 
-7.1 **New** `lib/features/common/pending_op_banner.dart`: `PendingOpBanner extends ConsumerWidget`
+7.1 *(Superseded in execution, 2026-09-17: the actions depend on each view's busy gate and are called outside the banner, so only the UI and the op→GitService dispatch are shared — see "Phase 7, executed".)* **New** `lib/features/common/pending_op_banner.dart`: `PendingOpBanner extends ConsumerWidget`
 (or `StatefulWidget`, matching whatever `_pendingBanner`'s state needs — it currently needs none beyond
 what `pendingOpProvider` supplies), taking `repoPath` and an optional `onAborted` callback (defaulting to
 a no-op, replacing `repo_status_view.dart`'s `_clearSelection` call, which stays local to that view's own
@@ -1033,7 +1111,7 @@ a no-op, replacing `repo_status_view.dart`'s `_clearSelection` call, which stays
 7.2 `repo_status_view.dart`'s call site (`:1958-1959`) becomes `if (pending != null && pending !=
 PendingOp.none) PendingOpBanner(repoPath: repoPath, onAborted: _clearSelection)` — behaviour-preserving.
 
-7.3 `branch_navigator.dart` (row-level, small inline indicator, not the full banner — "Rebase in
+7.3 *(Superseded in execution, 2026-09-17: mid-rebase no branch row is current, so Branches shows one full-width banner instead — see "Phase 7, executed".)* `branch_navigator.dart` (row-level, small inline indicator, not the full banner — "Rebase in
 progress" text with a tap target) and `branch_detail.dart` (the full `PendingOpBanner`, matching Status's
 own treatment, inserted at the top of the callout chain — a mid-operation branch's state is more urgent
 than any sync-state callout) both watch `pendingOpProvider(repoPath)` and show/link to it when not
