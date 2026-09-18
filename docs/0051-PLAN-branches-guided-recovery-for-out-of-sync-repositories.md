@@ -305,6 +305,85 @@ clean (one formatting pass required on `branch_detail.dart` before the gate clos
 3049 passed, 2 skipped (live-forge, skipped by design), 0 failed.
 **Commit** `2cf1b0d`.
 
+### Phase 3, executed
+
+**Modified.** `git_service.dart`: extracted `haveCommonAncestor(repoPath, a, b)` from
+`_mergeTreePreviewUnlocked`'s first step exactly as 3.1 sketched (including the `isFullGitOid(mbOut)`
+validation the sketch omitted — kept for behaviour-preservation, since dropping it would let a malformed
+`merge-base` result read as "related" instead of throwing); `_mergeTreePreviewUnlocked` now calls it.
+Verified behaviour-preserving against the full pre-existing merge-preview suite (`branch_merge_preview_test.dart`,
+`branch_merge_preview_integration_test.dart`, `branches_phase7_command_budget_test.dart`) before building
+anything on top of it.
+
+**Created.** `lib/core/git/branch_sync_state.dart` (the `BranchSyncState` enum,
+`classifyBranchSyncStateCoarse`, `classifyBranchSyncStateAsync`) matching 3.2 verbatim.
+`branchSyncStateProvider` in `app_providers.dart` (3.3): `FutureProvider.autoDispose.family`, keyed by
+`(repoPath, branchName)`, `retry: noProviderRetry`, modelled on `branchBaseProvider`'s shape (watch
+`gitServiceProvider` and `refsProvider(...).future` synchronously, no `ref` use after the `await`) rather
+than `branchMergePreviewProvider`'s heavier LRU-cached shape, which this state doesn't need.
+`branch_detail.dart`'s callout chain (3.5): `noUpstream` and `diverged`/`unrelatedHistories` branches added
+after the existing chain, in the order specified; `staleTracking`'s callout already existed unchanged.
+
+**Deviation found and reported, 2026-09-17 — chip-row overflow.** Implementing 3.4's "Not published" badge
+in `_divergenceCluster` exactly as written broke a pre-existing, MADR-0049-tracked overflow-safety suite:
+`test/label_chip_row_overflow_test.dart` (three tests, one shared pathological fixture: long branch name +
+long worktree chip + merged + open request, at the 240pt minimum navigator width) failed with `RenderFlex
+overflowed by 24 pixels`. Confirmed the cause directly (not assumed): temporarily disabling only the new
+"Not published" render path made all three pass again; re-enabling reproduced the failure. Root cause: every
+other optional row badge goes through `ChipStrip`/`_badgeEntries`, which shrinks and collapses into a "+N"
+indicator under width pressure; the divergence cluster (where 3.4 placed the new labels) sits outside that
+mechanism as unshrinkable `Text`, and got away with it before only because its `noUpstream`/`upToDate`
+states rendered nothing. Reported with two resolutions — move the new labels into `ChipStrip` (matches the
+row's existing, purpose-built overflow architecture) versus bound/ellipsize the divergence cluster itself
+(smaller change, but alters the previously-unshrinkable `↑n ↓n`/`gone` badges' behaviour too). **User
+selected: move into ChipStrip.**
+
+**Deviation found and reported, 2026-09-17 — Browse command budget.** Fixing the above (still watching
+`branchSyncStateProvider` per row, just from `_badgeEntries` instead of `_divergenceCluster`) surfaced a
+second, more serious gap the full-suite gate caught: `test/branches_500ref_baseline_test.dart`'s "500-ref
+Browse scroll performance" failed (`Expected: <6> Actual: <11>`) — five extra `git merge-base` calls at
+first paint, one per visible ahead-and-behind row with a resolvable upstream ref. This codebase enforces,
+via that file and `branches_phase7_command_budget_test.dart`, that Browse row rendering issues zero
+comparison-class git commands; 3.4's "upgrade a diverged row to the async provider's answer" did not
+account for that invariant. Reported with two resolutions — scope the navigator row to
+`classifyBranchSyncStateCoarse` only (free, no git call; the row shows "Diverged" for both an ordinary
+divergence and unrelated histories, since telling them apart needs the git call) versus keep the per-row
+async upgrade and loosen the command-budget tests to allow it. **User selected: coarse-only row.**
+
+**Resolution executed.** `_syncStateChipEntries` (renamed from an earlier draft that watched the async
+provider) now calls only `classifyBranchSyncStateCoarse`, returning a "Not published" or "Diverged" chip
+through `_badgeEntries`/`ChipStrip`; it never watches `branchSyncStateProvider`. `_divergenceCluster`
+reverted to (almost exactly) its pre-Phase-3 shape — the `↑n ↓n`/`gone` text stays unshrinkable, unmoved,
+since neither ever overflowed anything. The async provider — and the real unrelated-histories distinction —
+is now watched only from `branch_detail.dart`'s callout, scoped to the single selected branch, exactly
+where the existing command-budget invariant already permits an on-demand git call.
+
+**Created/updated tests.** `test/branches_sync_state_test.dart` (new): one `testWidgets` per
+`BranchSyncState` value (3.8), asserting the navigator row's badge and the detail-pane's callout;
+`unrelatedHistories`'s navigator assertion updated in place for the coarse-only resolution above (asserts
+"Diverged" at row level, "share no common history" only in the detail pane once selected) rather than
+written twice. `test/branches_actions_test.dart`'s divergence-badge test (3.7) updated to also assert
+"Diverged" alongside the pre-existing `↑2 ↓1`/`gone` assertions. `test/provider_ref_after_await_scan_test.dart`:
+its line-number-keyed `allowed` map updated (3596→3597, 4747→4768, 5705→5726, 5788→5809) — inserting the
+new provider earlier in `app_providers.dart` shifted four pre-existing, already-reviewed allowed sites down
+by the same offset; confirmed no new offender by re-running after the fix.
+
+**Seen to fail.** In a detached scratch worktree at the pre-Phase-3 commit (`38e7726`), copying in only the
+new/updated tests: `branches_sync_state_test.dart` failed on exactly the three states that need the new
+code (`noUpstream`, `diverged` ×2 — the coarse-only navigator badge and the detail-pane message), passing on
+the four unchanged states; `branches_actions_test.dart`'s divergence-badge test failed on the new "Diverged"
+assertion. For the two regression suites (`label_chip_row_overflow_test.dart`,
+`branches_500ref_baseline_test.dart`), the causal chain was confirmed directly during execution rather than
+via a separate worktree run: each failed under the pre-fix code (logged) and passed once the corresponding
+resolution above was applied (logged), with a controlled disable/re-enable step isolating the overflow
+cause specifically.
+
+**Gate.** `flutter analyze`: no issues. `dart format --set-exit-if-changed` on all eight touched files:
+clean. Targeted: `branches_sync_state_test.dart` 7/7, `branches_500ref_baseline_test.dart`,
+`label_chip_row_overflow_test.dart`, `branches_actions_test.dart`, `branches_phase7_command_budget_test.dart`,
+`provider_ref_after_await_scan_test.dart` all green. Full `flutter test`: all green, 0 failures.
+**Commit** `89f7c28`.
+
 ## Implementation Steps
 
 ### Phase 0 — preconditions
