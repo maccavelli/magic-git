@@ -664,4 +664,17 @@ canary doesn't apply to it. The named-test requirement still does.
 
 ## Execution record
 
-No phase has been executed. The plan awaits approval.
+Plan approved by the maintainer on 2026-09-18.
+
+### Phase 0, executed
+
+* SDK check: `Flutter 3.47.2 • channel stable`; `flutter pub get --enforce-lockfile` printed
+  "Got dependencies!".
+* Baseline, unmodified tree at `fcd70fb` plus the uncommitted records:
+  * `flutter analyze`: `No issues found! (ran in 5.6s)`, exit 0.
+  * `flutter test`: `03:39 +4189 ~3: All tests passed!`, exit 0.
+  * `flutter test test/help_book_json_test.dart`: `+11: All tests passed!` (observed while writing the MADR,
+    same tree).
+* Records: MADR set to `accepted`, this plan to `in-progress`, index row updated. Amendment note added
+  under 0010-MADR's frontmatter.
+* Commit `6778107` (message from the hook).
