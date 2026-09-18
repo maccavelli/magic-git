@@ -195,6 +195,46 @@ the toast that appears," never "check the Undo menu."
 assertion must change to match — Phase 3 does this in the same commit as the rendering change, never
 leaving it red.
 
+## Execution Record
+
+Approved and executed starting 2026-09-17.
+
+### Phase 0, executed
+
+`Flutter 3.47.2` matched `FLUTTER_VERSION`; `flutter pub get --enforce-lockfile` resolved clean;
+`lib/`, `test/` were clean. Baseline `flutter test`: 4122 tests, 0 failures.
+
+### Phase 1, executed
+
+**Modified.** `_setUpstream`'s `validate` closure now checks the typed target against
+`refsProvider(repoPath)`'s already-fetched list, refusing (with a message naming Publish) any target
+that isn't a real remote-tracking branch — exactly the 1.1 sketch, unchanged.
+
+**Created.** Two tests in `test/branches_actions_test.dart` (`_FakeGit.setUpstream` recording override
+added): the refusal case and the accepted-real-target case, both using that file's existing fixture
+(only `origin/feature` is a real remote-tracking ref in it, which the refusal case's default
+`origin/main` target deliberately doesn't match).
+
+**Seen to fail**, in a detached scratch worktree with only the `validate` closure reverted: the refusal
+test failed — no error text found, since the sheet no longer validates — while the acceptance test
+stayed green (unaffected by the fix's absence), confirming the negative test actually exercises the fix
+rather than something else.
+
+**Deviation found and fixed in the same commit, not deferred.** The full-suite gate found a
+**pre-existing test** this phase's own change broke: `test/branches_view_guards_test.dart`'s "the
+current branch offers Set upstream via its right-click menu" confirmed the pre-filled default
+(`origin/main`) with no matching remote-tracking ref anywhere in its fixture — it was asserting the
+exact permissive behaviour this phase exists to remove. Not a plan gap: this is precisely the bug MADR
+0051 F6 named, caught by a test that had encoded it as expected. **Resolution**: added a matching
+`refs/remotes/origin/main` `GitRef` to that one test's own `_pump(tester, refs: ...)` call — not to the
+file's shared `_refs` constant, which several other tests in the same file also use and which adding a
+new remote ref to could have silently perturbed. The test's own intent (menu item present, default
+target submits) is otherwise unchanged.
+
+**Gate.** `dart format` clean, `flutter analyze` No issues. Targeted tests green (`branches_actions_test.dart`
+8/8, `branches_view_guards_test.dart`'s affected test). Full suite: 4124 tests (+2), all green.
+**Commit** `789ef9f`.
+
 ## Implementation Steps
 
 ### Phase 0 — preconditions
