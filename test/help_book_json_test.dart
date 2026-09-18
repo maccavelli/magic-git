@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/services.dart' show LogicalKeyboardKey;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:remote_magic_git/core/settings/keymap.dart';
+import 'package:remote_magic_git/features/common/menu_bar_spec.dart';
 
 /// Splits a Help chord string like "⌘⇧B" into modifier flags + the key part.
 ({bool meta, bool shift, bool alt, bool control, String key}) _parseChord(
@@ -92,9 +93,65 @@ bool _chordEquals(
 String _topicBlob(Map<String, dynamic> book, String id) =>
     jsonEncode(_topicById(book, id));
 
+/// The Swift file that installs the native View and Help menu items.
+const _nativeMenuSource = 'macos/Runner/MainFlutterWindow.swift';
+
+/// Everything a Help label can be quoted from: every Dart file under `lib/`,
+/// plus the native menu installer. A label Help quotes must occur verbatim
+/// here, so renaming it in the app fails this suite until Help follows (0053).
+String _sourceCorpus() {
+  final buffer = StringBuffer();
+  final dartFiles =
+      Directory('lib')
+          .listSync(recursive: true)
+          .whereType<File>()
+          .where((f) => f.path.endsWith('.dart'))
+          .toList()
+        ..sort((a, b) => a.path.compareTo(b.path));
+  for (final file in dartFiles) {
+    buffer.writeln(file.readAsStringSync());
+  }
+  buffer.writeln(File(_nativeMenuSource).readAsStringSync());
+  return buffer.toString();
+}
+
+/// Every UI label Help quotes, by topic (0053). Each must appear in its topic
+/// and, verbatim, in [_sourceCorpus]. A label the app builds at runtime is
+/// anchored by its static literal fragment, never a reconstructed whole.
+const _labelAnchors = <String, List<String>>{
+  'tab_repository': ['Hide reviewed', 'Mark Resolved'],
+  'tab_stashes': ['Stash with Message…'],
+  'tab_worktrees': ['Add Worktree'],
+  'tab_branches': ['Fetch & Prune'],
+  'settings': ['Known Hosts', 'Keyboard Mappings'],
+};
+
+/// Every item title in the Dart-declared menu bar, submenus included.
+Iterable<String> _menuTitles(List<MenuBarItem> items) sync* {
+  for (final item in items) {
+    if (item.separator) continue;
+    yield item.title;
+    yield* _menuTitles(item.items);
+  }
+}
+
+/// `title: "…"` literals in [_nativeMenuSource] that name a menu, not an
+/// item. Each is asserted to still exist, so this list cannot go stale.
+const _nonMenuTitles = {'View', 'Help'};
+
+/// Every natively installed menu item title (View menu items, Help ▸
+/// Support & Help).
+Set<String> _nativeMenuTitles() {
+  final source = File(_nativeMenuSource).readAsStringSync();
+  return {
+    for (final m in RegExp(r'title: "([^"]+)"').allMatches(source)) m.group(1)!,
+  }.difference(_nonMenuTitles);
+}
+
 void main() {
   group('help_book.json validation', () {
     late Map<String, dynamic> jsonBook;
+    late String sourceCorpus;
 
     setUpAll(() {
       final file = File('macos/Runner/help_book.json');
@@ -104,6 +161,82 @@ void main() {
         reason: 'help_book.json must exist in macos/Runner/',
       );
       jsonBook = jsonDecode(file.readAsStringSync()) as Map<String, dynamic>;
+      sourceCorpus = _sourceCorpus();
+    });
+
+    test('quoted UI labels exist in their topic and in source', () {
+      for (final MapEntry(key: id, value: labels) in _labelAnchors.entries) {
+        final blob = _topicBlob(jsonBook, id);
+        for (final label in labels) {
+          expect(
+            blob,
+            contains(label),
+            reason: 'topic $id must quote the UI label "$label"',
+          );
+          expect(
+            sourceCorpus,
+            contains(label),
+            reason:
+                'topic $id quotes "$label", which no longer exists in lib/ '
+                'or $_nativeMenuSource — the app renamed it; update Help',
+          );
+        }
+      }
+    });
+
+    test('sections carry only fields the renderer shows', () {
+      // HelpView.swift shows only `text` for a heading and never shows a
+      // `title` on items or paragraphs — content there is silently dropped.
+      for (final cat in jsonBook['categories'] as List<dynamic>) {
+        for (final top in (cat as Map<String, dynamic>)['topics'] as List) {
+          final topic = top as Map<String, dynamic>;
+          final id = topic['id'];
+          expect(
+            (topic['keywords'] as List<dynamic>).length,
+            greaterThanOrEqualTo(3),
+            reason: 'topic $id needs at least 3 keywords for search',
+          );
+          for (final sec in topic['sections'] as List<dynamic>) {
+            final section = sec as Map<String, dynamic>;
+            switch (section['type'] as String) {
+              case 'heading':
+                expect(
+                  section['text'],
+                  isA<String>().having((t) => t.isNotEmpty, 'non-empty', true),
+                  reason: 'heading in $id must carry its words in text',
+                );
+              case 'items':
+              case 'paragraph':
+                expect(
+                  section.containsKey('title'),
+                  isFalse,
+                  reason: '${section['type']} in $id has a title nothing shows',
+                );
+                if (section['type'] == 'items') {
+                  expect(section['items'] as List<dynamic>?, isNotEmpty);
+                } else {
+                  expect(section['text'], isNotEmpty, reason: id.toString());
+                }
+              case 'callout':
+                expect(section['text'], isNotEmpty, reason: id.toString());
+              case 'code':
+                expect(section['code'], isNotEmpty, reason: id.toString());
+            }
+          }
+        }
+      }
+    });
+
+    test('non-menu title exclusions still exist in the native source', () {
+      final source = File(_nativeMenuSource).readAsStringSync();
+      for (final title in _nonMenuTitles) {
+        expect(source, contains('title: "$title"'), reason: title);
+      }
+      final dartTitles = [
+        for (final menu in kMenuBarMenus) ..._menuTitles(menu.items),
+      ];
+      expect(dartTitles, isNotEmpty);
+      expect(_nativeMenuTitles(), contains('Show Recovery View'));
     });
 
     test('book header contains title and version', () {
