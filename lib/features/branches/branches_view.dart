@@ -1798,8 +1798,20 @@ class _BranchesViewState extends ConsumerState<BranchesView>
     await runGuarded(() => git.unsetUpstream(repoPath, name));
   }
 
+  /// Local branches whose upstream is gone and that git would let us delete —
+  /// not the current branch, and not one checked out in another worktree.
+  static List<String> _deletableGone(List<GitRef>? refs) => [
+    for (final r in refs ?? const <GitRef>[])
+      if (r.isLocalBranch &&
+          r.upstreamGone &&
+          !r.isHead &&
+          r.elsewhereWorktreePath == null)
+        r.shortName,
+  ];
+
   Future<void> _fetchPrune(GitService git) async {
-    await runLogged(
+    final goneBefore = _deletableGone(ref.read(refsProvider(repoPath)).value);
+    final fetched = await runLogged(
       'git fetch --all --prune',
       (log) async {
         await withOwnMutation(
@@ -1833,6 +1845,75 @@ class _BranchesViewState extends ConsumerState<BranchesView>
       holdBusy: false,
       refresh: () => refreshAfterFetch(ref, repoPath),
     );
+    if (!fetched || !mounted) return;
+    // The refresh above only invalidates refsProvider; wait for the refetch
+    // it started, or this would still be reading the pre-fetch list.
+    final List<GitRef> refsAfter;
+    try {
+      refsAfter = await ref.read(refsProvider(repoPath).future);
+    } on Object {
+      // The panel watches the same provider and already shows its error;
+      // without a fresh list there is simply nothing to offer.
+      return;
+    }
+    if (!mounted) return;
+    final newlyGone = _deletableGone(
+      refsAfter,
+    ).where((name) => !goneBefore.contains(name)).toList();
+    if (newlyGone.isEmpty) return;
+    await _offerStaleCleanup(git, newlyGone);
+  }
+
+  /// Offered after a Fetch & Prune reveals branches whose upstream was just
+  /// deleted. Branches git refuses as not fully merged — usual when the
+  /// request was squash- or rebase-merged on the forge — get one follow-up
+  /// force-delete confirmation, not an error each.
+  Future<void> _offerStaleCleanup(GitService git, List<String> names) async {
+    final listed = names.map((n) => '"$n"').join(', ');
+    final one = names.length == 1;
+    final confirmed = await confirmAction(
+      context,
+      title: 'Clean up stale branches?',
+      message:
+          '${names.length} ${one ? 'branch no longer exists' : 'branches no '
+                    'longer exist'} on the remote: $listed. Delete '
+          '${one ? 'it' : 'them'} locally?',
+      confirmLabel: 'Delete',
+      destructive: true,
+    );
+    if (!confirmed || !mounted) return;
+    final unmerged = <String>[];
+    await runGuarded(() async {
+      for (final name in names) {
+        try {
+          await git.deleteBranch(repoPath, name);
+        } on GitException catch (e) {
+          if (!e.branchNotFullyMerged) rethrow;
+          unmerged.add(name);
+        }
+      }
+    });
+    if (unmerged.isEmpty || !mounted) return;
+    final force = await confirmAction(
+      context,
+      title: unmerged.length == 1
+          ? 'Branch not fully merged'
+          : 'Branches not fully merged',
+      message:
+          '${unmerged.map((n) => '"$n"').join(', ')} '
+          '${unmerged.length == 1 ? 'has' : 'have'} commits not merged into '
+          "the current branch. Force-deleting will lose them unless they're "
+          'reachable from elsewhere (another branch, a tag, or a stash). '
+          'Force delete anyway?',
+      confirmLabel: 'Force Delete',
+      destructive: true,
+    );
+    if (!force || !mounted) return;
+    await runGuarded(() async {
+      for (final name in unmerged) {
+        await git.deleteBranch(repoPath, name, force: true);
+      }
+    });
   }
 
   Future<void> _renameBranch(GitService git, String oldName) async {
