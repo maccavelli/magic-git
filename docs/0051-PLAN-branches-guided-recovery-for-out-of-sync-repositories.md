@@ -689,9 +689,11 @@ Phase 0 baseline of 4122. Every status was captured, never piped.
    - Fetch & Prune against a remote-deleted branch offers the cleanup and removes exactly that branch.
 
    These are what move this plan to `complete`.
-2. **`--allow-unrelated-histories` is not asserted at the argv level** (Phase 4). The tests stop at a
-   `GitService.merge()` fake. A one-case addition to `test/mutations_test.dart`'s "merge builds the right
-   argv per mode" closes it.
+2. ~~**`--allow-unrelated-histories` is not asserted at the argv level** (Phase 4).~~ **Closed
+   2026-09-18** (`e90433b`): `test/mutations_test.dart`'s "merge builds the right argv per mode" now
+   asserts the flag appears, and appears *before* `--end-of-options`. Seen to fail in a scratch
+   worktree twice: with the flag dropped, and with it moved after `--end-of-options`. Full suite 4159
+   passed.
 3. **Nothing is pushed.** `master` is 18 commits ahead of `origin/master`, all of them this record's:
    - 3 MADR/plan commits before execution;
    - 7 code commits, Phases 1–7 (Phase 0 changed no code);
