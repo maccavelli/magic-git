@@ -1,5 +1,8 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/providers/app_providers.dart' show connectionProvider;
+import '../../core/utils/posix_path.dart';
+
 /// Per-tab sidebar/page UI state. These live in each tab's own root
 /// [ProviderContainer], so a tab's active page and visited-page set are RETAINED
 /// while the tab is backgrounded (its AppShell is unmounted under
@@ -60,3 +63,26 @@ class TabAliasNotifier extends Notifier<String?> {
 final tabAliasProvider = NotifierProvider<TabAliasNotifier, String?>(
   TabAliasNotifier.new,
 );
+
+/// The one name for a repository across the tab title, window title, sidebar
+/// Repository row and status bar (MADR 0052): the tab's alias when it has one,
+/// else the last directory of [repoPath].
+String repositoryDisplayName(String repoPath, {String? alias}) {
+  final trimmed = alias?.trim() ?? '';
+  return trimmed.isEmpty ? basename(repoPath) : trimmed;
+}
+
+/// [repositoryDisplayName] for [repoPath] in this tab. The tab's alias names
+/// the tab's own repository, so it applies only when [repoPath] is the
+/// session's; a pane naming any other path gets that path's basename.
+final repositoryDisplayNameProvider = Provider.family<String, String>((
+  ref,
+  repoPath,
+) {
+  final active = ref.watch(connectionProvider.select((c) => c.repoPath));
+  final alias = ref.watch(tabAliasProvider);
+  return repositoryDisplayName(
+    repoPath,
+    alias: repoPath == active ? alias : null,
+  );
+});
