@@ -276,6 +276,7 @@ class BranchNavigator extends ConsumerStatefulWidget {
   final void Function(GitService, GitRef, MergeMode) onMerge;
   final void Function(GitService, GitRef) onSetUpstream;
   final void Function(GitService, String) onUnsetUpstream;
+  final void Function(GitService, GitRef) onReconcile;
   final void Function(GitService, String) onRenameBranch;
   final void Function(String) onTogglePin;
   final void Function(String) onCopyName;
@@ -362,6 +363,7 @@ class BranchNavigator extends ConsumerStatefulWidget {
     required this.onMerge,
     required this.onSetUpstream,
     required this.onUnsetUpstream,
+    required this.onReconcile,
     required this.onRenameBranch,
     required this.onTogglePin,
     required this.onCopyName,
@@ -2052,6 +2054,17 @@ class _BranchNavigatorState extends ConsumerState<BranchNavigator> {
           icon: CupertinoIcons.arrow_merge,
           label: 'Squash merge',
           onTap: () => widget.onMerge(git, b, MergeMode.squash),
+        ),
+      ],
+      // The opposite gate from the merge items: reconciling rebases or resets
+      // HEAD, so on any other branch it would act on the wrong one.
+      if (b.isHead &&
+          classifyBranchSyncStateCoarse(b) == BranchSyncState.diverged) ...[
+        const ContextMenuDivider(),
+        ContextMenuItem(
+          icon: CupertinoIcons.arrow_branch,
+          label: 'Reconcile…',
+          onTap: () => widget.onReconcile(git, b),
         ),
       ],
       const ContextMenuDivider(),

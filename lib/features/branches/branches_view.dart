@@ -10,6 +10,7 @@ import '../../core/forge/branch_forge_status.dart';
 import '../../core/forge/forge_urls.dart';
 import '../../core/git/branch_comparison.dart';
 import '../../core/git/branch_review_query.dart';
+import '../../core/git/branch_sync_state.dart';
 import '../../core/git/git_service.dart';
 import '../../core/output/output_log.dart';
 import '../../core/providers/app_providers.dart';
@@ -46,6 +47,9 @@ import 'branch_view_model.dart';
 import 'branch_workspace_prefs.dart';
 import 'create_tag_sheet.dart';
 import 'pinned_branches.dart';
+
+/// The Reconcile dialog's choices, in increasing order of risk.
+enum ReconcileOp { merge, rebase, reset, cancel }
 
 /// Source-control pane: local branches (checkout/delete/create), remote-tracking
 /// branches, and tags. Stashes have their own top-level namespace (StashView).
@@ -512,6 +516,7 @@ class _BranchesViewState extends ConsumerState<BranchesView>
       onMerge: (g, b, mode) => _mergeBranch(g, b.shortName, mode),
       onSetUpstream: _setUpstream,
       onUnsetUpstream: _unsetUpstream,
+      onReconcile: _reconcile,
       onRenameBranch: _renameBranch,
       onTogglePin: (branch) => _togglePin(vm, branch),
       onCopyName: _copyName,
@@ -565,6 +570,7 @@ class _BranchesViewState extends ConsumerState<BranchesView>
             onCheckoutRemote: (g, r) => _checkoutRemote(vm, g, r),
             onMerge: _mergeBranch,
             onMergeAllowUnrelated: _mergeAllowUnrelated,
+            onReconcile: _reconcile,
             onSetUpstream: _setUpstream,
             onUnsetUpstream: _unsetUpstream,
             onRenameBranch: _renameBranch,
@@ -1426,6 +1432,74 @@ class _BranchesViewState extends ConsumerState<BranchesView>
         await git.merge(repoPath, branch, allowUnrelatedHistories: true),
       ),
     );
+  }
+
+  /// Reconciles the diverged current branch with its upstream (MADR 0051).
+  /// Merge is primary — it keeps both histories; Rebase and Reset follow in
+  /// increasing order of risk.
+  Future<void> _reconcile(GitService git, GitRef branch) async {
+    if (busy || !branch.isHead || branch.upstream == null) return;
+    final upstream = branch.upstream!;
+    // The menus gate on the coarse state, which cannot tell an ordinary
+    // divergence from unrelated histories. That takes one merge-base, paid
+    // here on the user's action rather than per painted row.
+    final refs = ref.read(refsProvider(repoPath)).value ?? const <GitRef>[];
+    var state = BranchSyncState.diverged;
+    final classified = await runAction(context, () async {
+      state = await classifyBranchSyncStateAsync(git, repoPath, branch, refs);
+    });
+    if (!classified || !mounted) return;
+    // With no shared commit there is nothing to rebase onto or reset toward
+    // meaningfully; only the explicit allow-unrelated merge applies.
+    if (state == BranchSyncState.unrelatedHistories) {
+      await _mergeAllowUnrelated(git, upstream);
+      return;
+    }
+    final op = await chooseAction<ReconcileOp>(
+      context,
+      title: 'Reconcile with $upstream',
+      message:
+          '"${branch.shortName}" and "$upstream" have diverged '
+          '(${branch.ahead} here, ${branch.behind} there).',
+      primaryLabel: 'Merge "$upstream" into "${branch.shortName}"',
+      primaryValue: ReconcileOp.merge,
+      secondary: [
+        ('Rebase "${branch.shortName}" onto "$upstream"', ReconcileOp.rebase),
+        ('Reset "${branch.shortName}" to "$upstream"', ReconcileOp.reset),
+        ('Cancel', ReconcileOp.cancel),
+      ],
+    );
+    if (op == null || !mounted) return;
+    switch (op) {
+      case ReconcileOp.merge:
+        await _runMerge(git, upstream, MergeMode.normal);
+      case ReconcileOp.rebase:
+        await _runRebaseOnto(git, upstream);
+      case ReconcileOp.reset:
+        await _runResetToUpstream(git, branch, upstream);
+      case ReconcileOp.cancel:
+        break;
+    }
+  }
+
+  Future<void> _runResetToUpstream(
+    GitService git,
+    GitRef branch,
+    String upstream,
+  ) async {
+    final ok = await confirmAction(
+      context,
+      title: 'Reset to $upstream?',
+      message:
+          'This discards ${branch.ahead} '
+          'commit${branch.ahead == 1 ? '' : 's'} that exist only on '
+          '"${branch.shortName}". Reversible with ⌘Z or the toast that '
+          'appears after.',
+      confirmLabel: 'Reset',
+      destructive: true,
+    );
+    if (!ok || !mounted) return;
+    await runGuarded(() => git.reset(repoPath, upstream, mode: ResetMode.hard));
   }
 
   Future<void> _runRebaseOnto(GitService git, String onto) async {

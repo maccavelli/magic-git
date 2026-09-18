@@ -113,6 +113,7 @@ class BranchDetail extends ConsumerWidget {
   final void Function(GitService, GitRef) onCheckoutRemote;
   final void Function(GitService, String, MergeMode) onMerge;
   final void Function(GitService, String) onMergeAllowUnrelated;
+  final void Function(GitService, GitRef) onReconcile;
   final void Function(GitService, GitRef) onSetUpstream;
   final void Function(GitService, String) onUnsetUpstream;
   final void Function(GitService, String) onRenameBranch;
@@ -153,6 +154,7 @@ class BranchDetail extends ConsumerWidget {
     required this.onCheckoutRemote,
     required this.onMerge,
     required this.onMergeAllowUnrelated,
+    required this.onReconcile,
     required this.onSetUpstream,
     required this.onUnsetUpstream,
     required this.onRenameBranch,
@@ -792,6 +794,13 @@ class BranchDetail extends ConsumerWidget {
               : () => onMerge(git, b.shortName, MergeMode.squash),
         ),
       ],
+      // HEAD only — the opposite gate from the merge items above.
+      if (b.isHead &&
+          classifyBranchSyncStateCoarse(b) == BranchSyncState.diverged)
+        MacosPulldownMenuItem(
+          title: const Text('Reconcile…'),
+          onTap: busy ? null : () => onReconcile(git, b),
+        ),
       MacosPulldownMenuItem(
         title: const Text('Set upstream…'),
         onTap: busy ? null : () => onSetUpstream(git, b),
