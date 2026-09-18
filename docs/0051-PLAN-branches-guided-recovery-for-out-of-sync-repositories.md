@@ -1,6 +1,7 @@
 ---
-status: "in-progress"
+status: "executed"
 date: 2026-09-17
+verified: 2026-09-17
 associated-madr: "0051-MADR-branches-guided-recovery-for-out-of-sync-repositories.md"
 ---
 
@@ -655,6 +656,48 @@ reason check, fixing the Phase 6 wrap artefact:
 (+10), 3 skipped, 0 failed.
 **Commit** `9ece179`.
 
+### Phase 8, executed
+
+**Records closed.** MADR 0051 stays `accepted`, with `verified: 2026-09-17`, and gains **Amendment
+0051.2**, recording the four places execution contradicted what it asserts:
+- the navigator row shows only the coarse state (Phase 3);
+- the interrupted-operation surface is a full-width banner (Phase 7);
+- menu parity covers shared row actions, not every item (Phase 2);
+- the chooser is Rebase's confirmation (Phase 5).
+
+The acceptance criteria those changed (2, 3, 8) are annotated in place rather than rewritten. The
+`docs/README.md` row for 0051 is updated.
+
+**Status is `executed`, not the `complete` 8.1 names.** The engineering phases shipped, and every
+automated criterion holds. But this plan's Verification section also names three manual checks on the
+maintainer's machine, and none has been run. AGENTS.md defines `executed` for exactly that state ("where
+the body names a residual or a maintainer-only step, the body wins"). This follows 0050, which became
+`complete` only once its manual step was confirmed.
+
+**Whole-plan gate**, run at close. `flutter --version`: 3.47.2, matching `FLUTTER_VERSION`.
+`flutter analyze`: No issues found (exit 0). The targeted files ran with the gate's typo corrected
+(`branch_navigator_test.dart` → `branches_navigator_test.dart`), plus the four test files this plan
+created: 114/114 (exit 0). Full `flutter test`: 4159 passed, 3 skipped, 0 failed (exit 0), against the
+Phase 0 baseline of 4122. Every status was captured, never piped.
+
+**Residuals — not done, and why.**
+1. **Maintainer-only manual checks** (Verification). None can be run from this session:
+   - a real diverged branch, made by committing on two clones of one remote, shows "Diverged", and
+     Reconcile resolves it by each of Merge, Rebase and Reset, on throwaway copies, with Reset
+     appearing in the Undo menu afterwards;
+   - a first-time Publish tracks correctly;
+   - Fetch & Prune against a remote-deleted branch offers the cleanup and removes exactly that branch.
+
+   These are what move this plan to `complete`.
+2. **`--allow-unrelated-histories` is not asserted at the argv level** (Phase 4). The tests stop at a
+   `GitService.merge()` fake. A one-case addition to `test/mutations_test.dart`'s "merge builds the right
+   argv per mode" closes it.
+3. **Nothing is pushed.** `master` is 18 commits ahead of `origin/master`, all of them this record's:
+   - 3 MADR/plan commits before execution;
+   - 7 code commits, Phases 1–7 (Phase 0 changed no code);
+   - 7 execution-record commits;
+   - this closing commit.
+
 ## Implementation Steps
 
 ### Phase 0 — preconditions
@@ -1150,6 +1193,10 @@ flutter test test/branches_actions_test.dart test/pending_op_banner_test.dart \
   test/repo_status_view_test.dart test/branch_navigator_test.dart
 ```
 
+*(Executed 2026-09-17: `test/branch_navigator_test.dart` does not exist — the file is
+`test/branches_navigator_test.dart`; the gate ran with that name, plus every test file this plan
+created. See "Phase 8, executed".)*
+
 Exit statuses are captured, never piped into a filter. Manually, on the maintainer's machine: a real
 repo with a diverged branch (create it by committing on two clones/worktrees of the same remote without
 syncing between) shows "Diverged" and Reconcile resolves it via each of the three paths in turn (on
@@ -1162,10 +1209,15 @@ remote-deleted branch offers the bulk cleanup and it removes exactly that branch
 1. `_setUpstream` refuses (with an actionable message) a target with no matching remote-tracking branch,
    and accepts one that has a match; `_publishBranch`'s existing gate is confirmed unchanged.
 2. The Advanced menu (renamed from More) and the context menu offer the identical action set for the
-   same branch, verified by set-equality, not a fixed list.
+   same branch, verified by set-equality, not a fixed list. *(Amended in Phase 2: the Advanced menu
+   also carries forge items the context menu never had, so set-equality cannot hold; parity is
+   asserted over an enumerated list of every shared row action — MADR Amendment 0051.2 item 3.)*
 3. Every `BranchSyncState` value renders a distinct, correctly-labeled state in both the navigator row
    and the detail pane, replacing the bare ahead/behind count for the diverged/unrelated cases while
-   leaving the ahead-only/behind-only display unchanged.
+   leaving the ahead-only/behind-only display unchanged. *(Amended in Phase 3: the navigator row shows
+   only the coarse state — "Diverged" covers unrelated histories too — because telling them apart
+   costs a `git merge-base` per visible row; the detail pane shows every state distinctly — MADR
+   Amendment 0051.2 item 1.)*
 4. `haveCommonAncestor` correctly distinguishes diverged from unrelated-histories, and
    `_mergeTreePreviewUnlocked`'s existing behaviour (including its own test coverage) is unchanged by the
    extraction.
@@ -1178,7 +1230,8 @@ remote-deleted branch offers the bulk cleanup and it removes exactly that branch
    deletes exactly the offered set on confirmation, none on cancellation.
 8. `PendingOpBanner`'s extraction changes no observable behaviour in `repo_status_view.dart` (its own
    existing tests pass unmodified beyond the file being what's tested), and the same banner/dialog is
-   reachable from Branches.
+   reachable from Branches. *(Amended in Phase 7: the same banner, full-width atop Branches; there is
+   no Continue/Abort dialog to reach — MADR Amendment 0051.2 item 2.)*
 9. `flutter analyze` clean, full suite green, every staged Dart file formatted, at every phase.
 
 ## Rollout and Rollback

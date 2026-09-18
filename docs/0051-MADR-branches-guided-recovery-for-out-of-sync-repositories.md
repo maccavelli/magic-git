@@ -350,6 +350,42 @@ part:
 **Decision unchanged.** Option C stands; this only corrects how much of it already exists, which is more
 than F10 credited, and narrows the plan's actual new-code surface accordingly.
 
+### 0051.2 — what execution changed, each with the maintainer's approval (2026-09-17)
+
+Execution contradicted four things this record asserts. Each was a deviation reported and resolved
+with the maintainer mid-phase; the evidence is in the plan's execution record, under the phase named.
+
+1. **The navigator row does not tell unrelated histories apart** (Decision Outcome part 2, "replaces
+   the bare `↑n ↓n` in both the navigator row and the detail pane"; Confirmation bullet 3; plan Phase 3).
+   Resolving `diverged` vs `unrelatedHistories` costs one `git merge-base`. Done for every visible row,
+   it broke the Browse invariant that row painting issues no comparison-class git commands, which is
+   enforced by `branches_500ref_baseline_test.dart` and `branches_phase7_command_budget_test.dart`. It
+   measured 5 extra commands at first paint on the 500-ref fixture. The row therefore shows only the
+   coarse state: "Not published", or "Diverged" alongside the unchanged `↑n ↓n`, as chips in the row's
+   shrinkable `ChipStrip`, because a plain-text label there also overflowed a pathological row. The real
+   distinction is resolved where a git call is already allowed: in the detail pane for the one selected
+   branch, and inside Reconcile when it is clicked. Unrelated histories still reach only the
+   allow-unrelated merge, which is what the Confirmation bullet protects.
+2. **The interrupted-operation surface is a full-width banner, not a per-row indicator** (part 4;
+   Confirmation bullet 5; plan Phase 7). Reproduced against real git: mid-rebase HEAD is detached and
+   `for-each-ref` marks no branch current, so there is no row to carry the indicator.
+   `pendingOpProvider` doesn't carry `rebase-merge/head-name`. And "the same Continue/Abort dialog Status
+   already has" does not exist: Status has banner buttons plus a confirm-before-abort. Branches now
+   shows Status's own banner across the top of the page, with the same text and buttons. The UI and the
+   op→`GitService` dispatch are shared, and each view runs them inside its own busy gate.
+3. **The two menus match on every row action, not on every item** (Confirmation bullet 6; plan Phase 2).
+   The Advanced menu also carries forge-workflow items (Create Pull/Merge Request, Open on Forge, Open
+   reachable history) that the context menu has never had. Parity is therefore asserted over an
+   enumerated list of shared row actions. Reaching it meant adding Copy name and reconciling four label
+   wordings, for which the context menu's wording was taken as canonical.
+4. **"Needs confirmation" for Reconcile's Rebase is met by the chooser** (part 3). The dialog names the
+   action outright ("Rebase "main" onto "origin/main""), as the existing drag-and-drop flow does, and
+   `rebaseOnto` is undo-journaled (`UndoOpKind.resetHard`). Only Reset, which discards commits, gets a
+   second, destructive confirmation.
+
+**Decision unchanged.** Option C stands, with the same four parts. These change where state is shown and
+how two affordances are shaped, not what the Branches tab can do.
+
 ## More Information
 
 * **Origin.** Maintainer request: multi-host (Windows/Linux/macOS) development on the same repositories
