@@ -470,3 +470,33 @@ need reverting with Phase 2.
 `flutter analyze` "No issues found!" (exit 0); full `flutter test` `+4160 ~3: All tests passed!`
 (exit 0), as expected. Records committed: the MADR (renamed, amended, `accepted`),
 `docs/README.md`, and this plan.
+
+### Phase 1, executed
+
+**Code commit** `f7d7b9d`: `repositoryDisplayName` and `repositoryDisplayNameProvider` in
+`lib/features/tabs/tab_ui_providers.dart`, as written in step 3. Tests are in
+`test/repository_display_name_test.dart`, T1.1–T1.10.
+
+**Red first.** The file failed to compile before the implementation
+(`Method not found: 'repositoryDisplayName'`), as step 2 predicted. That is not the evidence.
+
+**Note, not a deviation.** On its first green run T1.10 failed: `Expected: ['backend-src', 'Backend',
+'backend-src']`, `Actual: ['backend-src']`. Riverpod 3 delivers a dependant's update on the next
+flush, not synchronously. The test now `await container.pump()`s after each alias change; the
+assertion is unchanged.
+
+**Gate.** `dart format`: 0 changed. `flutter analyze`: No issues found (exit 0). Targeted: `+10: All
+tests passed!`. Full `flutter test`: `+4170 ~3: All tests passed!` (exit 0), +10 on the baseline.
+
+**Mutations**, run by `<scratchpad>/mutate.py` in a detached scratch worktree at `f7d7b9d`, which was
+then removed. Each named test failed on its assertion, not on compilation:
+
+| # | failing test | failure |
+|---|---|---|
+| M1.1 | T1.9 | `Expected: 'other'`, `Actual: 'Backend'` |
+| M1.2 | T1.5 | the untrimmed alias returned |
+| M1.3 | T1.3 | `backend-src` returned for alias `Backend` |
+| M1.4 | T1.10 | the listener saw only the initial value |
+
+**The mutation script was itself seen to fail.** A comment-only edit (M0) was reported `SURVIVED` with
+exit 1, so a kill is not an artefact of the harness.
