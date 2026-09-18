@@ -235,6 +235,76 @@ target submits) is otherwise unchanged.
 8/8, `branches_view_guards_test.dart`'s affected test). Full suite: 4124 tests (+2), all green.
 **Commit** `789ef9f`.
 
+### Phase 2, executed
+
+**Modified.** `branch_detail.dart`: the `MacosPulldownButton` title changed from `'More'` to `'Advanced'`
+(2.1); `moreItems` gained the three merge-mode items and the conditional "Unset upstream" item exactly as
+sketched in 2.2, each newly wired via constructor fields (`onUnsetUpstream`, added — it was not already
+threaded to `BranchDetail`, the contingency 2.2 named).
+
+**Deviation found and reported, 2026-09-17.** Step 2.3's parity test ("the Advanced menu offers every
+action the context menu does") could not be written as planned once drafted against the real menus: the
+two menus were not just missing items relative to each other, they used *different wording* for two
+actions that both already existed on both sides, and the context menu had one action ("Copy name") the
+Advanced menu had no equivalent for at all — neither gap was in the plan's step 2.2 sketch. Evidence: a
+literal set-equality comparison between the two menus' item labels immediately failed on `'Switch to
+worktree'` vs `'Switch to its worktree'`, `'New worktree…'` vs `'Check out in a new worktree…'`, and
+`'Delete'` vs `'Delete branch'`, plus `'Copy name'` present only in the context menu
+(`branch_navigator.dart`'s `_localMenu`). Reported with two resolutions — (a) add "Copy name" to the
+Advanced menu only, treating the wording differences as pre-existing and out of scope, versus (b) do (a)
+and also reconcile the wording so the two menus describe the same action identically, since a parity test
+that ignores wording differences is not really testing parity. **User selected: "expand phase 2 to include
+both."**
+
+**Resolution executed.** `branch_detail.dart`: added `onCopyName` (constructor field, wired to the
+existing `_copyName` method already used by the context menu equivalent) and a "Copy name" item next to
+Pin/Unpin; reworded `'Switch to worktree'` → `'Switch to its worktree'`, `'New worktree…'` → `'Check out in
+a new worktree…'`, and `'Delete'` → `'Delete branch'` to match `branch_navigator.dart`'s `_localMenu`
+verbatim (the context menu's wording was treated as canonical since MADR 0051 named it the parity target,
+not the other way around). `branches_view.dart`: wired `onCopyName: _copyName` and `onUnsetUpstream:
+_unsetUpstream` into the single `BranchDetail(...)` call site.
+
+**A further, narrower deviation surfaced while fixing the wording** — reworded call sites had to be
+distinguished from three other places in the UI that coincidentally share near-identical text but are not
+the Advanced menu at all: the primary `InlineActionButton` (`'Switch to worktree'`, unchanged — it is the
+row's main action, not a menu item), the delete confirmation dialog's confirm button (`'Delete'`, from
+`confirmLabel:` in `_deleteBranch`'s `confirmAction` call — unchanged, distinct from the dialog's own
+`'Delete branch'` title), and the same primary-button/dialog-button distinctions repeated across
+`test/branches_phase0_characterization_test.dart` and `test/branches_worktree_badge_test.dart`. These were
+corrected as part of executing the same user-approved resolution, not a separate deviation — they are the
+same class of "which UI element does this string belong to" question already in scope, discovered only
+because five test files assert against these labels.
+
+**Created/updated tests.** `test/branches_actions_test.dart`: added "the Advanced menu offers every row
+action the context menu does, for the same non-head branch" against the `stale` fixture branch (non-head,
+upstream set and gone — exercises both the merge-mode items and "Unset upstream" in both menus), asserting
+an explicit shared-action list rather than full set equality (forge-workflow items such as Create Pull/Merge
+Request have no context-menu equivalent by design, per MADR 0051 — a literal set-equality assertion would
+therefore always fail and was dropped in favour of the enumerated list, a narrower guard than 2.3
+originally described but one that still fails if either menu drops or renames a shared action). Updated,
+across `branches_history_handoff_test.dart`, `branches_navigator_test.dart`,
+`branches_phase0_characterization_test.dart`, `branches_view_guards_test.dart`, `branches_view_test.dart`,
+`branches_worktree_badge_test.dart`: every `find.text('More')` / `_openMoreMenu` reference renamed to
+`'Advanced'` / `_openAdvancedMenu`, and the `'Delete'` → `'Delete branch'` label change applied only where
+the assertion targets the Advanced menu item, not the confirm dialog's button or the primary action button.
+
+**Test-environment fix, not a production defect.** The parity test initially failed macos_ui's own
+`menuLimits.top >= 0.0` layout assertion — the Advanced dropdown, now taller by five items, didn't fit
+the harness's default 800×600 canvas at the `stale` row's on-screen position. `_pump` in
+`branches_actions_test.dart` now sets `tester.view.physicalSize = const Size(1600, 1200)` before pumping,
+the same fix `branches_worktree_badge_test.dart` already carried for the same limitation; real app windows
+are always larger than 800×600, so this affects only the test harness.
+
+**Seen to fail.** In a detached scratch worktree at the pre-Phase-2 commit (`789ef9f`), copying in only the
+new parity test: it failed with `Found 0 widgets with text "Advanced"` (the old code still says `'More'`),
+confirming the guard is tied to this phase's rename/parity change rather than passing vacuously.
+
+**Gate.** `flutter analyze`: no issues. `dart format --set-exit-if-changed` on all nine touched files:
+clean (one formatting pass required on `branch_detail.dart` before the gate closed). Targeted:
+`branches_actions_test.dart` 7/7. Full branches suite (7 files): 55 tests, all green. Full `flutter test`:
+3049 passed, 2 skipped (live-forge, skipped by design), 0 failed.
+**Commit** `2cf1b0d`.
+
 ## Implementation Steps
 
 ### Phase 0 — preconditions
