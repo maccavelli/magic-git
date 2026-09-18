@@ -256,7 +256,7 @@ Future<void> _invokeDeleteHeld(WidgetTester tester) async {
   deleteBinding!();
   await tester.pump();
   await tester.pump(const Duration(seconds: 1));
-  await _openMoreMenu(tester);
+  await _openAdvancedMenu(tester);
   await tester.tap(find.text('Delete').last); // confirm the plain delete
   await tester.pump();
   await tester.pump(const Duration(seconds: 1));
@@ -334,11 +334,11 @@ Finder _filterField() => find.byWidgetPredicate(
   (w) => w is MacosTextField && w.placeholder == 'Filter branches and tags',
 );
 
-Future<void> _openMoreMenu(WidgetTester tester) async {
-  // Delete (and other overflow actions) live under the More pulldown.
+Future<void> _openAdvancedMenu(WidgetTester tester) async {
+  // Delete (and other overflow actions) live under the Advanced pulldown.
   if (find.text('Delete').evaluate().isEmpty &&
-      find.text('More').evaluate().isNotEmpty) {
-    await tester.tap(find.text('More'));
+      find.text('Advanced').evaluate().isNotEmpty) {
+    await tester.tap(find.text('Advanced'));
     await tester.pumpAndSettle();
   }
 }

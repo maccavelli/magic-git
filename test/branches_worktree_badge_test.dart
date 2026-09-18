@@ -142,10 +142,10 @@ void main() {
       find.widgetWithText(InlineActionButton, 'Check out'),
       findsOneWidget,
     );
-    await tester.tap(find.text('More'));
+    await tester.tap(find.text('Advanced'));
     await tester.pumpAndSettle();
-    expect(find.text('Delete'), findsOneWidget);
-    // Dismiss the More menu so the next row tap is not blocked.
+    expect(find.text('Delete branch'), findsOneWidget);
+    // Dismiss the Advanced menu so the next row tap is not blocked.
     await tester.sendKeyEvent(LogicalKeyboardKey.escape);
     await tester.pumpAndSettle();
 
@@ -158,7 +158,7 @@ void main() {
       findsOneWidget,
     );
     expect(find.widgetWithText(InlineActionButton, 'Check out'), findsNothing);
-    await tester.tap(find.text('More'));
+    await tester.tap(find.text('Advanced'));
     await tester.pumpAndSettle();
     expect(find.text('Delete'), findsNothing);
   });

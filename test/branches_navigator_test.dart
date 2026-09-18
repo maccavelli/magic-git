@@ -133,8 +133,8 @@ void main() {
       find.widgetWithText(InlineActionButton, 'Check out'),
       findsOneWidget,
     );
-    expect(find.text('More'), findsOneWidget);
-    await tester.tap(find.text('More'));
+    expect(find.text('Advanced'), findsOneWidget);
+    await tester.tap(find.text('Advanced'));
     await tester.pumpAndSettle();
     expect(find.text('Merge into current'), findsOneWidget);
     expect(find.text('Rename…'), findsOneWidget);

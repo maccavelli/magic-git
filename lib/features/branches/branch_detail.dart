@@ -112,8 +112,10 @@ class BranchDetail extends ConsumerWidget {
   final void Function(GitService, GitRef) onCheckoutRemote;
   final void Function(GitService, String, MergeMode) onMerge;
   final void Function(GitService, GitRef) onSetUpstream;
+  final void Function(GitService, String) onUnsetUpstream;
   final void Function(GitService, String) onRenameBranch;
   final void Function(String) onTogglePin;
+  final void Function(String) onCopyName;
   final void Function(GitService, String) onDeleteBranch;
   final void Function(GitService, String) onDeleteRemoteBranch;
   final void Function(GitService, GitRef, TagRemoteStatus, String?) onDeleteTag;
@@ -149,8 +151,10 @@ class BranchDetail extends ConsumerWidget {
     required this.onCheckoutRemote,
     required this.onMerge,
     required this.onSetUpstream,
+    required this.onUnsetUpstream,
     required this.onRenameBranch,
     required this.onTogglePin,
+    required this.onCopyName,
     required this.onDeleteBranch,
     required this.onDeleteRemoteBranch,
     required this.onDeleteTag,
@@ -697,11 +701,11 @@ class BranchDetail extends ConsumerWidget {
         ),
       if (elsewhere != null)
         MacosPulldownMenuItem(
-          title: const Text('Switch to worktree'),
+          title: const Text('Switch to its worktree'),
           onTap: busy ? null : () => onSwitchToWorktree(elsewhere),
         ),
       MacosPulldownMenuItem(
-        title: const Text('New worktree…'),
+        title: const Text('Check out in a new worktree…'),
         onTap: busy ? null : () => onCheckoutInNewWorktree(b.shortName),
       ),
       if (canCreateRequest)
@@ -721,17 +725,39 @@ class BranchDetail extends ConsumerWidget {
           title: const Text('Open reachable history'),
           onTap: () => onOpenHistory!(b),
         ),
-      if (!b.isHead)
+      if (!b.isHead) ...[
         MacosPulldownMenuItem(
           title: const Text('Merge into current'),
           onTap: busy
               ? null
               : () => onMerge(git, b.shortName, MergeMode.normal),
         ),
+        MacosPulldownMenuItem(
+          title: const Text('Merge (no fast-forward)'),
+          onTap: busy ? null : () => onMerge(git, b.shortName, MergeMode.noFf),
+        ),
+        MacosPulldownMenuItem(
+          title: const Text('Merge (fast-forward only)'),
+          onTap: busy
+              ? null
+              : () => onMerge(git, b.shortName, MergeMode.ffOnly),
+        ),
+        MacosPulldownMenuItem(
+          title: const Text('Squash merge'),
+          onTap: busy
+              ? null
+              : () => onMerge(git, b.shortName, MergeMode.squash),
+        ),
+      ],
       MacosPulldownMenuItem(
         title: const Text('Set upstream…'),
         onTap: busy ? null : () => onSetUpstream(git, b),
       ),
+      if (b.upstream != null)
+        MacosPulldownMenuItem(
+          title: const Text('Unset upstream'),
+          onTap: busy ? null : () => onUnsetUpstream(git, b.shortName),
+        ),
       MacosPulldownMenuItem(
         title: const Text('Rename…'),
         onTap: busy ? null : () => onRenameBranch(git, b.shortName),
@@ -740,9 +766,13 @@ class BranchDetail extends ConsumerWidget {
         title: Text(vm.pinned.contains(b.shortName) ? 'Unpin' : 'Pin to top'),
         onTap: () => onTogglePin(b.shortName),
       ),
+      MacosPulldownMenuItem(
+        title: const Text('Copy name'),
+        onTap: () => onCopyName(b.shortName),
+      ),
       if (!b.isHead && elsewhere == null)
         MacosPulldownMenuItem(
-          title: const Text('Delete'),
+          title: const Text('Delete branch'),
           onTap: busy ? null : () => onDeleteBranch(git, b.shortName),
         ),
     ];
@@ -750,7 +780,7 @@ class BranchDetail extends ConsumerWidget {
     final actions = <Widget>[
       _detailButton(primary.label, primary.icon, primary.onTap),
       ...secondary,
-      MacosPulldownButton(title: 'More', items: moreItems),
+      MacosPulldownButton(title: 'Advanced', items: moreItems),
     ];
     return _detailScaffold(
       icon: CupertinoIcons.arrow_branch,

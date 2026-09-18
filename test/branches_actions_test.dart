@@ -1,7 +1,9 @@
 // The Branches panel's newer affordances: upstream-divergence badges, rename,
 // delete-on-remote, and the fast-forward-only merge item.
 
+import 'package:flutter/cupertino.dart' show Size;
 import 'package:flutter/gestures.dart' show kSecondaryButton;
+import 'package:flutter/services.dart' show LogicalKeyboardKey;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
@@ -90,6 +92,14 @@ class _FakeGit extends GitService {
 }
 
 Future<_FakeGit> _pump(WidgetTester tester) async {
+  // The Advanced pulldown now carries enough items (merge modes, upstream,
+  // rename, pin, copy, delete) that macos_ui's default positioning can
+  // overflow the harness's default 800x600 canvas and assert rather than
+  // clamp — branches_worktree_badge_test.dart hit the same limit first.
+  tester.view.physicalSize = const Size(1600, 1200);
+  tester.view.devicePixelRatio = 1.0;
+  addTearDown(tester.view.reset);
+
   final git = _FakeGit();
   final container = ProviderContainer(
     overrides: [
@@ -227,6 +237,61 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(git.upstreamsSet, [('main', 'origin/feature')]);
+    },
+  );
+
+  testWidgets(
+    'the Advanced menu offers every row action the context menu does, for '
+    'the same non-head branch',
+    (tester) async {
+      // "stale": non-head, upstream set (so both Merge-mode items and Unset
+      // upstream appear in both menus). Forge-workflow items (Create Pull/
+      // Merge Request, Open on Forge, Open reachable history) are
+      // deliberately excluded from this comparison — the context menu has
+      // no forge-workflow concept at all, by design, not by omission; MADR
+      // 0051 named the merge/upstream/rename/pin/copy/delete set as the
+      // parity gap, not forge actions.
+      const sharedRowActions = [
+        'Check out',
+        'Check out in a new worktree…',
+        'Merge into current',
+        'Merge (no fast-forward)',
+        'Merge (fast-forward only)',
+        'Squash merge',
+        'Set upstream…',
+        'Unset upstream',
+        'Rename…',
+        'Pin to top',
+        'Copy name',
+        'Delete branch',
+      ];
+
+      await _pump(tester);
+      await _rightClick(tester, find.text('stale'));
+      await tester.pumpAndSettle();
+      for (final label in sharedRowActions) {
+        expect(
+          find.text(label),
+          findsAtLeastNWidgets(1),
+          reason: 'context menu missing "$label"',
+        );
+      }
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('stale'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Advanced'));
+      await tester.pumpAndSettle();
+      for (final label in sharedRowActions) {
+        expect(
+          find.text(label),
+          findsAtLeastNWidgets(1),
+          reason: 'Advanced menu missing "$label"',
+        );
+      }
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
     },
   );
 }

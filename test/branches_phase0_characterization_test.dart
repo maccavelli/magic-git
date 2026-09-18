@@ -77,11 +77,11 @@ Future<ProviderContainer> _pump(
   return container;
 }
 
-Future<void> _openMoreMenu(WidgetTester tester) async {
-  // Delete (and other overflow actions) live under the More pulldown.
-  if (find.text('Delete').evaluate().isEmpty &&
-      find.text('More').evaluate().isNotEmpty) {
-    await tester.tap(find.text('More'));
+Future<void> _openAdvancedMenu(WidgetTester tester) async {
+  // Delete branch (and other overflow actions) live under the Advanced pulldown.
+  if (find.text('Delete branch').evaluate().isEmpty &&
+      find.text('Advanced').evaluate().isNotEmpty) {
+    await tester.tap(find.text('Advanced'));
     await tester.pumpAndSettle();
   }
 }
@@ -155,8 +155,8 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('feature'));
     await tester.pumpAndSettle();
-    await _openMoreMenu(tester);
-    expect(find.text('Delete'), findsOneWidget);
+    await _openAdvancedMenu(tester);
+    expect(find.text('Delete branch'), findsOneWidget);
 
     await tester.pumpWidget(
       UncontrolledProviderScope(
@@ -290,8 +290,8 @@ void main() {
     await tester.pumpAndSettle();
 
     // Click the Delete button in the detail pane.
-    await _openMoreMenu(tester);
-    await tester.tap(find.text('Delete'));
+    await _openAdvancedMenu(tester);
+    await tester.tap(find.text('Delete branch'));
     await tester.pumpAndSettle();
 
     // Confirmation dialog should appear.
@@ -384,13 +384,14 @@ void main() {
 
     await tester.tap(find.text('feature'));
     await tester.pumpAndSettle();
-    await _openMoreMenu(tester);
-    await tester.tap(find.text('Delete'));
+    await _openAdvancedMenu(tester);
+    await tester.tap(find.text('Delete branch'));
     await tester.pumpAndSettle();
 
-    // First confirmation: ordinary delete.
+    // First confirmation: ordinary delete (dialog title "Delete branch",
+    // confirm button just "Delete").
     expect(find.text('Delete branch'), findsOneWidget);
-    await _openMoreMenu(tester);
+    await _openAdvancedMenu(tester);
     await tester.tap(find.text('Delete').last);
     await tester.pumpAndSettle();
 
@@ -439,8 +440,8 @@ void main() {
 
     await tester.tap(find.text('feature'));
     await tester.pumpAndSettle();
-    await _openMoreMenu(tester);
-    expect(find.text('Delete'), findsOneWidget);
+    await _openAdvancedMenu(tester);
+    expect(find.text('Delete branch'), findsOneWidget);
     // Close More so Switch repo is hittable.
     await tester.sendKeyEvent(LogicalKeyboardKey.escape);
     await tester.pumpAndSettle();

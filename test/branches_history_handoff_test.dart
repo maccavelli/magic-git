@@ -94,8 +94,8 @@ Future<void> _openHistoryFor(WidgetTester tester, String branch) async {
   await tester.tap(find.text(branch));
   await tester.pumpAndSettle();
   if (find.text('Open reachable history').evaluate().isEmpty &&
-      find.text('More').evaluate().isNotEmpty) {
-    await tester.tap(find.text('More'));
+      find.text('Advanced').evaluate().isNotEmpty) {
+    await tester.tap(find.text('Advanced'));
     await tester.pumpAndSettle();
   }
   await tester.tap(find.text('Open reachable history'));
