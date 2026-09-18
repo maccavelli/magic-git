@@ -364,8 +364,26 @@ glyphs for the same place:
 - A source scan (`test/repository_name_source_test.dart`) fails if a construction omits it: the
   default would silently draw a globe for a local repo.
 
-**Not changed.** The connections manager's SSH tiles (`connection_switcher.dart:417,581`) and the
+**Not changed.** ~~The connections manager's SSH tiles (`connection_switcher.dart:417,581`) and the
 landing page's recent list (`connection_landing.dart:337`) still use `desktopcomputer` for remote.
-They are outside the three surfaces the maintainer named. The Repository row keeps `folder_fill`: it
-is the repository's glyph, not the location's.
+They are outside the three surfaces the maintainer named.~~ Superseded by Amendment 0052.2. The
+Repository row keeps `folder_fill`: it is the repository's glyph, not the location's.
+
+## Amendment 0052.2 (2026-09-18): the manager and landing rows use the location glyph too
+
+**Decision.** The maintainer extended 0052.1 to the two remaining places that show a location. They
+now use `sessionLocationIcon`: a **globe for remote** and a **folder for local**. No
+`desktopcomputer` glyph remains in `lib/`.
+
+- **Connections manager** (`connection_switcher.dart`): the saved SSH connection row and the unsaved
+  SSH session row now show the globe. The saved local repo row and the unsaved local session row now
+  show the plain folder. The active local row used to switch to `folder_fill`; it now keeps the
+  folder, and is marked by its accent colour and row highlight, as the SSH connection row already
+  was.
+- **Landing page** Recent Repositories (`connection_landing.dart`): the globe for a remote repo; local
+  already used the folder and now takes it from the same function.
+
+**Still not changed, deliberately.** The repo rows nested *under* an SSH connection in the manager keep
+`folder` / `folder_fill`. They name a repository within a location, not the location, and the fill
+marks the active repo. The same reasoning keeps the sidebar Repository row on `folder_fill`.
 

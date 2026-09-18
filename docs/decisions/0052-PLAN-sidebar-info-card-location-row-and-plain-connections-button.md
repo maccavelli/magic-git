@@ -667,3 +667,34 @@ golden. The parity test asserts the `IconData` each surface is given, which is w
 | I3 | status bar back to a fixed `folder` | P4 | `reason: status bar` |
 | I4 | drop `isLocal:` from the Stashes snapshot | the snapshot scan | Stashes |
 
+### Post-execution change (2026-09-18): manager and landing rows, MADR Amendment 0052.2
+
+**Code commit** `42d409e`. `connection_switcher.dart` has four icon sites, and `connection_landing.dart`
+has one, all moved to `sessionLocationIcon`. Tests: `connection_landing_test.dart` gains "recent rows
+show the globe…". `connection_switcher_test.dart` gains M1–M3, and its `_pump` takes an optional
+connection state.
+
+**Red first.** All four new tests failed, each with `Found 0 widgets` for the expected glyph in the
+named row:
+- landing `app`;
+- M1 `Build box`;
+- M2 `adhoc.example.com (unsaved)`;
+- M3 `proj (unsaved)`.
+
+The finder picks the nearest `Row` above the title, so on its own a "found 0" could mean a finder that
+never matches. The green run rules that out, since every one of those finders then finds exactly one
+glyph.
+
+**Gate.** `grep -rn desktopcomputer lib` finds nothing (exit 1). `dart format`: one file set, then 0
+changed. `flutter analyze`: No issues found. Full `flutter test`: `+4189 ~3: All tests passed!` (+4).
+
+**Mutations** (scratch worktree at `42d409e`, removed afterwards), all **killed**:
+
+| # | mutation | failing test |
+|---|---|---|
+| J1 | saved SSH row back to `desktopcomputer` | M1 |
+| J2 | unsaved SSH row back to `desktopcomputer` | M2 |
+| J3 | active local row back to `folder_fill` | M1 (plain folder not found in `My Local Repo`) |
+| J4 | unsaved local row back to `folder_fill` | M3 |
+| J5 | landing remote row back to `desktopcomputer` | "recent rows show the globe…" |
+
