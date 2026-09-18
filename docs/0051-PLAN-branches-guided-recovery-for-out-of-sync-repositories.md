@@ -384,6 +384,81 @@ clean. Targeted: `branches_sync_state_test.dart` 7/7, `branches_500ref_baseline_
 `provider_ref_after_await_scan_test.dart` all green. Full `flutter test`: all green, 0 failures.
 **Commit** `89f7c28`.
 
+### Phase 4, executed
+
+**Deviation found and reported, 2026-09-17 — `merge()` override sites.** Adding
+`allowUnrelatedHistories` to `GitService.merge()` (4.1) is an `invalid_override` compile error for every
+test fake that overrides it: the planned `test/branches_actions_test.dart` (4.5) plus three outside the
+plan's file list: `test/branches_forge_test.dart:34`, `test/history_drag_merge_test.dart:50`,
+`test/keyboard_shortcuts_test.dart:90`. Reported with two resolutions: add the parameter to every fake
+(one line each, no behaviour change) versus a separate `mergeAllowUnrelated()` method that leaves the
+signature alone but duplicates `merge()`'s argument building and undo capture. **User selected: add the
+parameter to all fakes. Added to Phase 4's scope:** the three test files above.
+
+**Correction, not escalated — `_calloutBox` had no action pattern to follow.** 4.3 assumed an existing
+callout "likely already has" an action button to copy ("e.g. the `upstreamGone` case"). None does,
+anywhere in `lib/features/`. The plan hedged ("likely") and left the composition to execution, and adding
+one is the only reasonable way to do it, so this was not escalated: `_calloutBox` gained an optional
+`actionLabel`/`actionIcon`/`onAction` that renders an `InlineActionButton` (the codebase's enforced
+small-button standard) under the text.
+
+**Correction, not escalated — the action is offered only on the current branch.** `git merge` merges
+into HEAD, so "merge `<upstream>`" is correct only when the selected branch is HEAD. On a non-head
+unrelated-histories branch, the button would merge that branch's upstream into *some other* branch.
+The callout still shows its message there, but the action appears only when `b.isHead`.
+
+**Deviation found and reported, 2026-09-17 — button label overflow.** The label 4.3 specifies, "Merge
+(allow unrelated histories)…", overflowed `InlineActionButton` by 78pt (`RenderFlex overflowed by 78
+pixels`, `inline_action_button.dart:170`, constraints `w<=312.0`). The widget lays its label out at
+natural width and can never shrink it. Widening the test viewport would only hide it (narrow detail
+panes occur in the app), so it was reported with two resolutions: a shorter label plus a tooltip, versus
+making `InlineActionButton` ellipsize its label when constrained. The second keeps the plan's label but
+modifies a shared, enforced widget. **User selected: let `InlineActionButton` ellipsize. Added to Phase
+4's scope:** `lib/features/common/inline_action_button.dart`.
+
+**Modified.** `git_service.dart`: `merge()` gained `allowUnrelatedHistories` (4.1, verbatim).
+`branches_view.dart`: `_runMergeAllowUnrelated` (4.2, `_runMerge`'s shape, label
+`git merge --allow-unrelated-histories <branch>`) behind a new `_mergeAllowUnrelated`, which requires a
+`confirmAction` titled "Merge unrelated histories". The dialog states that the two share no common commit
+and that merging "may produce extensive file-level conflicts" (confirm label "Merge Anyway"). `branch_detail.dart`:
+new `onMergeAllowUnrelated` callback; the `unrelatedHistories` callout carries the "Merge (allow unrelated
+histories)…" action (4.3), shown only on the current branch (see correction above), with the full label as
+its tooltip because it can now ellipsize. `inline_action_button.dart`: the label is `Flexible`,
+single-line, ellipsized, inside a `LimitedBox(maxWidth: 10000)`. A bare `Flexible` would assert "non-zero
+flex but unbounded width" wherever the button sits in a parent `Row`, which is most of its uses. A
+`LayoutBuilder` would break intrinsic sizing. And a `Text.rich` with the icon as a `WidgetSpan`, tried
+first, puts a placeholder character into `toPlainText()` that breaks every `find.text`/`find.widgetWithText`
+lookup of a button across the suite. `LimitedBox` bounds only the unbounded case, so layout is
+unchanged wherever the label already fitted. All 48 `workspace_golden_test.dart` goldens pass unchanged.
+
+**Created/updated tests.** `test/branches_sync_state_test.dart`: its `_FakeGit.merge` records
+`(branch, allowUnrelatedHistories)` (4.5), plus a "Merge (allow unrelated histories)" group with three tests.
+First: tapping the action alone opens the dialog, and the dialog names the risk, before any merge (4.4).
+Second: Cancel never merges. Third: "Merge Anyway" merges `origin/main` with the flag set. The existing
+`unrelatedHistories` test additionally asserts that the action is absent on a non-current branch. The four
+`merge()` fakes gained the parameter (deviation above).
+
+**Seen to fail**, in a detached scratch worktree at `dc268d1` carrying this phase's files, driven by a
+script that asserts each mutation landed:
+- *Confirmation dialog removed* (A1): the tap-alone test failed, `Actual: [(origin/main, true)]`, reason
+  "nothing before the confirm".
+- *Dialog shown but its answer ignored* (A2): the cancel test failed with the same merge.
+- *Old `InlineActionButton`* (B): all three new tests failed, `RenderFlex overflowed by 78 pixels`.
+
+A first attempt at A ignored only the dialog's answer while running the tap-alone test. That test
+*passed*, correctly, since the dialog still blocked. The experiment was wrong, not the guard: ignoring the
+answer is what the cancel test covers, so the mutation was split into A1 and A2 above.
+
+**Not done — residual.** Nothing asserts that `--allow-unrelated-histories` reaches git's argv. The new
+tests stop at the `GitService.merge()` boundary (a fake), and `test/mutations_test.dart`'s "merge builds
+the right argv per mode", the natural place, is outside this phase's file list. The argv line is verified
+by reading `git_service.dart` only. A one-case addition to that test closes it.
+
+**Gate.** `flutter analyze`: no issues. `dart format --set-exit-if-changed` on all nine touched Dart
+files: clean. Targeted: `branches_sync_state_test.dart` 10/10, `workspace_golden_test.dart` 48/48. Full
+`flutter test`: 4135 passed, 3 skipped, 0 failed.
+**Commit** `0888f72`.
+
 ## Implementation Steps
 
 ### Phase 0 — preconditions
