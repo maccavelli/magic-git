@@ -30,6 +30,7 @@ import '../common/workspace_navigation.dart';
 import '../common/workspace_preferences_binding.dart';
 import '../dnd/deselect.dart';
 import '../dnd/drag_item.dart';
+import '../tabs/tab_ui_providers.dart';
 
 /// The **Stashes** namespace — stash management lifted out of the Branches pane
 /// into its own top-level panel so parked work is easy to see and act on.
@@ -367,11 +368,10 @@ class _StashViewState extends ConsumerState<StashView> with BusyActionState {
         }
       });
     }
-    final pathParts = repoPath.split('/').where((part) => part.isNotEmpty);
     final snapshot = RepositoryContextSnapshot(
       repositoryPath: repoPath,
       repositoryName:
-          'Repository: ${pathParts.isEmpty ? repoPath : pathParts.last}',
+          'Repository: ${ref.watch(repositoryDisplayNameProvider(repoPath))}',
       connectionLabel: connection.connectionLabel,
       hostLabel: connection.isLocal ? 'On this Mac' : connection.host,
       branchLabel: head == null ? 'Repository' : 'Branch: ${head.shortName}',

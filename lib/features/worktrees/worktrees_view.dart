@@ -35,6 +35,7 @@ import '../dnd/deselect.dart';
 import '../history/history_view.dart';
 import '../repository/repo_status_view.dart';
 import '../stash/stash_view.dart';
+import '../tabs/tab_ui_providers.dart';
 import 'add_worktree_sheet.dart';
 import 'worktree_access.dart';
 import 'worktree_paths.dart';
@@ -785,11 +786,10 @@ class _WorktreesViewState extends ConsumerState<WorktreesView>
     final selectedWorktree = worktrees
         .where((item) => item.path == _selectedOverviewPath)
         .firstOrNull;
-    final pathParts = repoPath.split('/').where((part) => part.isNotEmpty);
     final snapshot = RepositoryContextSnapshot(
       repositoryPath: repoPath,
       repositoryName:
-          'Repository: ${pathParts.isEmpty ? repoPath : pathParts.last}',
+          'Repository: ${ref.watch(repositoryDisplayNameProvider(repoPath))}',
       connectionLabel: connection.connectionLabel,
       hostLabel: connection.isLocal ? 'On this Mac' : connection.host,
       branchLabel: main == null ? 'Worktrees' : 'Main: ${main.branchLabel}',

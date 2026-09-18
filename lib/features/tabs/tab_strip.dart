@@ -6,9 +6,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
 
 import '../../core/providers/app_providers.dart';
-import '../../core/utils/posix_path.dart';
 import '../common/session_exit_guard.dart';
 import '../common/tappable.dart';
+import 'tab_ui_providers.dart';
 import 'tabs_controller.dart';
 import 'tabs_scope.dart';
 
@@ -135,8 +135,12 @@ class _TabChip extends StatelessWidget {
     final isLocal = conn.isLocal;
     final label = tab.isBlank
         ? 'New Tab'
-        : (TabsController.current?.aliasFor(tab) ??
-              (tab.repoPath != null ? basename(tab.repoPath!) : 'Connecting…'));
+        : (tab.repoPath != null
+              ? repositoryDisplayName(
+                  tab.repoPath!,
+                  alias: TabsController.current?.aliasFor(tab),
+                )
+              : (TabsController.current?.aliasFor(tab) ?? 'Connecting…'));
 
     return UncontrolledProviderScope(
       container: tab.container,

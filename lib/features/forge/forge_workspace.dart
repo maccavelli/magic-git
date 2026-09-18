@@ -12,6 +12,7 @@ import '../common/repository_workspace_scaffold.dart';
 import '../common/workspace_focus.dart';
 import '../common/workspace_navigation.dart';
 import '../common/workspace_preferences_binding.dart';
+import '../tabs/tab_ui_providers.dart';
 import 'forge_selection.dart';
 
 /// Shared repository chrome for GitHub and GitLab without introducing a forge
@@ -46,7 +47,6 @@ class ForgeRepositoryWorkspace extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final connection = ref.watch(connectionProvider);
-    final pathParts = repoPath.split('/').where((part) => part.isNotEmpty);
     final supplementKey = connection.sessionEpoch <= 0
         ? null
         : RepositoryContextSupplementKey(
@@ -82,7 +82,7 @@ class ForgeRepositoryWorkspace extends ConsumerWidget {
     final snapshot = RepositoryContextSnapshot(
       repositoryPath: repoPath,
       repositoryName:
-          'Repository: ${pathParts.isEmpty ? repoPath : pathParts.last}',
+          'Repository: ${ref.watch(repositoryDisplayNameProvider(repoPath))}',
       connectionLabel: connection.connectionLabel,
       hostLabel: connection.isLocal ? 'On this Mac' : connection.host,
       branchLabel: branch == null

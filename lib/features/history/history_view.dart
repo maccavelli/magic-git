@@ -45,6 +45,7 @@ import '../dnd/deselect.dart';
 import '../dnd/drag_item.dart';
 import '../dnd/drag_state.dart';
 import '../forge/forge_prefs.dart';
+import '../tabs/tab_ui_providers.dart';
 import '../worktrees/add_worktree_sheet.dart';
 import '../worktrees/worktree_tabs.dart';
 import 'commit_graph_view.dart';
@@ -1588,7 +1589,7 @@ class _HistoryViewState extends ConsumerState<HistoryView>
           snapshot: RepositoryContextSnapshot(
             repositoryPath: widget.repoPath,
             repositoryName:
-                'Repository: ${widget.repoPath.split('/').where((part) => part.isNotEmpty).lastOrNull ?? widget.repoPath}',
+                'Repository: ${ref.watch(repositoryDisplayNameProvider(widget.repoPath))}',
             connectionLabel: connection.connectionLabel,
             hostLabel: connection.isLocal ? 'On this Mac' : connection.host,
             branchLabel: head == null

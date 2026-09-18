@@ -32,9 +32,7 @@ final windowTitleProvider = Provider.autoDispose<String>((ref) {
   final connection = ref.watch(connectionProvider);
   final repoPath = connection.repoPath;
   if (!connection.isConnected || repoPath == null) return 'Magic Git';
-  final alias = ref.watch(tabAliasProvider);
-  final segments = repoPath.split('/').where((seg) => seg.isNotEmpty);
-  final name = alias ?? (segments.isEmpty ? repoPath : segments.last);
+  final name = ref.watch(repositoryDisplayNameProvider(repoPath));
   final branch = ref.watch(
     statusProvider(repoPath).select((s) => s.value?.branch.head),
   );

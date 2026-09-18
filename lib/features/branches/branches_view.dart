@@ -592,7 +592,6 @@ class _BranchesViewState extends ConsumerState<BranchesView>
               }
             },
           );
-    final pathParts = repoPath.split('/').where((part) => part.isNotEmpty);
     final supplement = supplementKey == null
         ? null
         : ref.watch(
@@ -603,7 +602,7 @@ class _BranchesViewState extends ConsumerState<BranchesView>
     final snapshot = RepositoryContextSnapshot(
       repositoryPath: repoPath,
       repositoryName:
-          'Repository: ${pathParts.isEmpty ? repoPath : pathParts.last}',
+          'Repository: ${ref.watch(repositoryDisplayNameProvider(repoPath))}',
       connectionLabel: connection.connectionLabel,
       hostLabel: connection.isLocal ? 'On this Mac' : connection.host,
       branchLabel: head == null ? 'Detached HEAD' : 'Branch: ${head.shortName}',

@@ -42,6 +42,7 @@ import '../common/workspace_navigation.dart';
 import '../dnd/deselect.dart';
 import '../dnd/drag_item.dart';
 import '../dnd/staging_drop_banner.dart';
+import '../tabs/tab_ui_providers.dart';
 import '../viewer/file_type.dart';
 import '../viewer/remote_edit_service.dart';
 import 'blame_sheet.dart';
@@ -1645,10 +1646,9 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
     final commitPolicyAdvisory = supplement?.commitPolicyBranch == branch?.head
         ? supplement?.commitPolicyLabel
         : null;
-    final pathSegments = repoPath.split('/').where((part) => part.isNotEmpty);
     final snapshot = RepositoryContextSnapshot(
       repositoryPath: repoPath,
-      repositoryName: pathSegments.isEmpty ? repoPath : pathSegments.last,
+      repositoryName: ref.watch(repositoryDisplayNameProvider(repoPath)),
       connectionLabel: connection.connectionLabel,
       hostLabel: connection.isLocal ? 'On this Mac' : connection.host,
       branchLabel: branch == null
