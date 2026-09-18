@@ -678,3 +678,25 @@ Plan approved by the maintainer on 2026-09-18.
 * Records: MADR set to `accepted`, this plan to `in-progress`, index row updated. Amendment note added
   under 0010-MADR's frontmatter.
 * Commit `6778107` (message from the hook).
+
+### Phase 1, executed
+
+* Added to `test/help_book_json_test.dart`:
+  * `_sourceCorpus()`: every `lib/**/*.dart` file plus `MainFlutterWindow.swift`, read once in `setUpAll`.
+  * `_labelAnchors`, seeded with the 7 labels the plan names (`Add Worktree` without an ellipsis, as the plan
+    already corrected).
+  * `_menuTitles`, `_nativeMenuTitles` and `_nonMenuTitles = {'View', 'Help'}`. These are the only
+    `title: "…"` literals in `MainFlutterWindow.swift` that name a menu rather than an item (lines
+    402-403, 794-795).
+* New tests:
+  * `quoted UI labels exist in their topic and in source`;
+  * `sections carry only fields the renderer shows`;
+  * `non-menu title exclusions still exist in the native source`.
+* Help test: `+14: All tests passed!` (was +11). Green on the current book, as planned. The mechanisms are
+  shown to fail in Phase 10.
+* Gate:
+  * `dart format`: 0 changed.
+  * `flutter analyze`: `No issues found!`.
+  * `flutter test`: `03:39 +4192 ~3: All tests passed!`.
+  * JSON valid.
+* Commit `011d00f`.
