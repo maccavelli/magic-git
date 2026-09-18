@@ -52,15 +52,25 @@ class _RecordingConnection extends ConnectionController {
   }
 }
 
+/// The [MacosIcon] with [icon] in the row whose title is [title]: the nearest
+/// `Row` above the title text, so a glyph elsewhere on screen cannot satisfy it.
+Finder _rowIcon(String title, IconData icon) => find.descendant(
+  of: find.ancestor(of: find.text(title), matching: find.byType(Row)).first,
+  matching: find.byWidgetPredicate((w) => w is MacosIcon && w.icon == icon),
+);
+
 Future<void> _pump(
   WidgetTester tester, {
   List<SavedLocalRepo> savedLocal = const [],
   List<SavedConnection> saved = const [],
+  ConnectionState? connection,
 }) async {
   SharedPreferences.setMockInitialValues({});
   await tester.pumpWidget(
     ProviderScope(
       overrides: [
+        if (connection != null)
+          connectionProvider.overrideWith(() => _StubConnection(connection)),
         savedLocalReposProvider.overrideWith((ref) async => savedLocal),
         savedConnectionsProvider.overrideWith((ref) async => saved),
         // Opening the clone/create sheets from the header must not spawn a
@@ -454,5 +464,92 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(fake.disconnectCalled, isTrue);
+  });
+
+  // MADR 0052 amendment 0052.2: the manager's connection and local rows show
+  // the location glyph — a globe for a remote host, a folder for a local repo,
+  // active or not — the same as the tab, status bar and Location row.
+  testWidgets('M1 saved rows: the SSH connection shows the globe, the local '
+      'repo the folder, even while active', (tester) async {
+    await _pump(
+      tester,
+      saved: const [
+        SavedConnection(
+          id: 'c1',
+          label: 'Build box',
+          host: 'build01.example.com',
+          port: 22,
+          username: 'deploy',
+          repoPath: '/srv/app',
+        ),
+      ],
+      savedLocal: const [
+        SavedLocalRepo(id: 'lr', label: 'My Local Repo', repoPath: '/me/proj'),
+      ],
+      connection: const ConnectionState(
+        phase: ConnectionPhase.connected,
+        backend: ConnectionBackend.local,
+        connectionId: 'lr',
+        repoPath: '/me/proj',
+        repoPaths: ['/me/proj'],
+      ),
+    );
+
+    expect(_rowIcon('Build box', CupertinoIcons.globe), findsOneWidget);
+    expect(_rowIcon('My Local Repo', CupertinoIcons.folder), findsOneWidget);
+    expect(
+      _rowIcon('My Local Repo', CupertinoIcons.folder_fill),
+      findsNothing,
+      reason: 'the active local row shows the location glyph, not a fill',
+    );
+    expect(
+      find.byWidgetPredicate(
+        (w) => w is MacosIcon && w.icon == CupertinoIcons.desktopcomputer,
+      ),
+      findsNothing,
+    );
+  });
+
+  testWidgets('M2 an unsaved SSH session shows the globe', (tester) async {
+    await _pump(
+      tester,
+      connection: const ConnectionState(
+        phase: ConnectionPhase.connected,
+        backend: ConnectionBackend.ssh,
+        host: 'adhoc.example.com',
+        connectionLabel: 'adhoc.example.com',
+        repoPath: '/srv/app',
+        repoPaths: ['/srv/app'],
+      ),
+    );
+
+    expect(
+      _rowIcon('adhoc.example.com (unsaved)', CupertinoIcons.globe),
+      findsOneWidget,
+    );
+    expect(
+      find.byWidgetPredicate(
+        (w) => w is MacosIcon && w.icon == CupertinoIcons.desktopcomputer,
+      ),
+      findsNothing,
+    );
+  });
+
+  testWidgets('M3 an unsaved local session shows the folder', (tester) async {
+    await _pump(
+      tester,
+      connection: const ConnectionState(
+        phase: ConnectionPhase.connected,
+        backend: ConnectionBackend.local,
+        repoPath: '/me/proj',
+        repoPaths: ['/me/proj'],
+      ),
+    );
+
+    expect(_rowIcon('proj (unsaved)', CupertinoIcons.folder), findsOneWidget);
+    expect(
+      _rowIcon('proj (unsaved)', CupertinoIcons.folder_fill),
+      findsNothing,
+    );
   });
 }

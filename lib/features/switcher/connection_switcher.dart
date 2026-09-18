@@ -14,6 +14,7 @@ import '../common/escape_dismissible.dart';
 import '../common/hover_pop.dart';
 import '../common/label_chip.dart';
 import '../common/session_exit_guard.dart';
+import '../common/session_location.dart';
 import '../common/sized_sheet.dart';
 import '../common/tappable.dart';
 import '../common/tool_icon_button.dart';
@@ -414,7 +415,7 @@ class _ConnectionsPanelState extends ConsumerState<ConnectionsPanel> {
                 ),
                 const SizedBox(width: 6),
                 MacosIcon(
-                  CupertinoIcons.desktopcomputer,
+                  sessionLocationIcon(isLocal: false),
                   size: 17,
                   color: isActive ? _accent : null,
                 ),
@@ -577,8 +578,8 @@ class _ConnectionsPanelState extends ConsumerState<ConnectionsPanel> {
           padding: const EdgeInsets.fromLTRB(16, 8, 10, 8),
           child: Row(
             children: [
-              const MacosIcon(
-                CupertinoIcons.desktopcomputer,
+              MacosIcon(
+                sessionLocationIcon(isLocal: false),
                 size: 17,
                 color: _accent,
               ),
@@ -639,7 +640,11 @@ class _ConnectionsPanelState extends ConsumerState<ConnectionsPanel> {
       padding: const EdgeInsets.fromLTRB(16, 5, 10, 5),
       child: Row(
         children: [
-          const MacosIcon(CupertinoIcons.folder_fill, size: 14, color: _accent),
+          MacosIcon(
+            sessionLocationIcon(isLocal: true),
+            size: 14,
+            color: _accent,
+          ),
           const SizedBox(width: 8),
           Expanded(
             child: Text(
@@ -673,8 +678,10 @@ class _ConnectionsPanelState extends ConsumerState<ConnectionsPanel> {
           padding: const EdgeInsets.fromLTRB(16, 5, 10, 5),
           child: Row(
             children: [
+              // The location glyph, as on the tab and status bar; the active
+              // row is marked by its accent and highlight, not a filled glyph.
               MacosIcon(
-                isActive ? CupertinoIcons.folder_fill : CupertinoIcons.folder,
+                sessionLocationIcon(isLocal: true),
                 size: 14,
                 color: isActive ? _accent : MacosColors.systemGrayColor,
               ),

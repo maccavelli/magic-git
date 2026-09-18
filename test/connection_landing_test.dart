@@ -4,6 +4,7 @@
 // repo-centric: it lists specific repos (a multi-repo connection expands into
 // one row per repo) so a click opens that repo directly.
 
+import 'package:flutter/cupertino.dart' hide ConnectionState;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
@@ -15,6 +16,13 @@ import 'package:remote_magic_git/features/connection/connection_landing.dart';
 
 Finder _byMacosTooltip(String message) =>
     find.byWidgetPredicate((w) => w is MacosTooltip && w.message == message);
+
+/// The [MacosIcon] with [icon] in the row whose title is [title]: the nearest
+/// `Row` above the title text, so a glyph elsewhere on screen cannot satisfy it.
+Finder _rowIcon(String title, IconData icon) => find.descendant(
+  of: find.ancestor(of: find.text(title), matching: find.byType(Row)).first,
+  matching: find.byWidgetPredicate((w) => w is MacosIcon && w.icon == icon),
+);
 
 Future<void> _pump(
   WidgetTester tester, {
@@ -208,4 +216,43 @@ void main() {
       expect(fake.disconnectCalled, isTrue);
     },
   );
+
+  // MADR 0052 amendment 0052.2: a recent repo's glyph says where it lives,
+  // the same as the tab, status bar and sidebar Location row.
+  testWidgets('recent rows show the globe for a remote repo and the folder '
+      'for a local one', (tester) async {
+    await _pump(
+      tester,
+      saved: [
+        SavedConnection(
+          id: 'c1',
+          label: 'Build box',
+          host: 'build01.example.com',
+          port: 22,
+          username: 'deploy',
+          repoPath: '/srv/app',
+          lastConnectedAt: DateTime.utc(2026, 6, 2),
+        ),
+      ],
+      savedLocal: [
+        SavedLocalRepo(
+          id: 'lr',
+          label: 'My Local Repo',
+          repoPath: '/Users/me/proj',
+          lastConnectedAt: DateTime.utc(2026, 6, 1),
+        ),
+      ],
+    );
+    await tester.tap(find.text('Recent Repositories'));
+    await tester.pumpAndSettle();
+
+    expect(_rowIcon('app', CupertinoIcons.globe), findsOneWidget);
+    expect(_rowIcon('My Local Repo', CupertinoIcons.folder), findsOneWidget);
+    expect(
+      find.byWidgetPredicate(
+        (w) => w is MacosIcon && w.icon == CupertinoIcons.desktopcomputer,
+      ),
+      findsNothing,
+    );
+  });
 }

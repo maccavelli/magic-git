@@ -6,6 +6,7 @@ import '../../core/providers/app_providers.dart';
 import '../common/buttons.dart';
 import '../common/escape_dismissible.dart';
 import '../common/hover_pop.dart';
+import '../common/session_location.dart';
 import '../common/tappable.dart';
 import '../switcher/connection_switcher.dart';
 import 'local_repo_form.dart';
@@ -333,9 +334,7 @@ class _RecentConnectionsButtonState
               _MenuRow(
                 title: r.repoName,
                 subtitle: r.location,
-                icon: r is RecentLocalRepoEntry
-                    ? CupertinoIcons.folder
-                    : CupertinoIcons.desktopcomputer,
+                icon: sessionLocationIcon(isLocal: r is RecentLocalRepoEntry),
                 onTap: () => _select(r),
               ),
           ],
