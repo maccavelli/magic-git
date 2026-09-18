@@ -7,6 +7,10 @@ informed: implementers of the Help Book rewrite
 verified: 2026-08-20
 ---
 
+> **Amended by** [0053-MADR-in-app-help-and-readme-currency-refresh.md](decisions/0053-MADR-in-app-help-and-readme-currency-refresh.md):
+> the locked topic list (G6's information architecture) and the `troubleshooting` category-id ban.
+> The text below is unchanged.
+
 # Rewrite the in-app Help Book against the current workspace and bind taught shortcuts to the keymap
 
 ## Context and Problem Statement
