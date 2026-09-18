@@ -511,6 +511,72 @@ files: clean. Targeted: `branches_reconcile_test.dart` 9/9. Full `flutter test`:
 3 skipped, 0 failed.
 **Commit** `8e6f84f`.
 
+### Phase 6, executed
+
+**Deviation found and reported, 2026-09-17 — the post-fetch refs are not re-read.** 6.1 made this
+contingency explicit, and it applies. `_fetchPrune` (`branches_view.dart:1801`) passes
+`refresh: () => refreshAfterFetch(ref, repoPath)` to `runLogged`, and `refreshAfterFetch`
+(`app_providers.dart:3389`) only calls `ref.invalidate(refsProvider)`. Nothing awaits the refetch. The
+sketch's `afterGone`, read from `refsProvider(...).value` right afterwards, is the pre-fetch list, so the
+diff would always be empty and the cleanup never offered. Reported with two resolutions: await the
+refetch the fetch already triggers (`ref.read(refsProvider(repoPath).future)`), versus a new `GitService`
+query for gone branches, which costs an extra git command and duplicates the refs parsing. **User
+selected: await the refetch.** No new files.
+
+**Deviation found and reported, 2026-09-17 — unmerged gone branches.** The sketch deletes with
+`git.deleteBranch(repoPath, name)`, which is `git branch -d` (`git_service.dart:4052`). Git refuses that
+for a branch whose commits aren't in HEAD. That is the *typical* gone branch: its pull/merge request was
+squash- or rebase-merged on the forge, so its own commits were never merged locally. Each refusal would
+have been its own error dialog, leaving the branch in place. Reported with three resolutions: one
+force-delete follow-up listing the refused branches, mirroring the single-branch `_confirmForceDelete`;
+force-delete everything after the one confirm; or the sketch as written. **User selected: one force-delete
+follow-up.** No new files.
+
+**Correction, not escalated — only deletable branches are offered.** The sketch offered every newly-gone
+local branch. Git refuses to delete the current branch and a branch checked out in another worktree,
+whatever flag is passed, so offering them could only fail. `_deletableGone` excludes `isHead` and
+`elsewhereWorktreePath != null`, the same test the single-branch Delete item already uses to hide itself.
+
+**Modified.** `branches_view.dart`: `_fetchPrune` snapshots `_deletableGone` before the fetch. After a
+*successful* `runLogged` (a failed fetch offers nothing), it awaits `refsProvider(repoPath).future` for
+the refetch the fetch's own refresh started, and diffs the two. If that read fails, the error is not
+lost: the panel watches the same provider and renders its error state (`branches_view.dart:209-216`),
+so the cleanup offer just has nothing to work from. Newly-gone branches go to `_offerStaleCleanup`, one
+destructive `confirmAction` naming them. Each is then deleted with `-d` under one `runGuarded`,
+collecting `branchNotFullyMerged` refusals. Any other error aborts and surfaces as usual. The refused
+branches get one "Branch(es) not fully merged" force-delete confirmation, the bulk counterpart of
+`_confirmForceDelete`. Every delete goes through `deleteBranch`'s existing undo capture.
+
+**Created.** `test/branches_stale_cleanup_test.dart`, five tests (6.3). The fake's `fetch()` swaps the ref
+list, so `refreshAfterFetch`'s invalidation rebuilds `refsProvider` with the post-prune refs, as a real
+prune would.
+- Newly gone `a` and `b` are offered ("2 branches no longer exist", `"a", "b"`), and none of the
+  already-gone `old`, the current `main`, or the other-worktree `wt` is. Confirming deletes `a` and `b`
+  with `-d`.
+- Cancel deletes nothing.
+- A fetch revealing nothing new shows no dialog.
+- An unmerged `b` gets the single force-delete follow-up, then `-D`.
+- Declining the follow-up keeps `b`.
+
+**Seen to fail** (6.2 and beyond), in a detached scratch worktree at `36b0a1f` carrying this phase's
+files, one asserted-and-verified mutation at a time:
+- *The sketch's own read*: `refsProvider(...).value` instead of awaiting `.future`. The cleanup never
+  appeared (`Found 0 widgets with text "Clean up stale branches?"`). This is the deviation's diagnosis
+  confirmed by experiment, not just by reading `refreshAfterFetch`.
+- *Before-fetch snapshot ignored*: the offer grew to include `old`, failing the "2 branches" assertion.
+- *Current/other-worktree filter removed*: the offer grew to include `main` and `wt`, failing the same
+  assertion.
+- *Unmerged refusals rethrown instead of collected*: `Found 0 widgets with text "Branch not fully
+  merged"`, and an error dialog appeared instead.
+
+The driving script's automatic reason-check reported `False` for the two "2 branches" cases. The failure
+text wraps across lines ("…2 branches no longer" / "exist"), so its single-line substring missed.
+Reading the logs confirmed the intended assertion failed in both.
+
+**Gate.** `flutter analyze`: no issues. `dart format --set-exit-if-changed`: clean. Targeted:
+`branches_stale_cleanup_test.dart` 5/5. Full `flutter test`: 4149 passed (+5), 3 skipped, 0 failed.
+**Commit** `6e5d2af`.
+
 ## Implementation Steps
 
 ### Phase 0 — preconditions
