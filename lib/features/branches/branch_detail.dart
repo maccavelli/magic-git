@@ -10,6 +10,7 @@ import 'package:macos_ui/macos_ui.dart';
 import '../../core/forge/branch_forge_status.dart';
 import '../../core/git/branch_comparison.dart';
 import '../../core/git/branch_review_query.dart';
+import '../../core/git/branch_sync_state.dart';
 import '../../core/git/git_service.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/utils/display_error.dart';
@@ -611,6 +612,38 @@ class BranchDetail extends ConsumerWidget {
         '${b.ahead} commit${b.ahead == 1 ? '' : 's'} to push · none to pull'
         '${b.upstream == null ? '' : ', or open a pull request'}.',
       );
+    } else if (b.upstream == null) {
+      callout = _calloutBox(
+        context,
+        MacosColors.systemBlueColor,
+        CupertinoIcons.info_circle,
+        "This branch hasn't been published. Use Publish to push it and start "
+        'tracking a remote branch.',
+      );
+    } else if (b.ahead > 0 && b.behind > 0) {
+      final syncState = ref
+          .watch(
+            branchSyncStateProvider((
+              repoPath: repoPath,
+              branchName: b.shortName,
+            )),
+          )
+          .value;
+      callout = syncState == BranchSyncState.unrelatedHistories
+          ? _calloutBox(
+              context,
+              MacosColors.systemOrangeColor,
+              CupertinoIcons.exclamationmark_triangle,
+              'This branch and ${b.upstream} share no common history.',
+            )
+          : _calloutBox(
+              context,
+              MacosColors.systemOrangeColor,
+              CupertinoIcons.exclamationmark_triangle,
+              'This branch and ${b.upstream} have diverged — ${b.ahead} '
+              'commit${b.ahead == 1 ? '' : 's'} here, ${b.behind} there. '
+              'Reconcile to merge, rebase, or reset.',
+            );
     }
     // Phase 5 primary-action precedence (§4.6).
     final remotes =

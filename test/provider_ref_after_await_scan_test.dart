@@ -34,20 +34,20 @@ void main() {
     //    picking the branch, before knowing what to do) — the guard turns a
     //    disposed-mid-`await` throw into a quiet early return instead.
     const allowed = <String, String>{
-      'lib/core/providers/app_providers.dart:3596': //
+      'lib/core/providers/app_providers.dart:3597': //
           'autoFetchProvider: the flagged ref calls are inside its '
           'Timer.periodic callback, a separate async context from the '
           "provider's own (synchronous) build, and are already guarded "
           'with `if (!ref.mounted) return;` before each one.',
-      'lib/core/providers/app_providers.dart:4747': //
+      'lib/core/providers/app_providers.dart:4768': //
           'remoteTagsProvider: `keepAlive`/`onDispose` only make sense once '
           '`remote` (the awaited value) is known, so they cannot be '
           'hoisted; guarded with `if (!ref.mounted) return null;` instead.',
-      'lib/core/providers/app_providers.dart:5705': //
+      'lib/core/providers/app_providers.dart:5726': //
           'forgeProvider: `keepAlive` depends on the awaited `forge`, so it '
           'cannot be hoisted; guarded with `if (ref.mounted && ...)` '
           'instead.',
-      'lib/core/providers/app_providers.dart:5788': //
+      'lib/core/providers/app_providers.dart:5809': //
           'forgeRepoListProvider: the flagged read is in the `if (local)` '
           "branch; the scan's first-await search lands on the `else` "
           "branch's await, which never runs in the same call as the "

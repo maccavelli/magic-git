@@ -140,6 +140,10 @@ void main() {
       'deleted upstream', (tester) async {
     await _pump(tester);
 
+    // "main" is ahead and behind its upstream with no matching
+    // remote-tracking ref in this fixture, so BranchSyncState resolves to
+    // "diverged" (the fallback) without an extra merge-base round trip.
+    expect(find.text('Diverged'), findsOneWidget);
     expect(find.text('↑2 ↓1'), findsOneWidget);
     expect(find.text('gone'), findsOneWidget);
   });

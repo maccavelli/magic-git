@@ -3920,24 +3920,37 @@ printf 'EC\n%d %d\n' "$ns" "$nu"
     }
   }
 
-  Future<BranchMergePreview> _mergeTreePreviewUnlocked(
-    String repoPath, {
-    required String baseOid,
-    required String branchOid,
-  }) async {
+  /// Whether [a] and [b] share a common ancestor (`git merge-base`) — the
+  /// cheap half of merge-tree conflict prediction, without paying for
+  /// `merge-tree --write-tree`. Used by [mergeTreePreview]'s unrelated-history
+  /// short-circuit and by branch-vs-upstream sync classification
+  /// ([BranchSyncState]), which needs the same answer for a fraction of the
+  /// branches mergeTreePreview would otherwise be asked about.
+  Future<bool> haveCommonAncestor(String repoPath, String a, String b) async {
     final mb = await _executor.execute(
       repoPath: repoPath,
       extraEnv: _scopeEnvFor(repoPath),
-      gitArgs: ['git', 'merge-base', '--end-of-options', baseOid, branchOid],
+      gitArgs: ['git', 'merge-base', '--end-of-options', a, b],
       retries: _readRetries,
       lane: ExecLane.read,
     );
     final mbOut = mb.stdout.trim();
     if (mb.exitCode == 1 && mbOut.isEmpty) {
-      return BranchMergePreview.unrelated();
+      return false;
     }
     if (!mb.isSuccess || !isFullGitOid(mbOut)) {
       throw GitException('git merge-base failed', mb);
+    }
+    return true;
+  }
+
+  Future<BranchMergePreview> _mergeTreePreviewUnlocked(
+    String repoPath, {
+    required String baseOid,
+    required String branchOid,
+  }) async {
+    if (!await haveCommonAncestor(repoPath, baseOid, branchOid)) {
+      return BranchMergePreview.unrelated();
     }
 
     final result = await _executor.execute(

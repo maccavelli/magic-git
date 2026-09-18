@@ -24,6 +24,7 @@ import '../forge/merge_plan.dart';
 import '../forge/namespace_history.dart';
 import '../forge/namespace_suggestions.dart';
 import '../git/branch_comparison.dart';
+import '../git/branch_sync_state.dart';
 import '../git/git_service.dart';
 import '../git/host_fs_service.dart';
 import '../git/ignore_oracle.dart';
@@ -4490,6 +4491,26 @@ final branchMergePreviewProvider = FutureProvider.autoDispose
         _mergePreviewLru.evict(scope, lruKey);
         rethrow;
       }
+    }, retry: noProviderRetry);
+
+typedef BranchSyncStateKey = ({String repoPath, String branchName});
+
+/// A local branch's sync state relative to its own upstream (MADR 0051) —
+/// resolves the diverged/unrelated-histories distinction, which needs an
+/// async merge-base check, on top of [refsProvider]'s already-fetched
+/// ahead/behind counts. Recomputes whenever refs change (fetch, push, new
+/// commit); a branch not found in the current ref list resolves to
+/// [BranchSyncState.upToDate] rather than throwing, since that only happens
+/// transiently around a rename or delete the UI is already reacting to.
+final branchSyncStateProvider = FutureProvider.autoDispose
+    .family<BranchSyncState, BranchSyncStateKey>((ref, key) async {
+      final git = ref.watch(gitServiceProvider);
+      final refs = await ref.watch(refsProvider(key.repoPath).future);
+      final branch = refs
+          .where((r) => r.isLocalBranch && r.shortName == key.branchName)
+          .firstOrNull;
+      if (branch == null) return BranchSyncState.upToDate;
+      return classifyBranchSyncStateAsync(git, key.repoPath, branch, refs);
     }, retry: noProviderRetry);
 
 /// Review-mode conflict scan: only branches that have been scanned and found

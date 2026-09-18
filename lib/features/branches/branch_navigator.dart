@@ -11,6 +11,7 @@ import 'package:macos_ui/macos_ui.dart';
 import '../../core/forge/branch_forge_status.dart';
 import '../../core/git/branch_comparison.dart';
 import '../../core/git/branch_review_query.dart';
+import '../../core/git/branch_sync_state.dart';
 import '../../core/git/git_service.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/settings/keymap.dart';
@@ -1693,7 +1694,57 @@ class _BranchNavigatorState extends ConsumerState<BranchNavigator> {
               ? 'Draft ${bf.isMr ? 'merge' : 'pull'} request ${bf.requestLabel}'
               : 'Open ${bf.isMr ? 'merge' : 'pull'} request ${bf.requestLabel}',
         ),
+      if (!isReview) ..._syncStateChipEntries(branch),
     ];
+  }
+
+  /// "Not published" / "Diverged" (MADR 0051), as chips rather than the
+  /// divergence cluster's unshrinkable text — that cluster sits outside
+  /// [ChipStrip] and does not give way under width pressure, which a
+  /// pathological row (long name, long worktree chip, merged, open request,
+  /// all at once) already spends to its limit; a new always-on label there
+  /// overflowed it (see the plan's Phase 3 execution record). `gone` and the
+  /// `↑n ↓n` counts stay in the cluster — neither one caused an overflow, so
+  /// neither needed to move.
+  ///
+  /// Uses only [classifyBranchSyncStateCoarse] — the synchronous half, free
+  /// of any git call — never the async unrelated-histories distinction: a
+  /// Browse row must not cost a `git merge-base` per visible diverged branch
+  /// (a 500-row fixture measured 5 extra commands at first paint before this
+  /// was scoped down), and this codebase's Browse command budget is already
+  /// enforced elsewhere (`branches_phase7_command_budget_test.dart`,
+  /// `branches_500ref_baseline_test.dart`). [branch_detail.dart]'s callout
+  /// resolves the real distinction for the one selected branch instead.
+  List<ChipEntry> _syncStateChipEntries(GitRef branch) {
+    switch (classifyBranchSyncStateCoarse(branch)) {
+      case BranchSyncState.noUpstream:
+        return [
+          labelChipEntry(
+            'Not published',
+            color: MacosColors.systemBlueColor,
+            tooltip: "This branch hasn't been published yet.",
+          ),
+        ];
+      case BranchSyncState.diverged:
+        return [
+          labelChipEntry(
+            'Diverged',
+            color: MacosColors.systemOrangeColor,
+            tooltip:
+                'This branch and ${branch.upstream} have diverged — '
+                '${branch.ahead} commit${branch.ahead == 1 ? '' : 's'} here, '
+                '${branch.behind} there.',
+          ),
+        ];
+      case BranchSyncState.staleTracking:
+      case BranchSyncState.upToDate:
+      case BranchSyncState.aheadOnly:
+      case BranchSyncState.behindOnly:
+      case BranchSyncState.unrelatedHistories: // never returned by the coarse
+        // classifier; listed only so this switch stays exhaustive if that
+        // changes.
+        return const [];
+    }
   }
 
   /// The CI glyph + dot, or the width it will occupy once the lazy forge fetch
@@ -1786,7 +1837,33 @@ class _BranchNavigatorState extends ConsumerState<BranchNavigator> {
         ),
       );
     }
+    // "Not published"/"Diverged" moved to _badgeEntries/ChipStrip (shrinkable,
+    // unlike this cluster, and computed from the coarse — no-git-call —
+    // classifier only; see the overflow and command-budget findings recorded
+    // in MADR 0051's plan). The counts below are unaffected either way.
+    if (branch.upstream == null) return const SizedBox.shrink();
     if (branch.ahead == 0 && branch.behind == 0) return const SizedBox.shrink();
+    if (branch.ahead > 0 && branch.behind > 0) {
+      return MacosTooltip(
+        message:
+            '${branch.ahead} commit${branch.ahead == 1 ? '' : 's'} ahead, '
+            '${branch.behind} behind ${branch.upstream}',
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _DivergenceBar(ahead: branch.ahead, behind: branch.behind),
+            const SizedBox(width: 6),
+            Text(
+              '↑${branch.ahead} ↓${branch.behind}',
+              style: typography.caption1.copyWith(
+                color: MacosColors.systemBlueColor,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
     return MacosTooltip(
       message:
           '${branch.ahead} commit${branch.ahead == 1 ? '' : 's'} ahead, '
