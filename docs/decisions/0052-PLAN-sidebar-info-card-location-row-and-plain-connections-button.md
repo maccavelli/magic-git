@@ -500,3 +500,35 @@ then removed. Each named test failed on its assertion, not on compilation:
 
 **The mutation script was itself seen to fail.** A comment-only edit (M0) was reported `SURVIVED` with
 exit 1, so a kill is not an artefact of the harness.
+
+### Phase 2, executed
+
+**Code commit** `54508dc`. The six status-bar sites, `windowTitleProvider` and the tab title now use
+the shared name, as in steps 2–4. `flutter analyze` then reported exactly six unused items, and only
+those were deleted:
+- the `pathParts` locals in `branches_view.dart:595`, `forge_workspace.dart:50`, `stash_view.dart:371`
+  and `worktrees_view.dart:789`;
+- the `pathSegments` local in `repo_status_view.dart:1649`;
+- the `posix_path.dart` import in `tab_strip.dart`.
+
+**Red first.** `test/repository_name_source_test.dart` ran on the unconverted tree. It found 7 sites
+and failed on the provider assertion, naming the first: `lib/features/repository/repo_status_view.dart
+names the repository itself: repositoryName: pathSegments.isEmpty ? repoPath : pathSegments.last,`.
+
+**Gate.**
+- `dart format`: 0 changed across 9 files.
+- `flutter analyze`: No issues found (exit 0).
+- Targeted (the scan, `tabs_host_test.dart`, `tabs_controller_test.dart`, all unchanged except the new
+  scan): `+24: All tests passed!`. The alias window-title test, `Backend (main) — Magic Git`, passed
+  unmodified.
+- Full `flutter test`: `+4171 ~3: All tests passed!` (exit 0), +1. That includes the 48 goldens,
+  unchanged.
+
+**Mutations** (scratch worktree at `54508dc`, removed afterwards):
+- **M2.1** puts a hand-split name back at the Stashes site. It is **killed**: `Expected: contains
+  'repositoryDisplayNameProvider('`. It is written as an inline `split('/')` expression rather than by
+  restoring the deleted `pathParts` local; the effect on the scan is identical and it compiles alone.
+- **M2.2** renames the `Worktree:` exception. Its first anchor, `'Worktree: `, matched twice in
+  `worktrees_view.dart`: the status bar at line 749 and a row label at line 1217. The script refused
+  to guess. With the anchor narrowed to `'Worktree: ${tabParts` it is **killed**: `Expected: an object
+  with length of <1>`, `Actual: … []`.
