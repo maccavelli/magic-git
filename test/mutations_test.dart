@@ -1418,6 +1418,17 @@ void main() {
         '--end-of-options',
         'feature',
       ]);
+      exec.calls.clear();
+      exec.results.add(
+        const SSHCommandResult(exitCode: 0, stdout: '', stderr: ''),
+      );
+      // The flag must precede `--end-of-options`, or git reads it as a ref.
+      await git.merge('/repo', 'origin/main', allowUnrelatedHistories: true);
+      expectCapturedScript(
+        exec.calls.single,
+        "'git' 'merge' '--no-edit' '--allow-unrelated-histories' "
+        "'--end-of-options' 'origin/main'",
+      );
     });
 
     test('log applies grep/author/all/follow/path filters', () async {
