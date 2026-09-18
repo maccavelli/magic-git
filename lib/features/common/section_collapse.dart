@@ -186,16 +186,24 @@ class CollapsibleSectionHeader extends StatelessWidget {
           // intrinsic width and the header overflowed its pane by 12 px at
           // 240 pt — painting over the divider, because a Flex paints outside
           // its bounds (MADR 0049, plan deviation (d.2)).
-          Flexible(
-            child: onToggle != null
-                ? Tappable(
-                    onTap: onToggle,
-                    behavior: HitTestBehavior.opaque,
-                    child: titleCluster,
-                  )
-                : titleCluster,
+          //
+          // Expanded, not Flexible + Spacer: those split the free space in
+          // half, so the trailing cluster landed at title-width + half rather
+          // than the right margin, and drifted header to header with the
+          // title's length. The Align keeps the toggle's hit target the
+          // cluster itself, not the whole gap.
+          Expanded(
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: onToggle != null
+                  ? Tappable(
+                      onTap: onToggle,
+                      behavior: HitTestBehavior.opaque,
+                      child: titleCluster,
+                    )
+                  : titleCluster,
+            ),
           ),
-          const Spacer(),
           ...trailing,
         ],
       ),

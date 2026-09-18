@@ -130,5 +130,53 @@ void main() {
       expect(find.text('12'), findsOneWidget);
       expect(find.text('view only'), findsOneWidget);
     });
+
+    testWidgets(
+      'pins trailing actions to the right margin at any title length',
+      (tester) async {
+        const paneWidth = 400.0;
+        // The default padding's right inset, where every cluster must end.
+        const rightEdge = paneWidth - 8;
+        const headers = [
+          ('Issues', null, null),
+          ('Pull Requests', '12', null),
+          ('Labels', '30 of 974', 'view only'),
+          ('Workflow Runs', null, null),
+        ];
+        await tester.pumpWidget(
+          MacosApp(
+            home: Align(
+              alignment: Alignment.topLeft,
+              child: SizedBox(
+                width: paneWidth,
+                child: Column(
+                  children: [
+                    for (final (title, count, caption) in headers)
+                      CollapsibleSectionHeader(
+                        title,
+                        count: count,
+                        caption: caption,
+                        collapsed: false,
+                        onToggle: () {},
+                        trailing: [
+                          SizedBox(key: ValueKey(title), width: 20, height: 20),
+                        ],
+                      ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+
+        for (final (title, _, _) in headers) {
+          expect(
+            tester.getRect(find.byKey(ValueKey(title))).right,
+            rightEdge,
+            reason: '"$title" header actions drifted off the right margin',
+          );
+        }
+      },
+    );
   });
 }
