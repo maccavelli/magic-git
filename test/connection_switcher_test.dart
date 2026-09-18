@@ -345,25 +345,27 @@ void main() {
     await tester.pumpAndSettle();
   }
 
-  testWidgets('switcher button shows the server host for an SSH session', (
+  // MADR 0052: the button's label names what it opens. Where the session is
+  // lives in the sidebar info card's Location row now, not on the button.
+  const sshSession = ConnectionState(
+    phase: ConnectionPhase.connected,
+    backend: ConnectionBackend.ssh,
+    host: 'build01.example.com',
+    connectionLabel: 'my-repo',
+  );
+
+  testWidgets('B1 switcher button reads Connections for an SSH session', (
     tester,
   ) async {
-    await pumpSwitcher(
-      tester,
-      const ConnectionState(
-        phase: ConnectionPhase.connected,
-        backend: ConnectionBackend.ssh,
-        host: 'build01.example.com',
-        connectionLabel: 'my-repo',
-      ),
-    );
-    expect(find.text('build01.example.com'), findsOneWidget);
-    // The repo/connection label is not shown on the button for SSH.
+    await pumpSwitcher(tester, sshSession);
+    expect(find.text('Connections'), findsOneWidget);
+    expect(find.text('build01.example.com'), findsNothing);
     expect(find.text('my-repo'), findsNothing);
   });
 
-  testWidgets('switcher button shows "Local" for a local session, not the '
-      'repo name', (tester) async {
+  testWidgets('B2 switcher button reads Connections for a local session', (
+    tester,
+  ) async {
     await pumpSwitcher(
       tester,
       const ConnectionState(
@@ -372,10 +374,19 @@ void main() {
         connectionLabel: 'my-local-repo',
       ),
     );
-    expect(find.text('Local'), findsOneWidget);
-    // The repo name is shown above the button (CurrentRepoIndicator), so
-    // repeating it on the button would be redundant.
+    expect(find.text('Connections'), findsOneWidget);
+    expect(find.text('Local'), findsNothing);
+    expect(find.text('This Mac'), findsNothing);
     expect(find.text('my-local-repo'), findsNothing);
+  });
+
+  testWidgets('B3 tapping the switcher opens the connections manager', (
+    tester,
+  ) async {
+    await pumpSwitcher(tester, sshSession);
+    await tester.tap(find.byType(ConnectionSwitcher));
+    await tester.pumpAndSettle();
+    expect(find.byType(ConnectionsPanel), findsOneWidget);
   });
 
   testWidgets('Logout button disconnects (returns to the connection card)', (

@@ -27,32 +27,22 @@ import '../workspace/workspace_open_in_tab.dart';
 import 'edit_entry_sheets.dart';
 
 /// Bottom-of-sidebar control: a single Connections button that opens the
-/// consolidated connections + repositories management panel.
+/// consolidated connections + repositories management panel. Its label is
+/// fixed — it names what it opens; where the session is lives in the info
+/// card's Location row above it (MADR 0052).
 class ConnectionSwitcher extends ConsumerWidget {
   const ConnectionSwitcher({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final (isConnected, isLocal, host, connectionLabel) = ref.watch(
-      connectionProvider.select(
-        (c) => (c.isConnected, c.isLocal, c.host, c.connectionLabel),
-      ),
+    final isConnected = ref.watch(
+      connectionProvider.select((c) => c.isConnected),
     );
     final saved = ref.watch(savedConnectionsProvider).value ?? const [];
     final savedLocal = ref.watch(savedLocalReposProvider).value ?? const [];
     if (!isConnected && saved.isEmpty && savedLocal.isEmpty) {
       return const SizedBox.shrink();
     }
-
-    // For a remote session show the server (`host`). For a local one, show
-    // "Local" rather than the connection label — the label is the repo name,
-    // which is already displayed above this button (in CurrentRepoIndicator), so
-    // repeating it here is redundant.
-    final label = !isConnected
-        ? 'Connections'
-        : isLocal
-        ? 'Local'
-        : (host ?? connectionLabel ?? 'Connected');
 
     return Container(
       decoration: const BoxDecoration(
@@ -81,7 +71,7 @@ class ConnectionSwitcher extends ConsumerWidget {
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  label,
+                  'Connections',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: MacosTheme.of(context).typography.body,
