@@ -532,3 +532,55 @@ names the repository itself: repositoryName: pathSegments.isEmpty ? repoPath : p
   `worktrees_view.dart`: the status bar at line 749 and a row label at line 1217. The script refused
   to guess. With the anchor narrowed to `'Worktree: ${tabParts` it is **killed**: `Expected: an object
   with length of <1>`, `Actual: … []`.
+
+### Phase 3, executed
+
+**Code commit** `5124375`.
+- `lib/features/switcher/current_repo_indicator.dart` now holds `SessionInfoCard` (one top border),
+  the private `_InfoRow`, `CurrentRepoIndicator` on `repositoryDisplayNameProvider`, and
+  `CurrentLocationIndicator`.
+- `app_shell.dart` mounts `SessionInfoCard` in place of `CurrentRepoIndicator`.
+- `posix_path.dart` is no longer imported by the indicator, since the analyzer reported it unused.
+
+**Plan-text correction.** Step 2 says the `_InfoRow` `Column` holds "then `trailing` when non-null".
+That contradicts the same step's governing sentence, "these are exactly today's styles, lifted from
+the current row": today the status cluster sits in the `Row`, after the `Expanded` column. The
+implementation follows today's row, putting `trailing` in the `Row`. The step is left as written,
+annotated here.
+
+**Harness details, not deviations.**
+- The parity test calls `controller.activate(tab.id)` after opening the second tab, so the tab under
+  test is the active one, as it is in the app. The second tab did not disturb the first.
+- `saved_workspace_set.dart` had to be imported for `SavedRepositoryKind`.
+- Running two test files in one `flutter test` call, one of which could not compile, made the
+  compiler exit and marked the other as failing too. Each red run was therefore repeated on its own.
+
+**Red first**, each run on its own before the implementation:
+- `session_info_card_test.dart` did not compile (`Method not found: 'SessionInfoCard'`); its
+  mutations below are the evidence.
+- `repository_name_parity_test.dart` compiled against the tree. P1 and P3 passed. **P2 failed on its
+  second assertion, `reason: Repository row`**: `Found 0 widgets with text "Backend" descending from …
+  CurrentRepoIndicator`. Its first assertion, the tab title, had passed, confirming that Phase 2
+  already carried the tab onto the alias.
+- `app_shell_test.dart`'s new test: `Found 0 widgets with text "Location"`. The six existing tests
+  passed.
+
+**Green.** Card `+6`, parity `+3`, shell `+7`. `current_repo_indicator_test.dart` `+4`, **unmodified**
+(no diff). The 761×480 test passed with `takeException()` null, so the out-of-sidebar overflow the
+plan warned of did not occur.
+
+**Gate.** `dart format` set 2 test files and the check then reported 0 changed. `flutter analyze`: No
+issues found (exit 0). Full `flutter test`: `+4181 ~3: All tests passed!` (exit 0), +10.
+
+**Mutations** (scratch worktree at `5124375`, removed afterwards), all **killed**:
+
+| # | mutation | failing test | failure |
+|---|---|---|---|
+| M3.1 | `'This Mac'` → `'Local'` | L3 | `This Mac` not found |
+| M3.2 | tooltip loses `:port` | L1 | tooltip `deploy@build01.example.com:2222` not found |
+| M3.3a | row value → hand-split basename | R1 | `Backend` not found |
+| M3.3b | same mutation | parity P2 | `Found 0 widgets with text "Backend"` under `CurrentRepoIndicator` |
+| M3.4 | `SizedBox(height: 600)` in the card | 761×480 layout | `RenderFlex overflowed by 464 pixels`; `Logout` bottom `909.0`, expected `<= 480` |
+
+M3.3 uses an inline `split('/')` rather than `basename`, since the file no longer imports
+`posix_path.dart`; the effect is identical.
