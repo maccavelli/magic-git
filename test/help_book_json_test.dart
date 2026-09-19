@@ -119,11 +119,80 @@ String _sourceCorpus() {
 /// and, verbatim, in [_sourceCorpus]. A label the app builds at runtime is
 /// anchored by its static literal fragment, never a reconstructed whole.
 const _labelAnchors = <String, List<String>>{
+  'quickstart': [
+    'Add Existing Repository',
+    'Scoped work-tree repo (dotfiles)',
+    'Add SSH Remote',
+  ],
+  'connections_manager': ['Edit connection', 'Choose This Folder'],
+  'clone_create': [
+    'Save to Local Repositories',
+    'Create parent folders if missing',
+    'Search namespaces…',
+  ],
+  'tabs_workspaces': [
+    'Rename active tab',
+    'Only saved repositories can have aliases',
+    'Are you sure you want to quit?',
+  ],
+  'overview': ['Log out?'],
   'tab_repository': ['Hide reviewed', 'Mark Resolved'],
   'tab_stashes': ['Stash with Message…'],
   'tab_worktrees': ['Add Worktree'],
   'tab_branches': ['Fetch & Prune'],
   'settings': ['Known Hosts', 'Keyboard Mappings'],
+};
+
+/// Sentences Help taught that the app contradicts (0053 W1–W21). Each is
+/// banned so a fixed falsehood cannot return.
+const _falsehoods0053 = <String>[
+  'opens the macOS folder panel', // W7
+  'alias a set of tabs', // W6
+  'Close tab, Log out, Disconnect, Quit, and Close window confirm when', // W5
+];
+
+/// Facts 0053 requires, by topic, alongside 0010's list.
+const _requiredFacts0053 = <String, List<String>>{
+  'overview': ['Connections', 'Location', 'Logout', 'This Mac'],
+  'quickstart': [
+    'Add Existing Repository',
+    'Choose…',
+    'Browse…',
+    'Repository path',
+    'Git directory',
+    'GitHub token',
+    'GitLab token',
+    'Save connection',
+  ],
+  'connections_manager': [
+    'Local Repositories',
+    'Remote Repositories',
+    'Edit connection',
+    'Delete connection',
+    'Remove repository',
+    'Edit repository',
+    'fsmonitor',
+    'dotfiles',
+    'Choose a folder',
+    'globe',
+    'folder',
+  ],
+  'clone_create': [
+    'URL',
+    'Folder name',
+    'Create parent folders if missing',
+    'Namespace',
+    'Recently active',
+    'Visibility',
+    'own tab',
+    '8',
+  ],
+  'tabs_workspaces': [
+    'Rename Tab',
+    'Are you sure you want to quit?',
+    'drag',
+    'Maximum of 8 tabs open',
+  ],
 };
 
 /// Every item title in the Dart-declared menu bar, submenus included.
@@ -227,6 +296,13 @@ void main() {
       }
     });
 
+    test('Help does not teach the 0053 falsehoods', () {
+      final book = File('macos/Runner/help_book.json').readAsStringSync();
+      for (final phrase in _falsehoods0053) {
+        expect(book, isNot(contains(phrase)), reason: phrase);
+      }
+    });
+
     test('non-menu title exclusions still exist in the native source', () {
       final source = File(_nativeMenuSource).readAsStringSync();
       for (final title in _nonMenuTitles) {
@@ -268,6 +344,7 @@ void main() {
         'getting_started': [
           'overview',
           'quickstart',
+          'connections_manager',
           'clone_create',
           'tabs_workspaces',
         ],
@@ -640,7 +717,11 @@ void main() {
           'essential',
         ],
       };
-      for (final MapEntry(key: id, value: phrases) in required.entries) {
+      for (final MapEntry(key: id, value: phrases)
+          in <MapEntry<String, List<String>>>[
+            ...required.entries,
+            ..._requiredFacts0053.entries,
+          ]) {
         final text = _topicBlob(jsonBook, id);
         for (final phrase in phrases) {
           expect(

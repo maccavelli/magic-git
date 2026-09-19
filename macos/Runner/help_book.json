@@ -10,7 +10,7 @@
         {
           "id": "overview",
           "title": "Welcome to Magic Git",
-          "summary": "A native macOS Git client with six sidebar panels, File tabs, and factory-default shortcuts.",
+          "summary": "A native macOS Git client with six sidebar panels, File tabs, a session info card, and factory-default shortcuts.",
           "keywords": [
             "welcome",
             "overview",
@@ -18,7 +18,9 @@
             "getting started",
             "magic git",
             "workspace",
-            "sidebar"
+            "sidebar",
+            "logout",
+            "location"
           ],
           "shortcuts": [
             {
@@ -40,7 +42,24 @@
           "sections": [
             {
               "type": "paragraph",
-              "text": "Magic Git is a native macOS Git client that drives git, gh, and glab on this Mac or on a remote POSIX host over SSH, without cloning the remote repository locally. A connected session has six sidebar panels — Repository, History, Branches, Stashes, Forge, and Worktrees — plus File tabs for more than one repository."
+              "text": "Magic Git is a native macOS Git client. It drives git, gh, and glab either on this Mac or on a remote POSIX host over SSH — an SSH session works on the host directly, with no local clone. A connected session has six sidebar panels — Repository, History, Branches, Stashes, Forge, and Worktrees — plus File tabs for more than one repository."
+            },
+            {
+              "type": "heading",
+              "text": "The sidebar session card"
+            },
+            {
+              "type": "paragraph",
+              "text": "The bottom of the sidebar shows where you are and holds two buttons."
+            },
+            {
+              "type": "items",
+              "items": [
+                "Repository — the repository name (the tab alias if you set one, otherwise the folder name). Hover for the full path. Ahead/behind counts and a dirty or conflict dot sit on the right; their tooltip reads, for example, \"2 uncommitted · 1 ahead\", or \"Clean, in sync\".",
+                "Location — This Mac for a local session, or the SSH host. Hover for user@host:port.",
+                "Connections — opens the Connections Manager (see Connections Manager).",
+                "Logout — ends the session after a Log out? confirmation. Nothing on the host is deleted."
+              ]
             },
             {
               "type": "heading",
@@ -48,7 +67,7 @@
             },
             {
               "type": "paragraph",
-              "text": "This window (Help ▸ Support & Help, ⌘?) is the user guide. It lists factory-default shortcuts. Your remaps are in Keyboard Shortcuts (⌘/) and Settings → Keyboard Mappings."
+              "text": "This window (Help ▸ Support & Help, ⌘?) is the user guide. It lists factory-default shortcuts. Your remaps are in Keyboard Shortcuts (⌘/) and Settings → Keyboard Mappings. The Troubleshooting category covers connection, forge, refresh, and access problems."
             },
             {
               "type": "callout",
@@ -61,33 +80,70 @@
         {
           "id": "quickstart",
           "title": "Connecting to Repositories",
-          "summary": "Open a local folder or an SSH host from the Connections Manager and Recent Repositories list.",
+          "summary": "Open a repository on this Mac or on an SSH host from the Connections Manager or Recent Repositories.",
           "keywords": [
             "connect",
             "ssh",
             "local",
-            "clone",
-            "create",
             "remote",
+            "add existing repository",
+            "recent",
             "bookmark",
-            "reconnect"
+            "reconnect",
+            "private key",
+            "token",
+            "dotfiles"
           ],
           "sections": [
             {
-              "type": "heading",
-              "text": "Local Repositories"
-            },
-            {
               "type": "paragraph",
-              "text": "Use the Connections Manager on the landing screen, or pick a recent repository from Recent Repositories. Add existing repository opens the macOS folder panel. Magic Git stores a security-scoped bookmark so later launches reopen that folder without asking again."
+              "text": "The landing screen offers the Connections Manager and Recent Repositories. Recent Repositories lists the last 5 repositories you opened; it reads No Recent Repositories until you open one."
             },
             {
               "type": "heading",
-              "text": "Remote SSH Repositories"
+              "text": "Add an existing repository"
             },
             {
               "type": "paragraph",
-              "text": "Magic Git runs git on the remote host over SSH. Enter the host, username, and port, then load or paste a PEM key or use a password. Keys with passphrases, optional scoped git directories, and host tokens are supported."
+              "text": "In the Connections Manager, Add existing repository opens the Add Existing Repository sheet."
+            },
+            {
+              "type": "items",
+              "items": [
+                "Location — Local (this Mac), this SSH session (\"<host> (this session)\", shown only for an unsaved session), or one of your saved connections.",
+                "Folder — Choose… shows the macOS folder picker for a local location; Browse… shows a folder browser on the host.",
+                "Save repository — remembers it in the Connections list, with an optional Label.",
+                "Enable filesystem monitor (faster status on large repos) — turns on git fsmonitor for this repository.",
+                "Scoped work-tree repo (dotfiles) — for a bare or separate-git-dir repository. It is detected automatically from the folder; see Connections Manager.",
+                "Open — opens the repository in a tab."
+              ]
+            },
+            {
+              "type": "paragraph",
+              "text": "A local repository gets a security-scoped bookmark, so later launches reopen it without asking. Opening a linked worktree first asks you to Grant access to the main repository."
+            },
+            {
+              "type": "heading",
+              "text": "Connect to an SSH host"
+            },
+            {
+              "type": "paragraph",
+              "text": "Add connection (the + in the Connections Manager, or New SSH connection when it is empty) opens Add SSH Remote."
+            },
+            {
+              "type": "items",
+              "items": [
+                "Host, Port, and Username — the SSH server and the account to sign in as.",
+                "Password, or Private key (PEM) — sign in with a password, or Load private key… or paste the key. Key passphrase is only needed for an encrypted key.",
+                "Repository path — required: the absolute path of the repository to open after connecting.",
+                "Scoped work-tree repo (dotfiles) and Git directory — for a repository whose git data lives elsewhere (GIT_DIR); the Repository path becomes its work tree.",
+                "GitLab token and GitHub token — optional personal access tokens that sign glab or gh in on the host.",
+                "Save connection — keeps the profile, with secrets in secure storage, under an optional Label."
+              ]
+            },
+            {
+              "type": "paragraph",
+              "text": "Connect opens the repository. An unsaved connection still works for the session and appears in the Connections Manager as \"(unsaved)\"."
             },
             {
               "type": "callout",
@@ -98,21 +154,108 @@
           ]
         },
         {
-          "id": "clone_create",
-          "title": "Clone and Create Repositories",
-          "summary": "Provision a new working copy from Connections or the command palette.",
+          "id": "connections_manager",
+          "title": "Connections Manager",
+          "summary": "Saved local repositories and SSH connections: open, edit, remove, and scope them.",
           "keywords": [
-            "clone",
-            "create",
-            "wizard",
-            "github",
-            "gitlab",
-            "destination"
+            "connections",
+            "manager",
+            "saved",
+            "edit",
+            "delete",
+            "remove",
+            "dotfiles",
+            "scoped",
+            "git-dir",
+            "fsmonitor",
+            "location",
+            "label",
+            "unsaved"
           ],
           "sections": [
             {
               "type": "paragraph",
-              "text": "Clone repository and Create repository live on the Connections Manager toolbar and under app: in the command palette."
+              "text": "The Connections button in the sidebar (or Connections Manager on the landing screen) opens your local repositories and saved SSH hosts. Its toolbar has Saved workspaces, Add connection, Add existing repository, Clone repository, and Create repository."
+            },
+            {
+              "type": "heading",
+              "text": "Sections"
+            },
+            {
+              "type": "items",
+              "items": [
+                "Local Repositories — repositories on this Mac.",
+                "Remote Repositories — each saved SSH connection. Click a host to expand its repositories; the row shows how many (\"N repos\").",
+                "An unsaved session appears as \"<name> (unsaved)\" and is read-only here.",
+                "A worktree chip marks a linked worktree you granted access to.",
+                "When nothing is saved: Add local repository, New SSH connection, Clone repository, and Create repository."
+              ]
+            },
+            {
+              "type": "heading",
+              "text": "Editing entries"
+            },
+            {
+              "type": "items",
+              "items": [
+                "Edit connection — change the Label, Host, Port, Username, password, key, passphrase, or tokens. A secret field left blank keeps the stored one (\"Leave blank to keep current\").",
+                "Delete connection — deletes the connection and its stored credentials, after a confirmation.",
+                "Edit repository (remote) — Label, Path on the host (repoints the entry), and Git directory for a scoped repository, plus the fsmonitor toggle.",
+                "Edit repository (local) — Label and fsmonitor. The Folder is fixed by its access grant; remove the entry and add it again to use a different folder.",
+                "Remove repository — removes the entry from the list. Files are not deleted.",
+                "The fsmonitor icon on a row toggles git fsmonitor (\"Git fsmonitor off (click to enable)\")."
+              ]
+            },
+            {
+              "type": "heading",
+              "text": "Scoped and dotfiles repositories"
+            },
+            {
+              "type": "paragraph",
+              "text": "A scoped work-tree repository keeps its git data outside the work tree — for example a dotfiles repo with GIT_DIR at ~/.home.git and your home folder as the work tree. Add Existing Repository detects this automatically. For SSH, tick Scoped work-tree repo (dotfiles) and fill in Git directory. Every git command then runs with that git directory. The filesystem monitor is unavailable for a scoped repository; it watches only tracked files instead."
+            },
+            {
+              "type": "heading",
+              "text": "The remote folder browser"
+            },
+            {
+              "type": "paragraph",
+              "text": "Browse… opens Choose a folder on the connected host. Type an absolute path or move up with Parent folder. Toggle dotfiles with the eye button (\"Hiding dotfiles (click to show)\"), then press Choose This Folder."
+            },
+            {
+              "type": "heading",
+              "text": "Location and names"
+            },
+            {
+              "type": "items",
+              "items": [
+                "One glyph means the same thing everywhere — tabs, the context bar, the Location row, and Manager rows: a globe is an SSH host, a folder is this Mac.",
+                "One name is used everywhere for a repository: its tab alias if you set one, otherwise its folder name. The window title shown in Mission Control, the app switcher, and the Window menu reads \"name (branch) — Magic Git\"."
+              ]
+            }
+          ]
+        },
+        {
+          "id": "clone_create",
+          "title": "Clone and Create Repositories",
+          "summary": "Clone from GitHub, GitLab, or a URL, or create a new repository, on this Mac or an SSH host.",
+          "keywords": [
+            "clone",
+            "create",
+            "new repository",
+            "namespace",
+            "group",
+            "organization",
+            "visibility",
+            "readme",
+            "identity",
+            "origin",
+            "wizard"
+          ],
+          "sections": [
+            {
+              "type": "paragraph",
+              "text": "Clone repository and Create repository are on the Connections Manager toolbar and under app: in the command palette. Both are step-by-step sheets with Back, Continue, and a final Clone or Create."
             },
             {
               "type": "heading",
@@ -121,10 +264,10 @@
             {
               "type": "items",
               "items": [
-                "Target — where the new working copy will live.",
-                "Source — browse GitHub or GitLab, or paste a URL.",
-                "Location — the folder name on the host.",
-                "Review — confirm and run. A failed or cancelled clone deletes the partial folder."
+                "Target — This Mac, a saved connection, or this session (an unsaved SSH session).",
+                "Source — GitHub or GitLab browses the repositories your signed-in account owns (Forge host, Reload, Filter…); URL takes any address git clone accepts, HTTPS or SSH. An organization's repository you do not own needs URL.",
+                "Location — Folder name (prefilled from the source), then the Parent folder on this Mac (Choose…) or Parent folder on the host (Browse…). Options: Create parent folders if missing, Enable git fsmonitor, and Save to Local Repositories with a Label.",
+                "Review — check the summary, then Clone. Progress streams live. A failed or cancelled clone deletes the partial folder it created."
               ]
             },
             {
@@ -134,26 +277,38 @@
             {
               "type": "items",
               "items": [
-                "Target — local Mac or an SSH host.",
-                "Source — empty folder or an existing folder.",
-                "Remote — create on GitHub or GitLab, a custom URL, or none.",
-                "Details — name, initial branch, git identity (name and email), first commit.",
-                "Review — confirm and activate the session."
+                "Target — This Mac, a saved connection, or this session.",
+                "Source — New folder (created inside a parent folder) or Existing folder (becomes the repository in place).",
+                "Remote — None, GitHub, GitLab, or Custom URL. GitHub and GitLab create the project with gh or glab (signed in on the target), with Visibility (Private or Public), Forge host, and Project description. Custom URL points origin at an existing remote. Replace existing origin remote (if any) applies to an existing folder.",
+                "Details — Repository name, Initial branch, and Git identity: the git identity (name and email) for this repository, prefilled from Settings and written into this repository only. For a new folder, Add a README (creates the initial commit); for an existing one, Commit all existing contents.",
+                "Namespace (optional) — for GitHub or GitLab, the owner or group to create under. Search namespaces… filters the list: Recently active (namespaces you used or opened repositories in, with when) first, then All you can create in. Leave it empty to create under your own account. You can also type a namespace that is not listed.",
+                "Review — check the summary, then Create. If a later step fails, the repository is kept and the failing step is reported."
               ]
+            },
+            {
+              "type": "heading",
+              "text": "Where the result opens"
+            },
+            {
+              "type": "paragraph",
+              "text": "The new repository opens in its own tab, or switches to a tab already open on it. It opens in the current tab only when it is a local repository you chose not to save (\"Opens in this tab (not saved to Local Repositories)\"), or when the target is the current unsaved session. With all 8 tabs open, clone and create are refused until you close one."
             }
           ]
         },
         {
           "id": "tabs_workspaces",
           "title": "File Tabs and Saved Workspaces",
-          "summary": "Open several repositories at once, save a set, and confirm before closing dirty work.",
+          "summary": "Open several repositories at once, rename tabs, save a set, and confirm before leaving risky work.",
           "keywords": [
             "tabs",
+            "file tabs",
             "new tab",
             "close tab",
+            "rename tab",
+            "alias",
             "saved workspaces",
-            "dirty",
-            "quit"
+            "quit",
+            "multi-repo"
           ],
           "shortcuts": [
             {
@@ -165,21 +320,41 @@
           "sections": [
             {
               "type": "paragraph",
-              "text": "File tabs are repository sessions, not the six sidebar panels. File ▸ New Tab (⌘T) opens another session. Close Tab is on the File menu only — ⌘W closes a viewer window, not a tab. The strip holds at most 8 tabs and hides when only one is open. Middle-click a tab to close it."
+              "text": "File tabs are repository sessions, not the six sidebar panels. File ▸ New Tab (⌘T) or the + button opens another session; the + is disabled at 8 tabs (\"Maximum of 8 tabs open\"). Close Tab is on the File menu (disabled with one tab open) and on each tab's close button — ⌘W closes a viewer window, not a tab. The strip hides when only one tab is open."
             },
             {
               "type": "items",
               "items": [
-                "An orange dot means uncommitted changes.",
-                "A red dot means conflicts.",
-                "Saved Workspaces (Connections toolbar or the palette) save, open, delete, or alias a set of tabs."
+                "Middle-click a tab to close it; drag a tab to reorder.",
+                "Each tab shows the location glyph (globe for SSH, folder for this Mac) and the repository name.",
+                "An orange dot means uncommitted changes. A red dot means conflicts."
               ]
             },
             {
-              "type": "callout",
-              "style": "warning",
-              "title": "Leaving a session",
-              "text": "Close tab, Log out, Disconnect, Quit, and Close window confirm when the tree is dirty or a merge, rebase, cherry-pick, or revert is in progress."
+              "type": "heading",
+              "text": "Saved Workspaces"
+            },
+            {
+              "type": "paragraph",
+              "text": "Saved Workspaces (Connections toolbar, or Manage Saved Workspaces in the palette) saves the open set of saved repositories — each tab's alias and layout preset, plus which tab was active — and restores it later. Open reports any repository that failed without closing the ones that opened. Delete removes the saved set; open tabs are not affected."
+            },
+            {
+              "type": "items",
+              "items": [
+                "Rename active tab (the pencil) opens Rename Tab and sets an alias for the active tab only. Leave it blank to clear the alias.",
+                "Only saved repositories can have aliases."
+              ]
+            },
+            {
+              "type": "heading",
+              "text": "Leaving a session"
+            },
+            {
+              "type": "items",
+              "items": [
+                "Close tab, Log out, Disconnect, and closing the window confirm only when work is at risk — uncommitted changes, or a merge, rebase, cherry-pick, or revert still in progress.",
+                "Quit always asks \"Are you sure you want to quit?\". When a repository has work at risk, the dialog title becomes \"Some repositories have active items pending…\"."
+              ]
             }
           ]
         }
