@@ -801,3 +801,43 @@ Plan approved by the maintainer on 2026-09-18.
   * MADR 0053 carries Amendment 0053.1 correcting M3.
   * No code change: the controller's catch branch remains a guard for any future push callback that throws.
   * No files added to the phase.
+
+### Phase 4, executed
+
+* **Deviation D1** was raised and resolved before any Phase 4 edit (see its entry; records commit
+  `f5da8fe`).
+* **Contract.**
+  * `committing` and `sync_fetch_pull_push` added to the locked `panels` list.
+  * W1, W17 and W18 added to `_falsehoods0053`.
+  * Required facts added for the four topics, with D1's `error dialog` and `Failed` replacing the
+    controller string.
+  * Anchors:
+    * the conflict-side labels are built as `'Use ${sides.ours}'` from `conflictSideLabels`, so they are
+      anchored by their static fragments `Ours (HEAD)`, `Theirs (incoming)`, `Onto (ours)` and
+      `Commit (theirs)`;
+    * the background-push status line by its literal first half,
+      `Committed. Pushing… you can close this; it continues in the `;
+    * the other 14 as whole labels.
+  * All were confirmed in the corpus first.
+* **Red run:** exit 1, with 4 named failures:
+  * the label-anchor test ("topic tab_repository must quote the UI label 'Ours (HEAD)'");
+  * the falsehoods test ("not contains 'expands the composer in the task dock'");
+  * the topic-order test ("at location [1] is 'tab_history' instead of 'committing'");
+  * the required-facts test.
+* **Content.**
+  * Revised `tab_repository`: commit detail moved out; right-click menu, commit bar, conflict labels,
+    pending banner and the corrected shortcut callout added.
+  * New `committing` and `sync_fetch_pull_push`.
+  * Revised `tab_stashes`.
+  * Facts were re-read from `repo_status_view.dart`, `conflict_view.dart`, `commit_composer.dart`,
+    `commit_dialog.dart`, `commit_composer_controller.dart`, `busy_action.dart`, `stash_view.dart`,
+    `repository_clean_state.dart`, and `git_service.dart` (fetch/pull/push argv; pull is not journaled).
+  * Chips moved with their verbs: commit chips to `committing`, sync chips to `sync_fetch_pull_push`.
+    `tab_repository` keeps its staging and diff chips.
+* **Gate:**
+  * `dart format`: 0 changed.
+  * `flutter analyze`: `No issues found!`.
+  * Help test: `+15`.
+  * `flutter test`: `03:38 +4193 ~3: All tests passed!`.
+  * JSON valid.
+* Commit `4fd2cff`.
