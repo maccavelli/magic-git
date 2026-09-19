@@ -651,3 +651,20 @@ A failed push after a commit therefore appears as:
 
 Help teaches that instead, and does not quote the controller string. The decision is unchanged. See
 0053-PLAN Deviation D1.
+
+## Amendment 0053.2 (2026-09-18): Debug and Profile get an unsigned entitlements selection so S2 can run
+
+S2's confirmation assumed the `RunnerTests` target could run once the test file was a member. It cannot on a
+machine with no development team. The Runner target's Debug and Profile configurations sign with
+`DebugProfile.entitlements`, whose `keychain-access-groups` requires a certificate: `xcodebuild test` exits
+65 before any test runs. That configuration dates from the initial commit.
+
+The decision is widened, with the maintainer's approval, to include the same mechanism
+[0042-MADR-the-macos-build-mutates-its-own-inputs.md](../0042-MADR-the-macos-build-mutates-its-own-inputs.md)
+chose for Release:
+* a second tracked file, `DebugProfile-unsigned.entitlements`, that differs by exactly `keychain-access-groups`;
+* an xcconfig variable, `MG_DEBUG_ENTITLEMENTS`, defaulting to the existing file;
+* the unsigned selection passed only on the test command line.
+
+Nothing edits an entitlements file in place. Default Debug, Profile and Release builds sign exactly as before.
+`test/macos_entitlements_canon_test.dart` pins the new pair. See 0053-PLAN Deviation D3.

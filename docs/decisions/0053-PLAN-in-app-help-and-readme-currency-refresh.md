@@ -989,3 +989,30 @@ Plan approved by the maintainer on 2026-09-18.
   * `flutter test`: `03:37 +4194 ~3: All tests passed!`.
   * JSON valid.
 * Commit `704e12b`.
+
+### Deviation D3 (2026-09-18): the RunnerTests target cannot run on an unsigned machine
+
+* **Found.** Phase 9 step 5, the risk the plan named in advance. `xcodebuild test -workspace
+  macos/Runner.xcworkspace -scheme Runner -destination 'platform=macOS'` exited **65** before running a
+  test: `"Runner" has entitlements that require signing with a development certificate` (scratch log
+  `p9-xctest-red.log:1917`).
+* **Cause.** The Runner target's Debug and Profile configurations (`project.pbxproj:529, 661`) sign with
+  `macos/Runner/DebugProfile.entitlements`, which grants `keychain-access-groups`. This machine has no
+  development team.
+* **Pre-existing.** The entitlements file is unchanged since `2d8a357` (the initial commit), and this work
+  never touched it (`git diff --quiet HEAD` → 0). On this machine the target has never been runnable.
+* **Decision (maintainer).** Mirror 0042's Release mechanism for Debug and Profile:
+  * a tracked `macos/Runner/DebugProfile-unsigned.entitlements`, identical to `DebugProfile.entitlements`
+    minus exactly `keychain-access-groups`, keeping the sandbox, which the canon test requires of debug
+    builds;
+  * the Debug and Profile `CODE_SIGN_ENTITLEMENTS` point at `"$(MG_DEBUG_ENTITLEMENTS)"`;
+  * `AppInfo.xcconfig` defaults `MG_DEBUG_ENTITLEMENTS = Runner/DebugProfile.entitlements`, so every default
+    Debug/Profile build is unchanged;
+  * the test run passes `MG_DEBUG_ENTITLEMENTS=Runner/DebugProfile-unsigned.entitlements` on the `xcodebuild`
+    command line;
+  * `test/macos_entitlements_canon_test.dart` pins the new pair: a set difference of exactly that one key,
+    identical values for shared keys, the unsigned debug file still sandboxed, and the default selection
+    unchanged.
+* **Files added to Phase 9's scope:** `macos/Runner/DebugProfile-unsigned.entitlements` (new),
+  `macos/Runner/Configs/AppInfo.xcconfig`, and `test/macos_entitlements_canon_test.dart`. `project.pbxproj`
+  was already in scope. MADR 0053 carries Amendment 0053.2.
