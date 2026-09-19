@@ -1016,3 +1016,64 @@ Plan approved by the maintainer on 2026-09-18.
 * **Files added to Phase 9's scope:** `macos/Runner/DebugProfile-unsigned.entitlements` (new),
   `macos/Runner/Configs/AppInfo.xcconfig`, and `test/macos_entitlements_canon_test.dart`. `project.pbxproj`
   was already in scope. MADR 0053 carries Amendment 0053.2.
+
+### Phase 9, executed
+
+* **Tests first.**
+  * `HelpDataModelTests.swift` rewritten:
+    * the stray assertions from lines 87-92 moved into `testHelpBookDecoding`, where `topic` is in scope;
+    * `@testable import Magic_Git` added — the original never imported the app module, a second reason it
+      could not have compiled;
+    * new tests `testSearchMatchesItems`, `testSearchMatchesCode`, `testEmptyQueryMatchesAll` and
+      `testSearchIsCaseInsensitive`;
+    * `testLoadBookFromBundleOrFile` also asserts the four `troubleshooting` topic IDs.
+  * The file was added to the `RunnerTests` target by a scratch script (`pbx_add_test.py`). It asserted that
+    both new IDs (`7A48A1BB…`, `7A48A1BC…`) were unused, and that each of the 4 anchors occurred exactly once
+    before inserting. `xcodebuild -list` still parses the workspace.
+* **First red run, blocked.** Exit 65 on signing — Deviation D3, raised and resolved (records commit
+  `12c81f2`).
+* **D3 executed, test first.**
+  * `macos_entitlements_canon_test.dart` gained two tests:
+    * the new pair differs by exactly `keychain-access-groups`, shares identical values, and stays sandboxed;
+    * the default selection: `MG_DEBUG_ENTITLEMENTS = Runner/DebugProfile.entitlements` in AppInfo, two
+      `"$(MG_DEBUG_ENTITLEMENTS)"` references, and no direct `DebugProfile.entitlements` bypass.
+  * Red run: exit 1, with both tests failing — `PathNotFoundException` for the missing file, and "does not
+    contain 'MG_DEBUG_ENTITLEMENTS = …'".
+  * Then:
+    * `DebugProfile-unsigned.entitlements` was created as the tracked file minus that key (`diff` shows only
+      those two lines);
+    * `AppInfo.xcconfig` got the default with a comment;
+    * both Runner `CODE_SIGN_ENTITLEMENTS` lines were switched, after asserting there were exactly 2.
+  * Canon test green (`+5`).
+* **Red run with the unsigned debug selection:**
+  ```
+  xcodebuild test … MG_DEBUG_ENTITLEMENTS=Runner/DebugProfile-unsigned.entitlements
+  ```
+  Exit 65, and this time on the test itself: `HelpDataModelTests.swift:116:23: error: cannot find
+  'HelpSearch' in scope` (and lines 120, 124, 128, 129). Signing, the app build and the module import all
+  succeeded.
+* **Implementation.**
+  * `HelpSearch.matches(_:query:)` added to `HelpDataModel.swift` (Foundation only). It keeps the old fields
+    and adds each section's `items` and `code`.
+  * `HelpView.filteredTopics` calls it.
+  * `HelpViewLegacy` gained `searchText`, `.searchable`, and the same results/categories switch.
+* **Green run:** `XT=0`, `** TEST SUCCEEDED **`. The `.xcresult` bundle (read with
+  `xcresulttool get test-results tests`) shows `HelpDataModelTests -> Passed`, with all 7 test cases
+  passed, plus `RunnerTests.testExample`.
+* **Standalone check (step 6).**
+  * `swiftc HelpDataModel.swift main.swift`: `SC=0`. The run gave `SR=0`, finding `gitignore` →
+    `diffs_blame_history`, `tab_repository`; `stash card` → `drag_and_drop`; `Reconcile` →
+    `branch_sync_recovery`; `""` → all 34 topics.
+  * The two items-only probes were chosen after checking that each phrase occurs only in `items` of those
+    topics. My first draft's `cherry-pick` probe was replaced because `drag_and_drop` lists it as a keyword,
+    so it would have passed without items search.
+  * **Seen to fail:** a scratch copy of `HelpDataModel.swift` with the items clause removed compiled
+    (`SCM=0`) and failed (`SRM=1`): `FAIL "gitignore" missing ["diffs_blame_history", "tab_repository"];
+    found []` and `FAIL "stash card" missing ["drag_and_drop"]`.
+* **Gate:**
+  * `dart format` (canon test): 0 changed.
+  * `flutter analyze`: `No issues found!`.
+  * `flutter test`: `03:45 +4196 ~3: All tests passed!`.
+  * JSON valid.
+  * `git status` after `xcodebuild` showed only the seven intended files.
+* Commit `4729a21`.
