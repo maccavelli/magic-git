@@ -17,7 +17,7 @@ verified: 2026-09-17
 ## Context and Problem Statement
 
 The repository context bar rendered inconsistently across repositories.
-On the same saved SSH connection to the `wonder` bastion,
+On the same saved SSH connection to the `<host>` bastion,
 `/data/gitrepos/magic-git` drew the full bar — repository identity,
 status summary, host/latency link strip, View Options, Activity, Stash,
 Refresh, and the grouped Fetch · Pull · Push · Sync control with its
@@ -250,7 +250,7 @@ New coverage in `test/repository_workspace_prefs_test.dart`:
     override real user intent going forward.
   * `an unknown future version falls back to defaults`.
 
-Field confirmation: relaunch against the `wonder` bastion and open
+Field confirmation: relaunch against the `<host>` bastion and open
 `/data/gitrepos/magic-cli-remote`. The bar should render identically to
 `/data/gitrepos/magic-git` at the same window width, and narrowing the
 window should be the only thing that reduces it.

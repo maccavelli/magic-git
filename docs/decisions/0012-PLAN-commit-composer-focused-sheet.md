@@ -102,7 +102,7 @@ New/updated tests:
 * `test/commit_composer_test.dart` already pins both accepts accented and
   `Cancel` never accented; extend to the sheet's action row.
 
-Manual check on `wonder`: open a dirty repository over SSH, press ⌘G under each
+Manual check on `<host>`: open a dirty repository over SSH, press ⌘G under each
 preset, commit, and commit-and-push.
 
 ## Deviations from this plan, as executed
