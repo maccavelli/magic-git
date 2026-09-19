@@ -915,15 +915,21 @@
         {
           "id": "tab_history",
           "title": "History",
-          "summary": "Commit graph, filters, checkout, rebase, and the History window.",
+          "summary": "Commit graph, filters, commit actions, interactive rebase, and the History window.",
           "keywords": [
             "history",
+            "log",
             "graph",
-            "checkout",
-            "rebase",
+            "commits",
             "filter",
-            "zoom",
-            "minimap"
+            "checkout",
+            "cherry-pick",
+            "revert",
+            "reset",
+            "rebase",
+            "interactive rebase",
+            "squash",
+            "tag"
           ],
           "shortcuts": [
             {
@@ -990,23 +996,21 @@
           "sections": [
             {
               "type": "paragraph",
-              "text": "The History panel (⌘2) is a sidebar page, not a File tab. It draws a topological commit graph with ref chips and a minimap. The context-bar primary is Refresh."
+              "text": "The History panel (⌘2) is a sidebar page, not a File tab. It draws a topological commit graph with ref chips and a minimap — click the minimap to jump there. The context-bar primary is Refresh. Move the selection with ↑/↓ or J/K; Shift extends it; Esc clears it."
             },
             {
               "type": "heading",
-              "text": "All Branches versus HEAD"
+              "text": "The filter bar"
             },
             {
-              "type": "paragraph",
-              "text": "The All Branches control is an icon on the filter bar (tooltip Show all branches), not a labeled toolbar button. It has no keyboard shortcut — ⇧⌘B is Checkout Selected Commit, which asks for confirmation."
-            },
-            {
-              "type": "heading",
-              "text": "Filters and zoom"
-            },
-            {
-              "type": "paragraph",
-              "text": "⌘F focuses the filter. Prefixes include author:, file:, sha:, after:, and before:. Hide merges is a separate chip. Zoom with ⌘=, ⌘-, ⌘0, pinch, or ⌘-scroll."
+              "type": "items",
+              "items": [
+                "⌘F focuses the filter. Plain words match the message. Terms: author:, file: (or path:), sha: (or commit:), after: (or since:), and before: (or until:). A bare commit hash of 5+ characters finds that commit; * and ? are wildcards; quote values with spaces, like author:\"Jane Developer\".",
+                "Filter by author, date, or path (the slider icon) opens a row with Author name or email, After date, Before date (dates like \"2 weeks ago\" work), a file-or-folder limit, and the Hide merges checkbox.",
+                "The footer counts matches (\"First N matching commits — scroll for more\") and offers Clear filters.",
+                "The All Branches icon (tooltip Show all branches) switches between HEAD and every branch. It has no keyboard shortcut — ⇧⌘B is Checkout Selected Commit, which asks for confirmation.",
+                "Recovery (reflog & snapshots) and Open History in new window are icons on the same bar."
+              ]
             },
             {
               "type": "heading",
@@ -1015,9 +1019,28 @@
             {
               "type": "items",
               "items": [
-                "Single commit: Checkout, Branch from…, Branch from… in a new worktree…, Tag…, Cherry-pick, Revert, Interactive rebase, Reset (soft / mixed / hard), Amend last commit (HEAD only), Copy SHA.",
-                "Two commits: compare. Several commits: cherry-pick or revert N, copy N SHAs.",
-                "Drop a branch onto a commit to merge, rebase, or move that branch here.",
+                "Single commit: Checkout, Branch from…, Branch from… in a new worktree…, Tag…, Cherry-pick, Revert, Interactive rebase from here…, Reset to the commit (soft / mixed / hard — hard asks first, because it overwrites all uncommitted changes), Amend last commit (HEAD only), and Copy SHA.",
+                "Two commits: compare them (\"Comparing X → Y\", Copy both SHAs). Several: cherry-pick or revert N, or copy N SHAs. Bulk cherry-pick and revert are disabled when the selection contains a merge commit — act on it alone to choose its mainline parent.",
+                "The diff header above a commit has word wrap, Copy full SHA, Open diff in a larger window, and a menu with the same commit actions.",
+                "Drop a branch onto a commit to merge it into the current branch (normal, no-ff, or squash), rebase the current branch onto it, or move that branch here."
+              ]
+            },
+            {
+              "type": "heading",
+              "text": "Interactive rebase"
+            },
+            {
+              "type": "paragraph",
+              "text": "Interactive rebase from here… opens the Interactive rebase sheet. Set each commit to Pick, Squash, Fixup, or Drop; drag a commit to reorder it, or drop it onto another to squash them. Reword is unavailable because the rebase runs without an editor. It is disabled on the root commit."
+            },
+            {
+              "type": "heading",
+              "text": "Branch history and the History window"
+            },
+            {
+              "type": "items",
+              "items": [
+                "Branches ▸ Advanced ▸ Open reachable history shows a \"History of <branch>\" banner with Clear.",
                 "Open History in New Window (⇧⌘H) pops a live native History window."
               ]
             }
@@ -1026,13 +1049,20 @@
         {
           "id": "tab_branches",
           "title": "Branches",
-          "summary": "Browse and review local and remote branches, tags, merge, and publish.",
+          "summary": "Browse and review local and remote branches and tags; merge, delete, tag, and publish.",
           "keywords": [
             "branches",
-            "checkout",
-            "merge",
+            "branch",
+            "tags",
             "tag",
+            "remote",
             "review",
+            "compare",
+            "merge",
+            "delete",
+            "pin",
+            "hide",
+            "stale",
             "publish"
           ],
           "shortcuts": [
@@ -1065,7 +1095,7 @@
           "sections": [
             {
               "type": "paragraph",
-              "text": "The Branches panel (⌘3) is a sidebar page, not a File tab. It is master–detail with Browse | Review, pin, hide, and folder grouping. The context-bar primary is Fetch & Prune (no default shortcut). An empty selection shows dashboard stats."
+              "text": "The Branches panel (⌘3) is a sidebar page, not a File tab. It is master–detail with two modes, Browse (branches, remotes, and tags) and Review (local branches compared with a base). The context-bar primary is Fetch & Prune (no default shortcut). With nothing selected, the detail pane shows branch statistics. Out-of-sync branches and how to fix them are covered in Branch Sync and Recovery."
             },
             {
               "type": "heading",
@@ -1074,18 +1104,152 @@
             {
               "type": "items",
               "items": [
-                "⌘B opens the New branch sheet (name + start-at, default selected ref or HEAD). After Create, choose Here or New worktree.",
+                "⌘B opens the New branch sheet (Name and Start at, defaulting to the selected ref or HEAD). After Create, choose Here or New worktree.",
                 "Double-click or press Enter to check a branch out. You can also check out in a new worktree.",
-                "⇧⌘M merges the selected branch into the current branch.",
-                "⌘⌫ deletes the selected branch. Unmerged branches confirm.",
-                "Rebase the current branch onto another by dragging that branch onto HEAD — there is no Rebase item on the context menu."
+                "⇧⌘M merges the selected branch into the current branch after a confirmation.",
+                "Delete (⌘⌫) always confirms. An unmerged branch asks again with Force Delete. A branch checked out in a worktree offers Remove Worktree and Delete.",
+                "Rebase the current branch onto another by dragging that branch onto HEAD (\"Combine with …\"), or use Reconcile… when it has diverged from its upstream. There is no general Rebase item on the context menu.",
+                "Right-click (or the detail pane's Advanced menu) for merge variants, Set upstream…, Unset upstream, Rename…, Pin to top, Copy name, and Delete branch.",
+                "Pin to top keeps a branch first. The folder icon switches between a flat list and grouping by folder."
+              ]
+            },
+            {
+              "type": "heading",
+              "text": "Review mode"
+            },
+            {
+              "type": "items",
+              "items": [
+                "Compared with picks the base (Recommended, Local, Remotes, Tags); Reset saved base returns to the default.",
+                "Sort: Smart, Activity, Name, Ahead, or Behind. Filter: Unpublished, Upstream gone, In a worktree, Has a request, No request, Failing CI, Mine.",
+                "Select several branches (⌘-click, ⇧-click, ⇧-arrow, or Space) and the detail pane becomes \"N branches selected\" with Pin, Unpin, Hide, and Delete if merged…. Batch actions never include Merge.",
+                "Hidden branches disappear from the list. The eye icon shows them again; then Unhide on a row.",
+                "With nothing selected, Review adds Merged and Conflicts filter chips and Scan for conflicts.",
+                "The detail pane compares the branch with the base: Overview, Changes, and Commits, with a Readiness prediction of a local merge (needs git 2.38+).",
+                "Branches with no commit in 3 months collapse into a stale group you can show or hide."
+              ]
+            },
+            {
+              "type": "heading",
+              "text": "Tags and remote branches"
+            },
+            {
+              "type": "items",
+              "items": [
+                "Create Tag (⇧⌘T) opens Create Tag: tick Annotated tag to add a Tag message, and Push to <remote> after creating.",
+                "Tags only on this machine are marked local only; one that points elsewhere on the remote is marked differs from <remote>. Push tag, or push all local-only tags from the section header.",
+                "Deleting a tag that also exists on the remote asks: Delete Local Only, or Delete Local and on the remote.",
+                "A remote branch offers Check out tracking branch and Delete branch on the remote."
               ]
             },
             {
               "type": "callout",
               "style": "info",
-              "title": "Review and the Branch menu",
-              "text": "Review offers compare, Publish, Create Pull or Merge Request, and Open CI. Those four verbs are also on the Branch menu and have no default shortcut. Bulk pin, hide, and delete-if-merged sit on the list."
+              "title": "The Branch menu",
+              "text": "Publish, Create Pull or Merge Request, Compare with Base, and Open CI are on the Branch menu and the detail pane, with no default shortcut. Keyboard: Home, End, Page Up/Down, type to find, and ⇧F10 opens the context menu."
+            }
+          ]
+        },
+        {
+          "id": "branch_sync_recovery",
+          "title": "Branch Sync and Recovery",
+          "summary": "What Not published, Diverged, and gone mean, and the guided actions that fix each.",
+          "keywords": [
+            "diverged",
+            "reconcile",
+            "out of sync",
+            "upstream",
+            "publish",
+            "gone",
+            "stale",
+            "unrelated",
+            "set upstream",
+            "force push",
+            "behind",
+            "ahead"
+          ],
+          "sections": [
+            {
+              "type": "paragraph",
+              "text": "Branches explains why a branch cannot simply pull or push, and offers a named action for each case. Rows show a short chip; the detail pane explains the state and holds the action."
+            },
+            {
+              "type": "heading",
+              "text": "Not published"
+            },
+            {
+              "type": "paragraph",
+              "text": "The branch has no upstream yet — it exists only here. The detail pane says so and offers Publish Branch, which pushes it and sets the upstream (the same as Push and Set Upstream)."
+            },
+            {
+              "type": "heading",
+              "text": "Diverged"
+            },
+            {
+              "type": "paragraph",
+              "text": "The branch and its upstream each have commits the other lacks (\"N commits here, M there\"). On the current branch, Reconcile… (row menu or Advanced) opens Reconcile with <upstream>:"
+            },
+            {
+              "type": "items",
+              "items": [
+                "Merge \"<upstream>\" into \"<branch>\" — the primary choice; keeps both histories.",
+                "Rebase \"<branch>\" onto \"<upstream>\" — replays your commits on top.",
+                "Reset \"<branch>\" to \"<upstream>\" — discards the commits that exist only here. It asks first (Reset to <upstream>?) and is reversible with ⌘Z or the undo toast."
+              ]
+            },
+            {
+              "type": "heading",
+              "text": "No common history"
+            },
+            {
+              "type": "paragraph",
+              "text": "If the branch and its upstream share no common history, the detail pane says so and offers Merge (allow unrelated histories)…. A Merge unrelated histories confirmation warns that combining two independent histories may produce many conflicts; Merge Anyway runs git merge --allow-unrelated-histories."
+            },
+            {
+              "type": "heading",
+              "text": "gone"
+            },
+            {
+              "type": "paragraph",
+              "text": "A gone marker means the upstream branch was deleted on the remote (merged or removed), so the local branch is likely stale. Confirm where its work landed before deleting it."
+            },
+            {
+              "type": "heading",
+              "text": "Cleaning up after Fetch & Prune"
+            },
+            {
+              "type": "paragraph",
+              "text": "When Fetch & Prune finds local branches whose remote branch no longer exists, it asks Clean up stale branches? and lists them; Delete removes them locally. Branches that are not fully merged — for example squash- or rebase-merged ones — get a second Force Delete prompt."
+            },
+            {
+              "type": "heading",
+              "text": "Set upstream"
+            },
+            {
+              "type": "paragraph",
+              "text": "Set upstream… (row menu or Advanced) sets the remote-tracking branch that pull, push, and the ahead/behind badges follow. It refuses a remote branch that does not exist yet: \"If this branch has never been pushed, use Publish instead.\""
+            },
+            {
+              "type": "heading",
+              "text": "An operation in progress"
+            },
+            {
+              "type": "paragraph",
+              "text": "While a merge, rebase, cherry-pick, or revert is paused on conflicts, a full-width banner across Branches reads \"<Verb> in progress — resolve conflicts, then continue, or abort.\" with Continue and Abort <Verb>. Resolve the files in Repository, then Continue."
+            },
+            {
+              "type": "heading",
+              "text": "The Advanced menu"
+            },
+            {
+              "type": "paragraph",
+              "text": "The detail pane's Advanced menu matches the row menu: Check out, Switch to its worktree, Check out in a new worktree…, Create Pull or Merge Request, Open on Forge, Open reachable history, Merge into current, Merge (no fast-forward), Merge (fast-forward only), Squash merge, Reconcile…, Set upstream…, Unset upstream, Rename…, Pin to top, Copy name, and Delete branch."
+            },
+            {
+              "type": "callout",
+              "style": "tip",
+              "title": "Undo and Recovery",
+              "text": "Reconcile's Reset is recorded in the undo journal (⌘Z). A merge or rebase can be backed out with Abort while it is in progress, or afterwards from Recovery (⇧⌘U)."
             }
           ]
         },
@@ -1256,10 +1420,14 @@
           "keywords": [
             "worktree",
             "worktrees",
-            "overview",
+            "checkout",
+            "parallel",
             "lock",
             "prune",
-            "nested"
+            "repair",
+            "move",
+            "remove",
+            "window"
           ],
           "shortcuts": [
             {
@@ -1271,15 +1439,37 @@
           "sections": [
             {
               "type": "paragraph",
-              "text": "The Worktrees panel (⌘6) is a sidebar page, not a File tab. Opening a worktree adds a checkout tab on the Worktrees strip (Overview | that checkout). That nested strip is not the File-tab switcher. Each checkout tab has Changes, History, Branches, and Stashes. Forge stays on the repository, not the checkout."
+              "text": "The Worktrees panel (⌘6) is a sidebar page, not a File tab. Opening a worktree adds a checkout tab on the Worktrees strip (Overview | that checkout). That nested strip is not the File-tab switcher. Each checkout tab has Changes, History, Branches, and Stashes, and a Close tab button. Forge stays on the repository, not the checkout."
             },
             {
               "type": "heading",
               "text": "Overview"
             },
             {
+              "type": "items",
+              "items": [
+                "Every worktree is listed with chips for its branch (or \"(detached abc1234)\"), missing, locked (with the reason), main worktree, and open. A row shows at most two chips plus +N.",
+                "With only the main worktree, Overview shows No worktrees yet with Add Worktree….",
+                "A missing worktree offers Repair — I moved this folder and Prune — forget all missing worktrees….",
+                "The strip's menu has Prune stale worktrees and Repair all worktree links."
+              ]
+            },
+            {
+              "type": "heading",
+              "text": "Row menu"
+            },
+            {
+              "type": "items",
+              "items": [
+                "Open Worktree, and Open in Window — a separate Status window for that worktree (see Secondary Windows).",
+                "Reveal in Finder and Open in Terminal (this Mac only; Terminal.app), Copy Path.",
+                "Lock / Unlock, Move… (not while locked or missing), Repair… (when missing).",
+                "Remove Worktree…, and Remove Worktree and Delete Branch… (not for a detached HEAD). Removing one with uncommitted changes or a lock asks again (Remove Anyway)."
+              ]
+            },
+            {
               "type": "paragraph",
-              "text": "Overview lists every worktree and its state: main, detached, locked, or missing. The Worktree menu (all unbound) offers Add, Open, Lock, Unlock, Move, Repair, Repair All, Prune, and Remove."
+              "text": "The Worktree menu (all unbound) offers Add, Open, Lock, Unlock, Move, Repair, Repair All, Prune, and Remove."
             },
             {
               "type": "heading",
@@ -1287,7 +1477,11 @@
             },
             {
               "type": "paragraph",
-              "text": "Add Worktree can create a new branch, use an existing one, or detach. Optional: copy ignored files, run a post-create command. A local add records a security-scoped bookmark. SSH has no sandbox bookmark. A worktree created in the terminal prompts once on first open."
+              "text": "Add Worktree can create a new branch, use an existing one, or detach at a revision (Based on). Choose where it goes (Create in, with Choose…, and Folder name) — it must be outside the repository. Optional: copy ignored files such as .env*, and run a post-create command (remembered for next time; its output appears in Output). Open it when done opens the new worktree right away."
+            },
+            {
+              "type": "paragraph",
+              "text": "A local add records a security-scoped bookmark. SSH has no sandbox bookmark. A worktree created in the terminal prompts once on first open (Grant access to this worktree)."
             }
           ]
         }

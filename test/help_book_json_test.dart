@@ -173,8 +173,35 @@ const _labelAnchors = <String, List<String>>{
     'Clear all stashes…',
     'Create branch from stash…',
   ],
-  'tab_worktrees': ['Add Worktree'],
-  'tab_branches': ['Fetch & Prune'],
+  'tab_history': [
+    'Hide merges',
+    'Filter by author, date, or path',
+    'Clear filters',
+    'Interactive rebase',
+  ],
+  'branch_sync_recovery': [
+    'Reconcile…',
+    'Reconcile with ',
+    'Merge Anyway',
+    'Clean up stale branches?',
+    'Not published',
+    'Diverged',
+    'Merge (allow unrelated histories)…',
+  ],
+  'tab_worktrees': [
+    'Add Worktree',
+    'Open in Window',
+    'Remove Worktree and Delete Branch…',
+    'No worktrees yet',
+    'Open it when done',
+  ],
+  'tab_branches': [
+    'Fetch & Prune',
+    'Unhide',
+    'Delete if merged…',
+    'Force Delete',
+    'Compared with',
+  ],
   'settings': ['Known Hosts', 'Keyboard Mappings', 'Open files with'],
 };
 
@@ -194,6 +221,9 @@ const _falsehoods0053 = <String>[
   'expands the composer in the task dock', // W1
   'are Stash-menu only', // W17
   'Repository menu only', // W18
+  'Hide merges is a separate chip', // W14
+  'Bulk pin, hide, and delete-if-merged sit on the list', // W15
+  'Unmerged branches confirm.', // W16
 ];
 
 /// Facts 0053 requires, by topic, alongside 0010's list.
@@ -291,6 +321,56 @@ const _requiredFacts0053 = <String, List<String>>{
     'staging',
     'Auto-fetch',
     'This branch has no upstream yet',
+  ],
+  'tab_history': [
+    'Hide merges',
+    'path:',
+    'since:',
+    'Clear filters',
+    'Interactive rebase',
+    'Pick',
+    'Squash',
+    'Fixup',
+    'Drop',
+    'History of',
+    'J',
+    'Recovery',
+  ],
+  'tab_branches': [
+    'Review',
+    'Compared with',
+    'Sort',
+    'Unhide',
+    'branches selected',
+    'Force Delete',
+    'Remove Worktree and Delete',
+    'Create Tag',
+    'Annotated',
+    'local only',
+  ],
+  'branch_sync_recovery': [
+    'Not published',
+    'Diverged',
+    'gone',
+    'Reconcile…',
+    'Merge',
+    'Rebase',
+    'Reset',
+    '⌘Z',
+    'allow unrelated histories',
+    'Clean up stale branches?',
+    'Set upstream',
+    'Publish',
+    'Advanced',
+    'in progress',
+  ],
+  'tab_worktrees': [
+    'Open in Window',
+    'Remove Worktree and Delete Branch…',
+    'No worktrees yet',
+    'Open it when done',
+    'Terminal.app',
+    'Prune stale worktrees',
   ],
   'tab_stashes': [
     'Apply latest stash',
@@ -471,6 +551,7 @@ void main() {
           'sync_fetch_pull_push',
           'tab_history',
           'tab_branches',
+          'branch_sync_recovery',
           'tab_stashes',
           'tab_forge',
           'tab_worktrees',
