@@ -841,3 +841,33 @@ Plan approved by the maintainer on 2026-09-18.
   * `flutter test`: `03:38 +4193 ~3: All tests passed!`.
   * JSON valid.
 * Commit `4fd2cff`.
+
+### Phase 5, executed
+
+* **Contract.**
+  * `branch_sync_recovery` inserted after `tab_branches` in the locked list.
+  * W14, W15 and W16 added to `_falsehoods0053`.
+  * Required facts for the four topics.
+  * 21 anchors, all confirmed in `lib/` first. Two are static fragments: `Reconcile with ` and
+    `History of ` (the latter is a required fact, not an anchor).
+* **Red run:** exit 1, with 4 named failures:
+  * the label-anchor test ("topic tab_history must quote the UI label 'Filter by author, date, or path'");
+  * the falsehoods test ("not contains 'Hide merges is a separate chip'");
+  * the topic-order test ("at location [5] is 'tab_stashes' instead of 'branch_sync_recovery'");
+  * the required-facts test ("topic tab_history must contain 'path:'").
+* **Content.**
+  * Revised `tab_history`, `tab_branches` and `tab_worktrees`.
+  * New `branch_sync_recovery`: one heading per sync state, plus Reconcile's three paths, the
+    unrelated-histories merge, stale cleanup, Set upstream vs Publish, the pending banner, and the Advanced
+    menu.
+  * Facts were re-read from `branch_detail.dart` (585-840), `branches_view.dart` (1214 Publish =
+    `push(setUpstream: true)`; 1420-1540; 1790-1945), `branch_navigator.dart` (chips; Review toolbar
+    940-1130), `create_tag_sheet.dart`, `history_view.dart` (filter bar 1800-2010),
+    `rebase_sheet.dart`, and `worktrees_view.dart` (row menu 470-590, strip 870-990).
+* **Gate:**
+  * `dart format`: 0 changed.
+  * `flutter analyze`: `No issues found!`.
+  * Help test: `+15`.
+  * `flutter test`: `03:37 +4193 ~3: All tests passed!`.
+  * JSON valid.
+* Commit `b4bd008`.
