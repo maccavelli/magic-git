@@ -34,6 +34,14 @@ UI (macos_ui + Riverpod). macOS is the only target platform.
   `git checkout -- macos/Runner/Release.entitlements` and look at what changed
   it; `test/macos_entitlements_canon_test.dart` enforces both files and their
   relationship, and should fail before you ever see this in a diff.
+  Debug and Profile follow the same pattern (MADR 0053 Amendment 0053.2):
+  `DebugProfile.entitlements` is never edited either, and its tracked twin
+  `DebugProfile-unsigned.entitlements` (minus only `keychain-access-groups`;
+  it stays sandboxed) is selected by `MG_DEBUG_ENTITLEMENTS`, which
+  `AppInfo.xcconfig` defaults to the signed file. Pass
+  `MG_DEBUG_ENTITLEMENTS=Runner/DebugProfile-unsigned.entitlements` to
+  `xcodebuild test` to run the `RunnerTests` Swift tests on a machine with no
+  development team (see `docs/BUILD_MACOS.md`).
 - **Don't commit or push unless asked.** The maintainer commits each work cycle
   himself.
 - **Never write commit message text.** A global `prepare-commit-msg` hook
