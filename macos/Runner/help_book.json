@@ -634,15 +634,19 @@
         {
           "id": "tab_repository",
           "title": "Repository",
-          "summary": "Stage, review, resolve conflicts, and commit from the Repository sidebar panel.",
+          "summary": "Review, stage, and resolve changes in the Repository sidebar panel.",
           "keywords": [
+            "repository",
             "status",
-            "staging",
-            "commit",
-            "amend",
+            "changes",
+            "stage",
+            "unstage",
             "discard",
+            "conflicts",
             "diff",
-            "conflicts"
+            "review",
+            "hunk",
+            "lines"
           ],
           "shortcuts": [
             {
@@ -681,6 +685,76 @@
               "actionId": "repository.toggleExpandContext"
             },
             {
+              "label": "Stash Changes",
+              "keys": "⇧⌘S",
+              "actionId": "repository.stash"
+            }
+          ],
+          "sections": [
+            {
+              "type": "paragraph",
+              "text": "The Repository panel (⌘1) is a sidebar page, not a File tab. The change list is Conflicts, Staged, Changes, and Untracked, with filter chips, Hide reviewed, and group-by status or directory. Review selected and Review all visible open multi-file review. A clean tree shows \"Working tree clean\"."
+            },
+            {
+              "type": "heading",
+              "text": "Staging and diffs"
+            },
+            {
+              "type": "items",
+              "items": [
+                "Space toggles staging for the selected file or files. ⌘-click and ⇧-click select several.",
+                "Line staging works on unified, whitespace-exact diffs with blame off: select lines, then Stage, Unstage, or Discard Selection. Split and ignore-whitespace diffs are read-only. Per-hunk buttons also exist.",
+                "Drag unstaged files onto the staging banner to Stage; drag staged files to Unstage.",
+                "Right-click a change for Stage, Unstage, Discard Changes, Discard Staged Changes, Add to .gitignore, Delete Untracked File, Blame, Copy Relative Path, Copy Path, Reveal in Finder (this Mac only), and Open file."
+              ]
+            },
+            {
+              "type": "heading",
+              "text": "The commit bar"
+            },
+            {
+              "type": "paragraph",
+              "text": "When the tree has changes, a bar under the list shows \"N staged files · branch\" with Unstage All, Stage All, and Commit… (⌘G). Committing — the focused sheet or the task dock, and Amend Last Commit… — is covered in Committing."
+            },
+            {
+              "type": "heading",
+              "text": "Conflicts"
+            },
+            {
+              "type": "items",
+              "items": [
+                "A conflicted file offers Use Ours (HEAD), Use Theirs (incoming), and Mark Resolved. During a rebase git swaps the roles, so the buttons read Use Onto (ours) and Use Commit (theirs).",
+                "Right-click offers Resolve Using … and Mark Resolved for several files at once.",
+                "While a merge, rebase, cherry-pick, or revert is in progress, a banner reads \"<Verb> in progress — resolve conflicts, then continue, or abort.\" with Continue and Abort <Verb> (for example Abort Merge). The same banner appears in Branches."
+              ]
+            },
+            {
+              "type": "callout",
+              "style": "info",
+              "title": "No default shortcut",
+              "text": "Pull with Rebase, Pull with Merge, Push and Set Upstream, Push Tags, Force Push (no lease), Unstage All, and Abort Pending Operation have no default shortcut. Find them on the Repository menu, in the command palette, in the context bar's More sync actions, on the commit bar (Unstage All), and on the pending banner (Abort)."
+            }
+          ]
+        },
+        {
+          "id": "committing",
+          "title": "Committing",
+          "summary": "Write and commit a message in the focused sheet or the task dock, optionally pushing too.",
+          "keywords": [
+            "commit",
+            "message",
+            "composer",
+            "sheet",
+            "task dock",
+            "amend",
+            "co-author",
+            "template",
+            "push",
+            "gpg",
+            "hook"
+          ],
+          "shortcuts": [
+            {
               "label": "Focus Commit Composer",
               "keys": "⌘G",
               "actionId": "repository.focusCommit"
@@ -694,7 +768,73 @@
               "label": "Commit and Push",
               "keys": "⇧⌘↩",
               "actionId": "commit.confirmAndPush"
+            }
+          ],
+          "sections": [
+            {
+              "type": "paragraph",
+              "text": "Stage what you want, then press Commit… on the commit bar or ⌘G. By default this opens the Focused sheet over the workspace. To compose in a panel docked below the changes instead, choose Commit in Task dock in the context bar's View options. Switching keeps your draft."
             },
+            {
+              "type": "heading",
+              "text": "The composer"
+            },
+            {
+              "type": "items",
+              "items": [
+                "The header reads \"Commit N files\" on the current branch. There is one message field.",
+                "Accept commits (⌘↩). Accept + Push commits, then pushes (⇧⌘↩).",
+                "Assistance (or Hide Assistance) offers Use a recent subject… (Load recent), Load template or Use template, a message policy advisory, and co-authors: enter a Co-author name and email, then Add co-author.",
+                "Regenerate appears when the staged files changed after the draft was generated (\"Staged changes changed; review this draft or regenerate.\").",
+                "A message produced by a prepare-commit-msg hook is marked \"Generated by prepare-commit-msg. Review, Edit, or Accept.\"",
+                "Clear empties the message. In the task dock, Collapse hides the composer.",
+                "Escape closes the sheet and keeps your draft — except during the moment the commit itself runs."
+              ]
+            },
+            {
+              "type": "heading",
+              "text": "Commit and push"
+            },
+            {
+              "type": "items",
+              "items": [
+                "The sheet closes as soon as the local commit lands. With Accept + Push, the push continues in the background (\"Committed. Pushing… you can close this; it continues in the background.\"), streaming into Output and listed in Activity.",
+                "If that push fails, an error dialog explains why, Activity marks the push Failed, and your commit stays in the local branch — push again once the problem is fixed.",
+                "Accept without push starts a quiet background fetch so ahead/behind counts stay current."
+              ]
+            },
+            {
+              "type": "heading",
+              "text": "Amending and signing"
+            },
+            {
+              "type": "items",
+              "items": [
+                "There is no amend checkbox. Use Repository ▸ Amend Last Commit… (unbound) for the working tree, or Amend last commit on the HEAD commit in History.",
+                "Commits are unsigned (--no-gpg-sign). If the repository enables commit.gpgsign, the composer says so.",
+                "Settings ▸ Committer identity sets the name and email for every commit."
+              ]
+            }
+          ]
+        },
+        {
+          "id": "sync_fetch_pull_push",
+          "title": "Fetch, Pull, Push, and Sync",
+          "summary": "What each sync verb runs, how progress is shown, and the guardrails before a risky push.",
+          "keywords": [
+            "fetch",
+            "pull",
+            "push",
+            "sync",
+            "rebase",
+            "merge",
+            "force push",
+            "upstream",
+            "auto-fetch",
+            "progress",
+            "rejected"
+          ],
+          "shortcuts": [
             {
               "label": "Fetch",
               "keys": "⇧⌘F",
@@ -716,11 +856,6 @@
               "actionId": "repository.sync"
             },
             {
-              "label": "Stash Changes",
-              "keys": "⇧⌘S",
-              "actionId": "repository.stash"
-            },
-            {
               "label": "Force Push with Lease",
               "keys": "⌃⌘U",
               "actionId": "repository.forcePush"
@@ -729,34 +864,51 @@
           "sections": [
             {
               "type": "paragraph",
-              "text": "The Repository panel (⌘1) is a sidebar page, not a File tab. The change list is Conflicts, Staged, Changes, and Untracked, with filter chips, Hide reviewed, and group-by status or directory. Review selected and Review all visible open multi-file review."
+              "text": "The sync group on the context bar, the Repository menu, the palette, and the shortcuts all run the same commands. Progress streams live into Output; the Dock icon shows a progress bar and Activity lists the operation."
             },
             {
               "type": "heading",
-              "text": "Staging and diffs"
+              "text": "What each verb runs"
             },
             {
               "type": "items",
               "items": [
-                "Space toggles staging for the selected file or files.",
-                "Line staging works on unified, whitespace-exact diffs with blame off: select lines, then Stage, Unstage, or Discard Selection. Split and ignore-whitespace diffs are read-only. Per-hunk buttons also exist.",
-                "Drag unstaged files onto the staging banner to Stage; drag staged files to Unstage.",
-                "Conflicts offer Ours, Theirs, and Mark Resolved. A pending banner offers Continue or Abort."
+                "Fetch — git fetch --prune on all remotes, without submodules.",
+                "Pull — a fetch of the upstream, then a merge or rebase against @{upstream}. The mode comes from Settings ▸ Default sync behavior: Fast-forward only (the default, never creates a merge commit), Rebase, or Merge. Pull with Rebase and Pull with Merge override it once.",
+                "Push — pushes the current branch, plus reachable annotated tags (--follow-tags) when Settings ▸ Push tags by default is on. Push and Set Upstream publishes a branch that has no upstream.",
+                "Sync — pull, then push."
               ]
             },
             {
               "type": "heading",
-              "text": "Committing"
+              "text": "Guardrails"
+            },
+            {
+              "type": "items",
+              "items": [
+                "Pushing while the remote has commits you do not have asks \"Remote has new commits\": Pull, then Push; Push anyway; or Cancel.",
+                "Force Push with Lease and Force Push ask for confirmation first (\"Force push\"). With lease refuses if someone else pushed since your last fetch; Force Push overwrites unconditionally.",
+                "A pull is not recorded in the undo journal — use Recovery to go back."
+              ]
+            },
+            {
+              "type": "heading",
+              "text": "While a sync runs"
+            },
+            {
+              "type": "items",
+              "items": [
+                "Staging stays usable during fetch and push. Pull and Sync lock staging until they finish.",
+                "Hover a dimmed verb for the reason: \"This branch has no upstream yet\", \"No remote is configured\", \"A fetch or push is already running\", \"Repository is disconnected\", or \"Another repository operation is running\"."
+              ]
+            },
+            {
+              "type": "heading",
+              "text": "Background fetching"
             },
             {
               "type": "paragraph",
-              "text": "A collapsed Commit… bar sits under the list. ⌘G expands the composer in the task dock — one message field, Accept, and Accept + Push (⇧⌘↩). There is no amend checkbox. Amend Last Commit… is on the Repository menu (unbound). Assistance offers recent subjects, a template, and a policy advisory. Commits are unsigned (--no-gpg-sign)."
-            },
-            {
-              "type": "callout",
-              "style": "info",
-              "title": "Repository menu only",
-              "text": "Pull with Rebase, Pull with Merge, Push and Set Upstream, Push Tags, Force Push (no lease), Unstage All, and Abort Pending Operation have no default shortcut. Use the Repository menu or the command palette."
+              "text": "Settings ▸ Auto-fetch (default every 5 minutes) fetches the default remote in the background so ahead/behind counts and remote branches stay current."
             }
           ]
         },
@@ -940,14 +1092,17 @@
         {
           "id": "tab_stashes",
           "title": "Stashes",
-          "summary": "Shelve work with include-untracked, then apply, pop, or drop a stash.",
+          "summary": "Shelve work with include-untracked, then apply, pop, drop, or branch from a stash.",
           "keywords": [
             "stash",
             "stashes",
+            "shelve",
             "apply",
             "pop",
             "drop",
-            "untracked"
+            "clear",
+            "untracked",
+            "index"
           ],
           "shortcuts": [
             {
@@ -979,7 +1134,7 @@
           "sections": [
             {
               "type": "paragraph",
-              "text": "The Stashes panel (⌘4) is a sidebar page, not a File tab. The list has a filter field. Select a stash to preview its patch."
+              "text": "The Stashes panel (⌘4) is a sidebar page, not a File tab. Each card shows stash@{n}, the branch it came from, and its age. Filter stashes matches the subject, branch, or hash. Select a stash to preview its patch."
             },
             {
               "type": "heading",
@@ -987,7 +1142,7 @@
             },
             {
               "type": "paragraph",
-              "text": "Stash Changes (context bar, ⇧⌘S) immediately runs git stash push --include-untracked with no prompt. Untracked files are always included. To set a message, use Stash ▸ Stash with Message…."
+              "text": "Stash Changes (context bar, the panel's primary action, or ⇧⌘S) immediately runs git stash push --include-untracked with no prompt. Untracked files are always included. To set a message, use Stash ▸ Stash with Message… or Stash with message… in the panel's header menu."
             },
             {
               "type": "heading",
@@ -996,10 +1151,11 @@
             {
               "type": "items",
               "items": [
-                "Apply (⌥⌘A) restores the stash and leaves it on the stack. Pop (⌥⌘P) restores and removes it. Both can use --index.",
-                "Drop (⌘⌫) deletes the selected stash after confirmation.",
-                "Create branch from stash is on the row menu.",
-                "Apply latest, Pop latest, and Clear all are Stash-menu only."
+                "Apply (⌥⌘A) restores the stash and leaves it on the stack. Pop (⌥⌘P) restores and removes it. The row menu also offers Apply, restoring staged files and Pop, restoring staged files (--index).",
+                "Each card has inline buttons: Apply stash (keep in list), Pop stash (apply & remove), and Drop stash.",
+                "Drop (⌘⌫) deletes the selected stash after confirmation; it is recorded first, so ⌘Z undoes it.",
+                "Create branch from stash… is on the row menu.",
+                "The header menu (and the Stash menu) has Apply latest stash, Pop latest stash, and Clear all stashes…"
               ]
             }
           ]

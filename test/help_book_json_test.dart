@@ -144,8 +144,35 @@ const _labelAnchors = <String, List<String>>{
     'Delete snapshot',
   ],
   'file_view_and_output': ['Clear output'],
-  'tab_repository': ['Hide reviewed', 'Mark Resolved'],
-  'tab_stashes': ['Stash with Message…'],
+  'tab_repository': [
+    'Hide reviewed',
+    'Mark Resolved',
+    'Ours (HEAD)',
+    'Theirs (incoming)',
+    'Onto (ours)',
+    'Commit (theirs)',
+    'Unstage All',
+    'Stage All',
+  ],
+  'committing': [
+    'Committed. Pushing… you can close this; it continues in the ',
+    'Regenerate',
+    'Add co-author',
+  ],
+  'sync_fetch_pull_push': [
+    'Remote has new commits',
+    'Pull, then Push',
+    'Push anyway',
+    'This branch has no upstream yet',
+    'No remote is configured',
+  ],
+  'tab_stashes': [
+    'Stash with Message…',
+    'Apply latest stash',
+    'Pop latest stash',
+    'Clear all stashes…',
+    'Create branch from stash…',
+  ],
   'tab_worktrees': ['Add Worktree'],
   'tab_branches': ['Fetch & Prune'],
   'settings': ['Known Hosts', 'Keyboard Mappings', 'Open files with'],
@@ -164,6 +191,9 @@ const _falsehoods0053 = <String>[
   'except Keyboard Mappings and Forget Host', // W9
   'defaults to 3 minutes', // W10
   'or this book', // W11
+  'expands the composer in the task dock', // W1
+  'are Stash-menu only', // W17
+  'Repository menu only', // W18
 ];
 
 /// Facts 0053 requires, by topic, alongside 0010's list.
@@ -227,6 +257,46 @@ const _requiredFacts0053 = <String, List<String>>{
     'stall',
     '30 minutes',
     'Terminal.app',
+  ],
+  'tab_repository': [
+    'Use Ours (HEAD)',
+    'Use Theirs (incoming)',
+    'Use Onto (ours)',
+    'Abort ',
+    'Stage All',
+    'Unstage All',
+    'Branches',
+  ],
+  'committing': [
+    'Focused sheet',
+    'Task dock',
+    'background',
+    'Co-author',
+    'Regenerate',
+    'prepare-commit-msg',
+    '--no-gpg-sign',
+    'Amend Last Commit…',
+    // 0053 Deviation D1: a failed push is reported by an error dialog and a
+    // Failed Activity row, not the controller's unreachable message.
+    'error dialog',
+    'Failed',
+  ],
+  'sync_fetch_pull_push': [
+    '--prune',
+    '@{upstream}',
+    'Fast-forward only',
+    'Remote has new commits',
+    'Pull, then Push',
+    'Force push',
+    'staging',
+    'Auto-fetch',
+    'This branch has no upstream yet',
+  ],
+  'tab_stashes': [
+    'Apply latest stash',
+    'Pop latest stash',
+    'Clear all stashes…',
+    'Apply, restoring staged files',
   ],
   'tabs_workspaces': [
     'Rename Tab',
@@ -397,6 +467,8 @@ void main() {
         ],
         'panels': [
           'tab_repository',
+          'committing',
+          'sync_fetch_pull_push',
           'tab_history',
           'tab_branches',
           'tab_stashes',
