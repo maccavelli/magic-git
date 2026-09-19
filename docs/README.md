@@ -1,8 +1,38 @@
-# Decision records and implementation plans
+# Documentation
 
-Every architectural decision here is a MADR, and most are paired with an
-implementation plan. `AGENTS.md` carries the naming and numbering rules; this
-file is the index, and the one place to see what is actually live.
+Everything written down about Magic Git, beyond the code: how it is built, how to
+build it, and every decision, plan and report behind it. This file is the table of
+contents, and the one place to see what is actually live.
+`tool/records.dart` checks that it stays complete: a record with no row here fails
+`flutter test`.
+
+## I want to…
+
+| I want to… | Start here |
+| :--- | :--- |
+| understand how the app fits together | [architecture.md](architecture.md) |
+| build, install or sign the app | [the build guide](guides/build-macos.md) |
+| run the Xcode unit tests without a certificate | [the build guide](guides/build-macos.md#running-the-xcode-unit-tests-without-a-certificate) |
+| write a new decision record, plan or report | [AGENTS.md](../AGENTS.md#decision-records-madr-and-plans), and `dart run tool/records.dart next` for its number |
+| know why there is no libgit2 | [0001-MADR](decisions/0001-MADR-native-git-libgit2.md) |
+| know why the SSH transport works as it does | [0011](decisions/0011-MADR-ssh-transport-stability-hardening.md), [0012](decisions/0012-MADR-adopt-dartssh2-v3.md), [0014](decisions/0014-MADR-ssh-engine-next-wave-hardening.md), [0024](decisions/0024-MADR-ssh-and-remote-repo-engine-debug-audit.md) |
+| understand the file watcher | [0045-MADR](decisions/0045-MADR-one-owner-per-watcher-concern.md), and the watch section of [architecture.md](architecture.md#watching-for-changes) |
+| know why the entitlements files are never edited | [0042-MADR](decisions/0042-MADR-the-macos-build-mutates-its-own-inputs.md), [0053-MADR](decisions/0053-MADR-in-app-help-and-readme-currency-refresh.md) |
+| know why every provider declares `retry:` | [0017-MADR](decisions/0017-MADR-provider-retry-policy-on-providers.md) |
+| prove that a test or guard can actually fail | [0029-MADR](decisions/0029-MADR-host-scripts-must-be-executed-by-a-test.md), [0030-MADR](decisions/0030-MADR-test-coverage-gaps-are-shaped-not-sized.md), and `tool/mutate.py` |
+| know why the docs are laid out like this, and what checks them | [0054-MADR](decisions/0054-MADR-docs-link-checker-and-standard-layout-migration.md) |
+
+## Architecture
+
+[architecture.md](architecture.md) describes the system as it is now. The original
+design plan it replaced is kept as history in
+[0056-PLAN](decisions/0056-PLAN-architecture-and-feature-parity.md).
+
+## Guides
+
+| Guide | For |
+| :--- | :--- |
+| [build-macos.md](guides/build-macos.md) | building, signing, notarizing and installing the `.app`; running the Swift unit tests |
 
 ## Status vocabulary
 
@@ -21,7 +51,9 @@ written.
 `executed` does not mean "nothing left". A plan can be executed and still list
 residuals or maintainer-only steps — 0007's Phase 7 is the standing example.
 
-## Index
+## Decisions
+
+Every MADR and every PLAN, by number.
 
 | # | Record | Status | Plan | Status |
 |---|---|---|---|---|
@@ -79,6 +111,10 @@ residuals or maintainer-only steps — 0007's Phase 7 is the standing example.
 | 0051 | [Branches guided recovery for out-of-sync repositories](decisions/0051-MADR-branches-guided-recovery-for-out-of-sync-repositories.md) | `accepted` | [plan](decisions/0051-PLAN-branches-guided-recovery-for-out-of-sync-repositories.md) `executed` | Multi-host development (Windows/Linux/macOS clones of the same repo) produces diverged branches, missing upstreams, branches never fetched to a clone, and stale/force-pushed remote tracking — the Branches tab reports these (an ahead/behind count, a `gone` badge) but offers no in-app resolution, and the reported "Set upstream…" menu item is confirmed broken for a never-pushed branch: `git branch --set-upstream-to` requires the remote-tracking ref to already exist, and the actual fix (`git push -u`, "Publish") lives in an untethered, different menu action. GitService already has nearly everything needed — merge/rebase(`rebaseOnto` is already a plain non-interactive rebase)/cherry-pick/revert/am with full abort/continue, journaled reset, the full stash suite, reflog (backing an existing single-clone Recovery sheet), and a pending-op banner on the Status tab — but none of it is tied to a named "why can't I sync" state in Branches, and the "More" menu (to be renamed **Advanced**) is missing several items the right-click menu already has. Proposes a per-branch `BranchSyncState` (synced/ahead/behind/diverged/unrelated-histories/no-upstream/stale-tracking), one new primitive (`merge-base`, plus a `--allow-unrelated-histories` merge option), a "Reconcile…" dialog offering named, risk-labeled actions (rebase/merge/reset — reset routed through the existing undo journal, not a new backup mechanism) instead of a bare count, a bulk stale-branch cleanup after Fetch & Prune, and a link from Branches to the Status tab's existing interrupted-operation banner — over fixing only the reported bug (leaves every other scenario unresolved), menu-parity-plus-explanations alone (diagnosis without a cure), and adding proactive background conflict scanning now (a separate, heavier feature that doesn't answer the specific out-of-sync question asked). Amendment 0051.1 (2026-09-17) corrected three scope claims found while drafting the plan: `merge-base`/unrelated-histories detection already exists (no new OID-returning method needed, only a small `haveCommonAncestor` extraction), the Reconcile-style guardrail dialog already exists in miniature (`_dropOnCurrent`/`chooseAction<T>`, drag-and-drop only), and the upstream fix is a validation gap, not a menu-visibility one. **Executed through Phase 8** (`789ef9f`, `2cf1b0d`, `89f7c28`, `0888f72`, `8e6f84f`, `6e5d2af`, `9ece179`). Set upstream now validates its target and names Publish. The More menu is renamed **Advanced** and matches the context menu's row actions. Rows show "Not published"/"Diverged" chips, and the detail pane explains each state, including unrelated histories. Branches also gains: a confirmed allow-unrelated-histories merge; **Reconcile…** (Merge/Rebase/Reset) on a diverged current branch; a stale-branch cleanup after Fetch & Prune, with one force-delete follow-up for unmerged branches; and Status's interrupted-operation banner, full-width. Nine deviations were resolved with the maintainer mid-execution. Amendment 0051.2 records the four that contradict this record: rows show only the coarse state, since resolving unrelated histories per row broke the Browse command budget; the banner replaces a per-row indicator, since mid-rebase no row is current; menu parity is per row action; and the chooser is Rebase's confirmation. `InlineActionButton` labels now ellipsize, with all 48 goldens unchanged. Full suite 4159 passed (from 4122). **Residual:** three maintainer-only checks on real diverged clones (Reconcile's three paths, first Publish, Fetch & Prune cleanup) (the argv-level `--allow-unrelated-histories` test was added 2026-09-18, `e90433b`) |
 | 0052 | [Sidebar info card: Location row, plain Connections button, one repository name](decisions/0052-MADR-sidebar-info-card-location-row-and-plain-connections-button.md) | `accepted` | [plan](decisions/0052-PLAN-sidebar-info-card-location-row-and-plain-connections-button.md) `executed` | The sidebar's connections-manager button carries state in its label (the SSH host, or `Local`), so it neither names what it opens nor matches the passive Repository row above it. Proposes a **Location** row in the info card under Repository (the SSH host, or `This Mac` for local; `user@host:port` tooltip) and a fixed **Connections** label on the button, over a two-line button, a tooltip only, or making the Location row itself the button. The tab title, window title, Repository row and status bar all show the same name, the tab alias when set, else the directory, from one `repositoryDisplayNameProvider`, replacing seven hand-written copies. Repository labels were added and withdrawn on review. **Executed** (`f7d7b9d`, `54508dc`, `5124375`, `10dc081`): suite 4182 (+22), every new test seen failing first, and 12 mutations killed in a scratch worktree. Amendment 0052.1 (`83c55ff`): the tab, status bar and Location row share one location glyph via `sessionLocationIcon`, a globe for remote and a folder for local; Amendment 0052.2 (`42d409e`) extends it to the connections manager and the landing page's recent rows. **Residual:** the maintainer's manual check in the built app. |
 | 0053 | [In-app Help, README and build guide currency refresh](decisions/0053-MADR-in-app-help-and-readme-currency-refresh.md) | `accepted` | [plan](decisions/0053-PLAN-in-app-help-and-readme-currency-refresh.md) `complete` | Help Book v2.0, the README and `docs/guides/build-macos.md` had drifted from the app: 21 verified falsehoods (W1–W21), 19 incomplete topics, 12 uncovered areas, 4 Help-machinery defects, and a build guide still describing pre-0042 entitlement stripping. **Engineering phases 0–11 executed** (2026-09-18). Help v3.0 has 34 topics in 7 categories, including a new Troubleshooting category. `test/help_book_json_test.dart` adds label anchors (quoted labels must exist in `lib/`), menu coverage, a W1–W21 falsehood ban and a renderer-schema guard; all 8 entries of `tool/mutations/0053-help-book.json` were KILLED. Help search now covers bullet items and code in both views, and `HelpDataModelTests.swift` joins `RunnerTests` and passes (7/7). The README and build guide were rewritten, and `build_macos.sh`'s unknown-option crash was fixed. Four deviations were resolved with the maintainer: D1, the push-failure message is unreachable (Amendment 0053.1); D2, 0010's false `Code` fact; D3, unsigned Debug/Profile test entitlements via `MG_DEBUG_ENTITLEMENTS` (Amendment 0053.2); D4, two mutation rows retargeted. Full suite `+4196 ~3`. **Maintainer checks done 2026-09-19:** Help read on a built `.app` (closing 0010 Phase 7), and the build guide followed from a fresh clone and found accurate. |
+| 0054 | [Docs link checker and standard layout migration](decisions/0054-MADR-docs-link-checker-and-standard-layout-migration.md) | `accepted` | [plan](decisions/0054-PLAN-docs-link-checker-and-standard-layout-migration.md) `in-progress` | Moves every record into `decisions/` and `reports/`, the build guide into `guides/`, and writes `architecture.md`; `tool/records.dart` and `test/docs_records_test.dart` enforce links, anchors, `docs/` path mentions, numbering, frontmatter and this layout in `flutter test` |
+| 0055 | Post-review action plan — no MADR of its own; formerly `ACTION_PLAN.md` | — | [plan](decisions/0055-PLAN-post-review-action-plan.md) | `partial` — the first review's P0–P3 backlog; [0007-MADR](decisions/0007-MADR-docs-completion-audit.md) verified 46 of ~51 items |
+| 0056 | Architecture and feature-parity plan — no MADR of its own; formerly `ARCHITECTURE_PLAN.md` | — | [plan](decisions/0056-PLAN-architecture-and-feature-parity.md) | `partial` — historical; superseded as a description by [architecture.md](architecture.md), with three stale §0.1 statements annotated in place |
+| 0061 | Remaining test coverage — no MADR of its own; formerly `TEST_COVERAGE_PLAN.md` | — | [plan](decisions/0061-PLAN-remaining-test-coverage.md) | `partial` — 12 of the 14 test files it names exist (checked by existence only) |
 
 ⚠ **0011 and 0012 each carry two unrelated records.** `AGENTS.md` forbids
 renumbering an existing file, so both keep the number and each carries a note
@@ -87,6 +123,22 @@ naming its twin. **Cite records by full filename, never by number alone.**
 0016 has a plan but no MADR of its own: it is the second tranche of
 [0015-MADR](decisions/0015-MADR-ssh-engine-and-ui-unit-test-gaps.md), and took the next
 free number because `0015-PLAN-*` was taken.
+
+0055, 0056 and 0061 are older than their numbers: they were unnumbered documents in
+`docs/` until 0054 gave each the next free number. Each carries its old path in a
+`former-path:` key, so a search for the old name still finds it.
+
+## Reports
+
+Audits and investigations that record what was found and decide nothing.
+
+| # | Report | Status |
+|---|---|---|
+| 0005 | [UX baseline for the task-centered adaptive workspace](reports/0005-REPORT-ux-baseline-task-centered-adaptive-repository-workspace.md) — formerly `0005-UX-BASELINE-…` | `partial` |
+| 0057 | [File-view engine assessment](reports/0057-REPORT-file-view-engine-assessment.md) — formerly `viewer_engine_findings.md` | `partial` — residual L7 per [0004-MADR](decisions/0004-MADR-ui-ux-deep-debug-audit.md) |
+| 0058 | [Window sizing assessment](reports/0058-REPORT-window-sizing-assessment.md) — formerly `window_sizing_proposal.md` | `partial` — largely implemented |
+| 0059 | [Memory and performance audit](reports/0059-REPORT-memory-and-performance-audit.md) — formerly `memory_audit.md` | `partial` — Tier 1–2 fixes done |
+| 0060 | [Drag-and-drop engine feasibility](reports/0060-REPORT-drag-and-drop-engine-feasibility.md) — formerly `DRAG_AND_DROP_ENGINE.md` | `executed` — A–E shipped |
 
 ## What "verified" means here
 

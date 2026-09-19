@@ -634,3 +634,29 @@ code contradicts:
 0056 as history. `README.md` links `architecture.md`. 0056 carries a dated "Historical"
 note under its title and an annotation under §0.1.
 
+### Phase 3 — committed as `be24056`
+
+### Phase 4 — executed 2026-09-19
+
+* **R6 seen to fail on the real tree first.** Before the index was touched,
+  `dart run tool/records.dart check --rules layout` reported **9 findings**, all
+  "not linked from docs/README.md", for exactly the records with no row yet: 0054 MADR and
+  PLAN, 0055, 0056, 0061, and 0057–0060. This is the same `check(root, rules: ['layout'])`
+  call the new repository test makes.
+* **`docs/README.md`** is now the table of contents. It has a title and orientation,
+  an **I want to…** matrix (11 rows, in the reader's words, including an anchor into
+  `AGENTS.md` and one into `architecture.md`, both resolved by R2), and *Architecture*
+  and *Guides* sections. The status vocabulary is kept. *Index* is renamed *Decisions*,
+  with rows added for 0054, 0055, 0056 and 0061. A note explains the older-than-their-numbers
+  records. There is a new *Reports* table (0005, 0057–0060). The existing rows and notes
+  are unchanged apart from the link paths Phase 2 rewrote.
+* **The R6 repository test** is added ("the documentation tree has the standard layout,
+  fully indexed").
+* **`AGENTS.md`:** numbering now points at `dart run tool/records.dart next`, and "with
+  records currently in two places" is gone. A new paragraph says what the checker
+  enforces, including the fence/blockquote/frontmatter exemptions and the R3 writing
+  convention.
+* `dart run tool/records.dart check` (all six rules) → `RC=0`, 0 findings.
+  `flutter analyze` clean. `flutter test` → **`+4223 ~3: All tests passed!`** (+1, the R6
+  test).
+

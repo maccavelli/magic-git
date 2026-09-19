@@ -378,6 +378,10 @@ void main() {
       expectClean(const ['numbering', 'frontmatter']);
     });
 
+    test('the documentation tree has the standard layout, fully indexed', () {
+      expectClean(const ['layout']);
+    });
+
     test('the checker sees the records it claims to check', () {
       // A listing that silently came back empty would make every rule above
       // pass. Pin a floor rather than a count, so new records never break it.

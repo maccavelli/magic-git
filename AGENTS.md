@@ -120,11 +120,10 @@ sits directly in `docs/`.**
 Numbering rules:
 
 - `NNNN` is a zero-padded 4-digit sequence number shared by every record type.
-  To allocate one, scan the **whole repository** for `NNNN-MADR-*`,
-  `NNNN-PLAN-*`, `NNNN-REPORT-*` and `NNNN-GATES-*` and add 1 to the highest.
-  Never scan a single directory — the sequence is repository-wide and does not
-  restart per directory, and with records currently in two places a
-  directory-scoped scan will hand out a number that is already taken.
+  **Allocate one with `dart run tool/records.dart next`**, which scans the
+  **whole repository** for `NNNN-MADR-*`, `NNNN-PLAN-*`, `NNNN-REPORT-*` and
+  `NNNN-GATES-*` and adds 1 to the highest. Never scan a single directory by
+  hand — the sequence is repository-wide and does not restart per directory.
 - **A plan or a report written for an existing MADR reuses that MADR's
   number** (so `0007-MADR-foo.md` pairs with `0007-PLAN-foo.md`); a lone plan
   matches the kebab-title too. A MADR may carry several plans where one
@@ -140,6 +139,16 @@ Numbering rules:
   `0005-UX-BASELINE-…`. It kept its number when it was renamed to
   `0005-REPORT-ux-baseline-task-centered-adaptive-repository-workspace.md`
   (MADR 0054).
+
+**The tree is checked, not just described.** `test/docs_records_test.dart` runs
+`tool/records.dart` under `flutter test` and fails on: a relative link, anchor or
+`docs/…` path mention that does not resolve; a second MADR on a number (0011 and
+0012 excepted); a PLAN outside its MADR's directory; a record with no `status:`;
+anything in `docs/` other than the layout above; and a record with no row in
+`docs/README.md`. `dart run tool/records.dart check` prints the same findings.
+Fenced blocks, blockquotes and frontmatter are not searched for path mentions,
+so a quotation stays verbatim — and a record that names a file which does not
+exist *yet* writes it without the `docs/` prefix (MADR 0054).
 
 Every record carries YAML frontmatter with a `status:` and a `verified:` date
 (when the status was last checked *against the code*, not when it was
