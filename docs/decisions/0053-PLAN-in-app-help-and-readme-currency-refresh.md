@@ -918,3 +918,41 @@ Plan approved by the maintainer on 2026-09-18.
   The assertion is not loosened: it requires the toggle's real name, and `_falsehoods0053` separately bans
   "Switch Code and Preview". No MADR amendment, because W12 already decides this. No file is added:
   `test/help_book_json_test.dart` is already in Phase 7's scope.
+
+### Phase 7, executed
+
+* **Contract.**
+  * W12 (twice) and W13 added to `_falsehoods0053`.
+  * Required facts for the eight topics.
+  * 13 anchors, all confirmed in `lib/`.
+  * `Overlay` is **not** anchored: it occurs 83 times in `lib/`, mostly as Flutter's `Overlay` widget, so its
+    presence proves nothing. The same reasoning the plan applied to `Source`; a required fact covers it
+    instead.
+  * New test `every menu item title appears in the book`, over `kMenuBarMenus` plus the native titles.
+* **Red run:** exit 1, with 4 named failures, including the new menu test. Its reason listed the 24 titles
+  the v2.0 book never mentioned:
+  * Repository: Abort Pending Operation…
+  * Branch: New Branch…, New Tag…, Merge into Current Branch
+  * Stash: Apply Stash, Pop Stash, Drop Stash…, Apply Latest Stash, Pop Latest Stash, Clear All Stashes…
+  * Forge: New Pull Request…, New Merge Request…, Approve Merge Request, Merge Pull Request…, Merge Merge
+    Request…
+  * Worktree: Lock Worktree, Unlock Worktree, Move Worktree…, Repair Worktree, Repair All Worktree Links,
+    Prune Stale Worktrees
+  * View: Focus Canvas, Focus Task Dock, Focus Activity
+* **Content.**
+  * Revised `viewer_and_remote_edit`, `diffs_blame_history`, `drag_and_drop`, `secondary_windows`,
+    `feature_palette`, `undo_recovery` and `tool_health`.
+  * `menus_and_keymap` gained a Menus list of every menu's items, taken from `kMenuBarMenus`' structure plus
+    the native View and Help items. Its 62 chips are untouched.
+  * Facts were re-read from `viewer_window.dart` (Preview default for Markdown/HTML/SVG, lines 85-100),
+    `app_shell.dart` 530-790 (undo prompts, host key, remote edit), `diff_view_controls.dart`,
+    `multi_file_review.dart`, `image_diff_view.dart` (Overlay at opacity 0.5), `drop_registry.dart`,
+    `environment_health_sheet.dart`, `command_palette.dart` and `blame_sheet.dart`.
+* **Deviation D2** was raised and resolved (see its entry; records commit `247d3f8`).
+* **Gate:**
+  * `dart format`: 0 changed.
+  * `flutter analyze`: `No issues found!`.
+  * Help test: `+16`.
+  * `flutter test`: `03:41 +4194 ~3: All tests passed!`.
+  * JSON valid.
+* Commit `b000061`.
