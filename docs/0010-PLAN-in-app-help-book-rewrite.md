@@ -14,6 +14,12 @@ verified: 2026-08-20
 > **Phase 7 — maintainer verification — is open by nature**: it needs Mac in
 > front of a running `.app`, not an engineer. `status: executed` above refers
 > to the engineering phases.
+>
+> **Pointer (2026-09-18).** The v2.0 book this phase would review has since been
+> superseded by Help Book v3.0 under
+> [0053-PLAN-in-app-help-and-readme-currency-refresh.md](decisions/0053-PLAN-in-app-help-and-readme-currency-refresh.md).
+> Phase 7's maintainer review is carried by that plan's Phase 12, and happens
+> once, against v3.0.
 
 # Plan: Rewrite the in-app Help Book against the current workspace
 

@@ -1173,3 +1173,33 @@ Plan approved by the maintainer on 2026-09-18.
   * `flutter analyze`: clean.
   * `flutter test`: `03:34 +4196 ~3: All tests passed!`.
 * Commit `2c99b3e`.
+
+### Phase 12, executed (engineering part)
+
+* **Final gate** on the finished tree (no code changed after Phase 11):
+  * `flutter analyze`: `No issues found! (ran in 5.1s)`.
+  * Targeted (`help_book_json_test`, `settings_sheet_keymap_test`, `macos_entitlements_canon_test`):
+    `+26: All tests passed!`.
+  * `flutter test`: `03:35 +4196 ~3: All tests passed!` (baseline `+4189 ~3`; +7 new tests).
+  * JSON valid.
+* **Records.**
+  * `docs/README.md`: the 0053 row describes the executed state; the 0010 row says Phase 7 is carried here.
+  * `docs/0010-PLAN-in-app-help-book-rewrite.md` has a dated pointer.
+  * The MADR's `verified:` stays 2026-09-18, the day every claim was re-checked during execution.
+* **Status: `in-progress`, deliberately.** Every engineering acceptance criterion is met. The plan becomes
+  `complete` only after the two maintainer checks, which an engineer cannot perform:
+  1. **Help on a running app.** Build with `./build_macos.sh --unsigned --install`, open Help ▸ Support &
+     Help (⌘?), walk all 34 topics, and search `gitignore`, `Reconcile`, `rate limit` and `dotfiles`,
+     confirming each finds its topic. This also discharges 0010-PLAN Phase 7.
+  2. **Build guide from a fresh clone.** Follow the revised `docs/BUILD_MACOS.md` and report any step that
+     doesn't match.
+* **Not done, and why.**
+  * S4 (links from the app into Help) is out of scope by the MADR's decision.
+  * `docs/BUILD_MACOS.md` stays in `docs/` pending the layout migration (B9).
+  * Nothing was pushed.
+
+### Handoff: what the guards do not cover
+
+The drift guards catch renamed or removed labels Help quotes, menu items Help never mentions, the W1–W21
+falsehoods returning, and content in fields the renderer drops. They do **not** catch a new feature Help never
+mentions at all. That stays a review duty at each feature's MADR.
