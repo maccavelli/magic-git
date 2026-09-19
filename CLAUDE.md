@@ -153,10 +153,24 @@ exist *yet* writes it without the `docs/` prefix (MADR 0054).
 
 Every record carries YAML frontmatter with a `status:` and a `verified:` date
 (when the status was last checked *against the code*, not when it was
-written): `proposed` · `accepted` · `rejected` for decisions, `executed` ·
-`partial` for plans. `executed` means the engineering phases shipped, not that
-nothing is left — where the body names a residual or a maintainer-only step,
-the body wins. [`docs/README.md`](docs/README.md) is the index and the one
+written). The vocabulary is the `madr-and-plan-writing` skill's, which follows
+MADR 4.0.0:
+
+- **Decisions (MADR):** `proposed` · `accepted` · `rejected` · `deprecated` ·
+  `superseded by NNNN-MADR-…` (a decision is never rewritten; a later record
+  supersedes it and says so).
+- **Plans:** `proposed` (until the maintainer approves it) · `in-progress`
+  (phases landing) · `complete` (**every** acceptance criterion met, including
+  maintainer-only checks — not merely the last commit) · `superseded`. Plus
+  `partial`: some of the work is real and the rest was deliberately never done;
+  the body says which.
+- **Reports:** `partial` or `complete`, by the same meanings.
+
+Older plans still carry `executed` ("engineering phases shipped; the body names
+any residual") or `complete (amended)`. Those are legacy values: map one to
+`complete` or `in-progress` when the plan is next verified, according to
+whether its body still names something owed. Wherever a status and the body
+disagree, the body wins. [`docs/README.md`](docs/README.md) is the index and the one
 place to see live state.
 
 ## Working style

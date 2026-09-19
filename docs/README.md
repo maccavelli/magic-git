@@ -40,16 +40,22 @@ Machine-readable in each file's YAML frontmatter. `verified:` is when the
 status was last checked **against the code**, not when the document was
 written.
 
-| status | meaning |
-|---|---|
-| `proposed` | written, not yet decided. No code should exist for it. |
-| `accepted` | decided. The decision governs the codebase. |
-| `rejected` | decided against. Do not re-propose without new evidence. |
-| `executed` | a plan whose engineering phases have shipped. Residuals, if any, are named in the document. |
-| `partial` | some of the work is real, some was never done. The document says which. |
+The vocabulary is the `madr-and-plan-writing` skill's, which follows MADR 4.0.0.
 
-`executed` does not mean "nothing left". A plan can be executed and still list
-residuals or maintainer-only steps — 0007's Phase 7 is the standing example.
+| status | applies to | meaning |
+|---|---|---|
+| `proposed` | decision, plan | written, not yet decided or approved. No code should exist for it. |
+| `accepted` | decision | decided. The decision governs the codebase. |
+| `rejected` | decision | decided against. Do not re-propose without new evidence. |
+| `deprecated` | decision | no longer governs new work, but not replaced by a specific record. |
+| `superseded by NNNN-MADR-…` | decision | replaced by the named record, which says why. |
+| `in-progress` | plan | approved; phases are landing. |
+| `complete` | plan, report | every acceptance criterion met, including maintainer-only checks. |
+| `superseded` | plan | replaced by a later plan. |
+| `partial` | plan, report | some of the work is real; the rest was deliberately never done. The document says which. |
+| `executed` *(legacy)* | plan | engineering phases shipped; the body names any residual. Written before the skill's vocabulary was adopted; mapped to `complete` or `in-progress` when the plan is next verified. |
+
+A status is a summary. Where it and the document's body disagree, the body wins.
 
 ## Decisions
 
