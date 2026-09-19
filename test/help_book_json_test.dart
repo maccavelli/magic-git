@@ -195,6 +195,30 @@ const _labelAnchors = <String, List<String>>{
     'No worktrees yet',
     'Open it when done',
   ],
+  'tab_forge': [
+    'No blockers',
+    'Show closed pull requests',
+    'Show closed merge requests',
+    'Update branch',
+    'Rebase onto target',
+  ],
+  'forge_requests_and_issues': [
+    'Squash and merge',
+    'Rebase and merge',
+    'Merge method',
+    'Delete source branch after merge',
+    'Start work',
+    'Assign to me',
+    'Create as draft',
+    'Discard draft?',
+    'New issue',
+  ],
+  'forge_ci': [
+    'Jump to latest',
+    'Re-run failed jobs',
+    'Retry pipeline',
+    'Logs are available once it completes.',
+  ],
   'tab_branches': [
     'Fetch & Prune',
     'Unhide',
@@ -224,6 +248,9 @@ const _falsehoods0053 = <String>[
   'Hide merges is a separate chip', // W14
   'Bulk pin, hide, and delete-if-merged sit on the list', // W15
   'Unmerged branches confirm.', // W16
+  'merged and closed work is not a status chip', // W19
+  'sit on the detail More menu', // W20
+  'New Issue is Forge-menu only', // W21
 ];
 
 /// Facts 0053 requires, by topic, alongside 0010's list.
@@ -363,6 +390,37 @@ const _requiredFacts0053 = <String, List<String>>{
     'Publish',
     'Advanced',
     'in progress',
+  ],
+  'tab_forge': [
+    'No blockers',
+    'Show closed pull requests',
+    'Show closed merge requests',
+    'Reopen',
+    'Update branch',
+    'Rebase onto target',
+    'Re-run Failed Jobs',
+    'collapse',
+  ],
+  'forge_requests_and_issues': [
+    'Squash and merge',
+    'Rebase and merge',
+    'Merge method',
+    'Delete source branch after merge',
+    'Request changes…',
+    'GitHub only',
+    'Start work',
+    'Assign to me',
+    'Create as draft',
+    'Discard draft?',
+    'New issue',
+  ],
+  'forge_ci': [
+    'live',
+    'GitLab',
+    'Logs are available once it completes.',
+    'Jump to latest',
+    'Re-run failed jobs',
+    'Retry pipeline',
   ],
   'tab_worktrees': [
     'Open in Window',
@@ -554,6 +612,8 @@ void main() {
           'branch_sync_recovery',
           'tab_stashes',
           'tab_forge',
+          'forge_requests_and_issues',
+          'forge_ci',
           'tab_worktrees',
         ],
         'files': [

@@ -1327,22 +1327,105 @@
         {
           "id": "tab_forge",
           "title": "Forge",
-          "summary": "GitHub and GitLab inbox, change requests, issues, and CI traces.",
+          "summary": "GitHub and GitLab in one panel: the Inbox, Browse sections, and closed or merged requests.",
           "keywords": [
             "forge",
             "github",
             "gitlab",
+            "inbox",
+            "browse",
             "pull request",
             "merge request",
-            "inbox",
-            "pipeline"
+            "issues",
+            "labels",
+            "milestones",
+            "releases",
+            "pinned",
+            "snooze",
+            "closed",
+            "merged"
           ],
           "shortcuts": [
             {
               "label": "Switch to Forge",
               "keys": "⌘5",
               "actionId": "global.panel5"
+            }
+          ],
+          "sections": [
+            {
+              "type": "paragraph",
+              "text": "The Forge panel (⌘5) is a sidebar page, not a File tab. It talks to GitHub through gh and GitLab through glab, on the host the repository lives on. The context-bar primary is New Pull Request or New Merge Request (New Request, disabled, while the forge is still being detected). Requests, reviews, merging, and issues are covered in Pull Requests, Merge Requests, and Issues; CI is covered in CI Runs and Pipelines."
             },
+            {
+              "type": "heading",
+              "text": "Inbox and Browse"
+            },
+            {
+              "type": "items",
+              "items": [
+                "Switch between Inbox and Browse. Inbox is the default, and your choice is remembered.",
+                "Inbox collects open pull or merge requests, CI runs or pipelines that failed or are still running, and open issues. Chips filter All / PRs or MRs / CI / Issues. No blockers is a separate toggle that combines with them.",
+                "Pin to top or Snooze an Inbox row; pinned and snoozed rows gather under Pinned and Snoozed. Pinning and snoozing cancel each other and are remembered per repository.",
+                "Browse sections are Issues, PRs or MRs, Labels (view only), Milestones, Releases, and Workflow Runs or Pipelines. Every section can collapse, and stays collapsed. One Filter field filters every section. The + on the Issues header (also Forge ▸ New Issue… and the palette) starts a new issue."
+              ]
+            },
+            {
+              "type": "heading",
+              "text": "Open, closed, and merged"
+            },
+            {
+              "type": "items",
+              "items": [
+                "Request lists start with open items. Show closed pull requests (GitHub) or Show closed merge requests (GitLab) widens the list to closed and merged ones; the detail pane's State line tells them apart.",
+                "A closed request or issue can be reopened with Reopen. A merged request cannot.",
+                "Long lists stop at 50 with a Show N more row. Issues, CI, labels, milestones, and releases have their own Show all rows."
+              ]
+            },
+            {
+              "type": "heading",
+              "text": "A request's detail pane"
+            },
+            {
+              "type": "items",
+              "items": [
+                "The merge readiness strip shows blockers, or Ready to merge, Checking mergeability… (with Retry), or an auto-merge note.",
+                "Check out checks out the head branch (asking first if your tree is dirty).",
+                "Update branch (GitHub) or Rebase onto target (GitLab) appears as a button when the branch is behind its target.",
+                "Enable auto-merge or Cancel auto-merge sits on the action bar; Cancel Auto-merge is also on the Forge menu.",
+                "Approve (⌥⌘A), Merge (⇧⌘M), and Re-run Failed Jobs or Retry Pipeline (⌥⌘R) follow the detected host."
+              ]
+            },
+            {
+              "type": "callout",
+              "style": "info",
+              "title": "Which host?",
+              "text": "Magic Git detects GitHub or GitLab from the origin remote, including self-hosted GitLab. If the repository has no remote, or the remote is not a recognized GitHub or GitLab host, the panel says so. See Troubleshooting ▸ Forge for sign-in and rate-limit messages."
+            }
+          ]
+        },
+        {
+          "id": "forge_requests_and_issues",
+          "title": "Pull Requests, Merge Requests, and Issues",
+          "summary": "Create, review, merge, and manage requests and issues from the Forge panel.",
+          "keywords": [
+            "pull request",
+            "merge request",
+            "pr",
+            "mr",
+            "review",
+            "approve",
+            "merge",
+            "squash",
+            "draft",
+            "comment",
+            "issue",
+            "start work",
+            "assign",
+            "close",
+            "reopen"
+          ],
+          "shortcuts": [
             {
               "label": "New Pull Request",
               "keys": "⌘N",
@@ -1372,7 +1455,87 @@
               "label": "Merge Selected Merge Request",
               "keys": "⇧⌘M",
               "actionId": "gitlab.merge"
+            }
+          ],
+          "sections": [
+            {
+              "type": "heading",
+              "text": "Creating"
             },
+            {
+              "type": "items",
+              "items": [
+                "New Pull Request (⌘N, the context bar, or the Forge menu) opens a form in the detail pane: Head branch, Base branch, Title, Description, Reviewers (comma-separated), Assignees (comma-separated), labels, a Milestone, and Create as draft. Preview changes shows the diff. Create pushes the branch with its upstream first.",
+                "New Merge Request is the same on GitLab, with Source and Target branches plus Mark as draft, Squash commits when merged, and Remove source branch when merged.",
+                "New issue — the + on the Issues section, the palette, or Forge ▸ New Issue… (no default shortcut). It takes a Title, Description, Assignees, labels, and a Milestone.",
+                "Dragging a local branch onto Forge opens the create form with that branch filled in.",
+                "Leaving a form with unsaved text asks Discard draft? (Keep Editing or Discard Draft). A draft survives switching panels."
+              ]
+            },
+            {
+              "type": "heading",
+              "text": "Rows and the right-click menu"
+            },
+            {
+              "type": "items",
+              "items": [
+                "Rows show a DRAFT badge, the CI state, review chips (approved, changes requested, review needed — only review needed on GitLab), and label chips.",
+                "Right-click a request for Open in browser, Copy link, Copy #N (GitHub) or Copy !N (GitLab), Check out branch, Comment…, Approve, Request changes… (GitHub only), Mark ready for review or Convert to draft, Edit…, the merge methods, and Close or Reopen.",
+                "Merge methods: GitHub offers Merge, Squash and merge, and Rebase and merge; GitLab offers Merge and Squash and merge, as the project allows. Drafts cannot be merged until marked ready.",
+                "Close asks first (\"You can reopen it later.\"). Reopen does not."
+              ]
+            },
+            {
+              "type": "heading",
+              "text": "Merging"
+            },
+            {
+              "type": "paragraph",
+              "text": "Merge opens a sheet after re-checking readiness: Merge method (the methods the project allows), Delete source branch after merge, and an optional commit Title and Body. The merge is pinned to the head commit shown in the summary, so a late push cannot slip in. The primary Merge button uses the project's default method; its menu offers the others."
+            },
+            {
+              "type": "heading",
+              "text": "Reviewing and editing"
+            },
+            {
+              "type": "items",
+              "items": [
+                "The detail pane lists Head/Base (or Source/Target), Author, State, Review, Merge status, Head SHA, Auto-merge, Labels, and Assignees, then the description, checks, and Comments (the last 50; open the forge for the full thread).",
+                "The More menu holds Comment…, Request changes… (GitHub only; a comment is required), Mark ready for review or Convert to draft, Edit… (Title and Description), and Close or Reopen."
+              ]
+            },
+            {
+              "type": "heading",
+              "text": "Issues"
+            },
+            {
+              "type": "items",
+              "items": [
+                "Right-click an issue for Open in browser, Copy link, Copy #N, Start work (GitHub only), Comment…, Assign to me (GitHub only), Edit…, and Close or Reopen.",
+                "Start work creates a branch for the issue and checks it out (gh issue develop).",
+                "The issue detail pane shows State, Author, labels, the description, and Comments, with Start work, Comment, Close or Reopen, and More (Edit…, Assign to me).",
+                "The Issues header shows a count such as \"30 of 974\"; Show all issues loads the rest."
+              ]
+            }
+          ]
+        },
+        {
+          "id": "forge_ci",
+          "title": "CI Runs and Pipelines",
+          "summary": "Workflow runs (GitHub) and pipelines (GitLab): jobs, logs, and re-running.",
+          "keywords": [
+            "ci",
+            "pipeline",
+            "workflow",
+            "run",
+            "jobs",
+            "log",
+            "trace",
+            "re-run",
+            "retry",
+            "actions"
+          ],
+          "shortcuts": [
             {
               "label": "Re-run Selected Workflow Run",
               "keys": "⌥⌘R",
@@ -1387,28 +1550,30 @@
           "sections": [
             {
               "type": "paragraph",
-              "text": "The Forge panel (⌘5) is a sidebar page, not a File tab. It talks to GitHub through gh and GitLab through glab. The context-bar primary is New Pull Request or New Merge Request."
+              "text": "Browse ▸ Workflow Runs (GitHub) or Pipelines (GitLab) lists the newest 10; Show all workflow runs or Show all pipelines loads more. Failed and running ones also appear in the Inbox. A request's detail pane shows its own checks."
             },
             {
               "type": "heading",
-              "text": "Inbox and Browse"
-            },
-            {
-              "type": "paragraph",
-              "text": "Switch Inbox and Browse. Inbox chips filter All / PRs or MRs / CI / Issues. Lists show open items plus a text filter; merged and closed work is not a status chip. Inbox rows can be pinned or snoozed. Browse sections are Issues, PRs or MRs, Labels, Milestones, Releases, and Workflow Runs or Pipelines."
-            },
-            {
-              "type": "heading",
-              "text": "Change requests"
+              "text": "Jobs and logs"
             },
             {
               "type": "items",
               "items": [
-                "A merge readiness strip shows blockers. Check out checks out the head branch.",
-                "Approve (⌥⌘A), Merge (⇧⌘M), and Re-run or Retry (⌥⌘R) follow the detected host.",
-                "Enable or cancel auto-merge from the detail pane. Cancel auto-merge is also on the Forge menu.",
-                "Update branch and Rebase onto target sit on the detail More menu.",
-                "New Issue is Forge-menu only (no default shortcut)."
+                "Select a run or pipeline to see its Jobs, with Refresh jobs. Select a job to view its log in a resizable pane.",
+                "GitLab streams a running job's log live, and refreshes the job list every 5 seconds while jobs run. Scroll up and a Jump to latest button appears. Very long logs keep the last 256 KB.",
+                "GitHub updates job statuses live, but a job's log appears only after it finishes: \"This job is still running. Logs are available once it completes.\"",
+                "GitLab merge-request pipelines are labelled \"MR !N\" or \"MR !N (merged results)\"."
+              ]
+            },
+            {
+              "type": "heading",
+              "text": "Re-running"
+            },
+            {
+              "type": "items",
+              "items": [
+                "GitHub: Re-run failed jobs (⌥⌘R, the row icon, or Forge ▸ Re-run Failed Jobs) re-runs only the jobs that failed.",
+                "GitLab: Retry pipeline (⌥⌘R, the row icon, or Forge ▸ Retry Pipeline)."
               ]
             }
           ]
