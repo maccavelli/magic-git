@@ -545,13 +545,15 @@ worktree and names `test/help_book_json_test.dart`:
 
 | Label | File | Find → replace | Expected failing test |
 |---|---|---|---|
-| anchor: label renamed in code | `lib/features/branches/branch_navigator.dart` | `'Reconcile…'` → `'Reconcile'` (the first exact occurrence; the entry targets a unique line) | `quoted UI labels exist in their topic and in source` |
+| ~~anchor: label renamed in code~~ | ~~`lib/features/branches/branch_navigator.dart`~~ | ~~`'Reconcile…'` → `'Reconcile'`~~ (D4: occurs in two lib/ files) | ~~`quoted UI labels exist in their topic and in source`~~ |
+| anchor: label renamed in code (D4) | `lib/features/branches/branches_view.dart` | `'Merge Anyway'` → `'Merge Regardless'` | `quoted UI labels exist in their topic and in source` |
 | anchor: label dropped from Help | `macos/Runner/help_book.json` | `Show closed pull requests` → `Show more pull requests` | same |
 | menu: new item undocumented | `lib/features/common/menu_bar_spec.dart` | `'Re-run Failed Jobs'` → `'Re-run Failed Jobs Now'` | `every menu item title appears in the book` |
 | menu: native item undocumented | `macos/Runner/MainFlutterWindow.swift` | `title: "Show Recovery View"` → `title: "Show Recovery Panel"` | same |
 | forbidden: W1 returns | `macos/Runner/help_book.json` | one sentence in `committing` → text containing `expands the composer in the task dock` | `Help does not teach the 0053 falsehoods` (the test that holds W1–W21) |
 | schema: dropped heading text | `macos/Runner/help_book.json` | one `"type": "heading", "text"` → `"type": "heading", "title"` | `sections carry only fields the renderer shows` |
-| required fact removed | `macos/Runner/help_book.json` | `Reconcile…` in `branch_sync_recovery` → `Reconcile` | `required facts appear in their topics` |
+| ~~required fact removed~~ | ~~`macos/Runner/help_book.json`~~ | ~~`Reconcile…` in `branch_sync_recovery` → `Reconcile`~~ (D4: 3 occurrences in the book) | ~~`required facts appear in their topics`~~ |
+| required fact removed (D4) | `macos/Runner/help_book.json` | `Clean up stale branches?` → `Clean up old branches?` | `required facts appear in their topics` |
 | IA: topic dropped | `macos/Runner/help_book.json` | rename topic id `trouble_forge` → `trouble_forges` | `every locked topic id exists in its category, in order` |
 
 Every `find` string is taken from the committed tree and asserted to occur exactly once by the harness. Then:
@@ -1077,3 +1079,21 @@ Plan approved by the maintainer on 2026-09-18.
   * JSON valid.
   * `git status` after `xcodebuild` showed only the seven intended files.
 * Commit `4729a21`.
+
+### Deviation D4 (2026-09-18): two mutation rows targeted strings that occur more than once
+
+* **Found.** While writing Phase 10's catalogue, before any file was written, by counting occurrences in the
+  committed tree.
+  * Row "anchor: label renamed in code" renamed `'Reconcile…'` in `branch_navigator.dart`, but the same
+    literal exists in `branch_detail.dart`. The anchor test searches the whole `lib/` corpus, so the rename
+    changes nothing it can see.
+  * Row "required fact removed" altered `Reconcile…` in `branch_sync_recovery`, which occurs 3 times in the
+    book (twice in that topic), so the required-facts test still passes.
+  * Both would be reported OBSERVED BY NO TEST. The guards are sound; the table chose non-unique strings.
+* **Decision (maintainer).** Retarget both rows to strings that occur once. The originals are struck through
+  in the table above.
+  * Row 1 renames `'Merge Anyway'`: 1 occurrence in `lib/` (`branches_view.dart:1449`); an anchor for
+    `branch_sync_recovery`.
+  * Row 7 alters `Clean up stale branches?`: 1 occurrence in the book; a required fact of
+    `branch_sync_recovery`.
+  * Same mechanisms, same expected failing tests, no files added, no MADR change.
