@@ -15,7 +15,7 @@
 // was only ever true of EVENTS, never of the channel. They did not go stale —
 // they described something false, and passed.
 //
-// See docs/0044-MADR-the-watcher-follows-the-active-tab.md, amendment 0044.2.
+// See docs/decisions/0044-MADR-the-watcher-follows-the-active-tab.md, amendment 0044.2.
 
 import 'dart:async';
 

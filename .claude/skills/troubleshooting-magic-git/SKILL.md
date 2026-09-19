@@ -171,7 +171,7 @@ before suspecting the test's clock.
 
 ## Closing the loop
 
-* A **decision** (which of several real fixes, and why) → a MADR under `docs/`, `status: proposed`,
+* A **decision** (which of several real fixes, and why) → a MADR under `docs/decisions/`, `status: proposed`,
   presented before any code changes.
 * Something an approved plan did not cover → a **dated deviation entry** in that plan, with evidence,
   real resolutions and the cost of doing nothing, *before* executing.

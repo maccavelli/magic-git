@@ -41,7 +41,7 @@ UI (macos_ui + Riverpod). macOS is the only target platform.
   `AppInfo.xcconfig` defaults to the signed file. Pass
   `MG_DEBUG_ENTITLEMENTS=Runner/DebugProfile-unsigned.entitlements` to
   `xcodebuild test` to run the `RunnerTests` Swift tests on a machine with no
-  development team (see `docs/BUILD_MACOS.md`).
+  development team (see `docs/guides/build-macos.md`).
 - **Don't commit or push unless asked.** The maintainer commits each work cycle
   himself.
 - **Never write commit message text.** A global `prepare-commit-msg` hook
@@ -110,16 +110,6 @@ global agent rules, which is the authority. In short: `docs/decisions/` holds
 `docs/` itself holds only `README.md` and `architecture.md`. **A record never
 sits directly in `docs/`.**
 
-> **This repository has not migrated yet.** Its ~100 records are still flat in
-> `docs/`, and the architecture document is still `docs/ARCHITECTURE_PLAN.md`
-> rather than `docs/architecture.md`. The move is the last phase of
-> `0007-PLAN-standard-documentation-layout-and-where-the-standard-lives.md` in
-> the dotfiles repository and needs a link checker first, because the records
-> cite one another heavily and nothing validates a relative markdown link.
-> Until that phase runs, **write new records into `docs/decisions/` and
-> `docs/reports/`** — the destination is correct even while the backlog is not,
-> and adding to the flat pile makes the migration bigger.
-
 - **Decision record** (MADR format): `NNNN-MADR-short-kebab-title.md`
   (e.g. `0001-MADR-native-git-libgit2.md`)
 - **Implementation plan**: `NNNN-PLAN-short-kebab-title.md`
@@ -146,8 +136,10 @@ Numbering rules:
   before this rule was enforced; each notes its twin, and the rule stands —
   **cite records by full filename, never by number alone**, which one number
   naming a decision, its plans and a report about it makes unavoidable.
-- `0005` already carries `0005-UX-BASELINE-…`, which is a report under an
-  older name. It keeps its number when it becomes `0005-REPORT-…`.
+- `0005` carries a report that was filed under an older kind name,
+  `0005-UX-BASELINE-…`. It kept its number when it was renamed to
+  `0005-REPORT-ux-baseline-task-centered-adaptive-repository-workspace.md`
+  (MADR 0054).
 
 Every record carries YAML frontmatter with a `status:` and a `verified:` date
 (when the status was last checked *against the code*, not when it was
@@ -173,7 +165,8 @@ place to see live state.
 
 ## Architecture
 
-`docs/ARCHITECTURE_PLAN.md` is the detailed design doc — **§0.1 is the
+`docs/decisions/0056-PLAN-architecture-and-feature-parity.md` (formerly
+`ARCHITECTURE_PLAN.md`) is the detailed design doc — **§0.1 is the
 authoritative description of the SSH transport**; older sections are historical.
 
 ### The executor seam (the load-bearing abstraction)

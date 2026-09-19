@@ -119,7 +119,7 @@ void main() {
   });
 
   test('shell has six panels; Worktrees index matches DropZoneId', () {
-    // Locks the H1 invariant from docs/0004-PLAN-ui-ux-deep-debug-audit.md:
+    // Locks the H1 invariant from docs/decisions/0004-PLAN-ui-ux-deep-debug-audit.md:
     // kWorktreesPageIndex must not drift after panel renumbering.
     expect(DropZoneId.values.length, 6);
     expect(kWorktreesPageIndex, DropZoneId.worktrees.pageIndex);

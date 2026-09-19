@@ -53,7 +53,7 @@ headers and classified by what they are rather than what they are called:
 
 | File | Lines | First added | What it is |
 | --- | --- | --- | --- |
-| `ACTION_PLAN.md` | 464 | 2026-07-06 | A plan: "Action Plan (post code-review)", ten findings, P0–P3 tiers. [0007-MADR-docs-completion-audit.md](../0007-MADR-docs-completion-audit.md) audited it ("46 of ~51 verified") |
+| `ACTION_PLAN.md` | 464 | 2026-07-06 | A plan: "Action Plan (post code-review)", ten findings, P0–P3 tiers. [0007-MADR-docs-completion-audit.md](0007-MADR-docs-completion-audit.md) audited it ("46 of ~51 verified") |
 | `ARCHITECTURE_PLAN.md` | 703 | 2026-07-06 | A plan: "Architecture & Feature-Parity Plan". Its own banner says "historical plan + living transport notes"; §0.1 is the authoritative SSH transport description (`AGENTS.md:176`) |
 | `viewer_engine_findings.md` | 128 | 2026-07-06 | A report: file-view engine assessment backlog |
 | `window_sizing_proposal.md` | 98 | 2026-07-06 | A report: window sizing assessment and proposal |
@@ -62,7 +62,7 @@ headers and classified by what they are rather than what they are called:
 | `TEST_COVERAGE_PLAN.md` | 213 | 2026-08-15 | A plan: "Remaining Test Coverage — Implementation Plan". Of the 14 test files it names, 12 now exist; `workspace_registration_test.dart` and `local_repo_form_test.dart` do not |
 | `BUILD_MACOS.md` | 200 | 2026-07-06 | A guide: how to build the `.app` |
 
-[0004-MADR-ui-ux-deep-debug-audit.md](../0004-MADR-ui-ux-deep-debug-audit.md) (lines 412-417, `verified:
+[0004-MADR-ui-ux-deep-debug-audit.md](0004-MADR-ui-ux-deep-debug-audit.md) (lines 412-417, `verified:
 2026-08-20`) already records the state of four of these: ACTION_PLAN "mostly done; some deferred", the
 viewer findings with residual L7, window sizing "largely implemented", memory "Tier 1–2 fixes done", and
 DnD "A–E shipped".
@@ -76,7 +76,7 @@ Measured over every tracked, non-symlink Markdown file (the inventory scripts ar
   least one.
 * **6 links carry a `#fragment`**, and all 6 match a heading in their target.
 * **169 path-shaped mentions** of the form `docs/<name>.md` outside link syntax, in prose and inline code
-  (for example `docs/0004-MADR-ui-ux-deep-debug-audit.md:29-31` names four of the unnumbered documents
+  (for example `docs/decisions/0004-MADR-ui-ux-deep-debug-audit.md:29-31` names four of the unnumbered documents
   this way). One more sits inside a fenced block. None is broken today except
   `AGENTS.md:115`, which names the architecture document at the path this migration creates.
 * **Outside Markdown**: two test comments cite a record by path

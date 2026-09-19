@@ -18,16 +18,16 @@ The menu item is installed natively (`macos/Runner/MainFlutterWindow.swift:801-8
 UI links into Help.
 
 The book was last rewritten as v2.0 on 2026-08-15, under
-[0010-MADR-in-app-help-book-rewrite.md](../0010-MADR-in-app-help-book-rewrite.md) (commit `345ce75`).
+[0010-MADR-in-app-help-book-rewrite.md](0010-MADR-in-app-help-book-rewrite.md) (commit `345ce75`).
 Two small edits followed (`69e784d` on 2026-09-03, `e2f72bf` on 2026-09-08). Since the rewrite, **196
 commits have touched `lib/`** and records **0011 through 0052** have been written. Many of those changed
 what a user sees, including:
 
-* the commit surface ([0012-MADR-commit-composer-focused-sheet.md](../0012-MADR-commit-composer-focused-sheet.md));
-* fetch/pull/push progress ([0020](../0020-MADR-fetch-pull-push-lag.md), [0023](../0023-MADR-commit-and-push-perceived-freeze.md));
+* the commit surface ([0012-MADR-commit-composer-focused-sheet.md](0012-MADR-commit-composer-focused-sheet.md));
+* fetch/pull/push progress ([0020](0020-MADR-fetch-pull-push-lag.md), [0023](0023-MADR-commit-and-push-perceived-freeze.md));
 * create/clone destinations and namespaces (0021, 0031, 0032, 0036, 0037);
-* the preferred editor setting ([0048](../0048-MADR-preferred-editor-and-terminal-as-settings.md));
-* Branches guided recovery ([0051](../0051-MADR-branches-guided-recovery-for-out-of-sync-repositories.md));
+* the preferred editor setting ([0048](0048-MADR-preferred-editor-and-terminal-as-settings.md));
+* Branches guided recovery ([0051](0051-MADR-branches-guided-recovery-for-out-of-sync-repositories.md));
 * the sidebar info card and location glyphs
   ([0052](0052-MADR-sidebar-info-card-location-row-and-plain-connections-button.md)).
 
@@ -44,8 +44,8 @@ location or a default is checked only by the "required facts" substring list, an
 Help *says* something, not that the app still *does* it. So the tests stay green while the prose goes stale.
 
 The root `README.md` (39 lines, last changed 2026-08-15 in `9ecf1f7`) has the same problem. So does
-`docs/BUILD_MACOS.md` (87 lines, last changed 2026-08-15 in `9ecf1f7`), the build and install guide the
-README sends builders to. It predates [0042](../0042-MADR-the-macos-build-mutates-its-own-inputs.md), which
+`docs/guides/build-macos.md` (87 lines, last changed 2026-08-15 in `9ecf1f7`), the build and install guide the
+README sends builders to. It predates [0042](0042-MADR-the-macos-build-mutates-its-own-inputs.md), which
 replaced the build script's entitlement mechanism, and the script's Flutter pinning logic. Both are in scope
 for this record.
 
@@ -70,7 +70,7 @@ The question this record answers:
   it. Items the audits marked INFERRED are either marked so here or left out.
 * **Direct reads.** I read the Settings sheet, the settings defaults, the tool catalogue, the Help Swift
   sources and tests, and the README directly.
-* **Build guide.** I read `docs/BUILD_MACOS.md` line by line against `build_macos.sh`,
+* **Build guide.** I read `docs/guides/build-macos.md` line by line against `build_macos.sh`,
   `macos/Runner/Configs/AppInfo.xcconfig`, `.gitignore:67-69` and `project.pbxproj:677`
   (`CODE_SIGN_ENTITLEMENTS = "$(MG_RELEASE_ENTITLEMENTS)"`). I ran one experiment on a **scratchpad copy**
   of `build_macos.sh`, never on the tracked script: `bash ./build_copy.sh --bogus`, which exits 127 (see B8).
@@ -80,7 +80,7 @@ The question this record answers:
 
 ### Relationship to earlier records
 
-* **[0010-MADR-in-app-help-book-rewrite.md](../0010-MADR-in-app-help-book-rewrite.md)** stays accepted. This
+* **[0010-MADR-in-app-help-book-rewrite.md](0010-MADR-in-app-help-book-rewrite.md)** stays accepted. This
   record keeps its gates G1 (JSON + native `HelpView`), G2 (teach factory defaults), G3/G4 (chips bound to
   `kKeymapActions`), G5 (don't teach unfinished seams) and G7 (⌘? is Help, ⌘/ is the shortcuts sheet).
   It **amends** two things:
@@ -97,7 +97,7 @@ The question this record answers:
 IDs are stable so that a plan can cite them. **W** means Help says something false today. **I** means a
 topic is true but incomplete in a way that misleads. **M** means a capability has no Help coverage at all.
 **S** means a defect in the Help machinery. **R** means the README. **B** means the macOS build guide
-(`docs/BUILD_MACOS.md`) or the script it documents.
+(`docs/guides/build-macos.md`) or the script it documents.
 
 ### W — Help teaches something the app no longer does (all verified)
 
@@ -391,10 +391,10 @@ topic is true but incomplete in a way that misleads. **M** means a capability ha
 * **R4.** The development section omits the **pinned Flutter 3.47.2** and `--enforce-lockfile`, which
   AGENTS.md calls load-bearing. It also omits the `live-forge` warning. The README does not link to the records
   index `docs/README.md`, which the documentation standard requires.
-* **R5.** The README sends builders to `docs/BUILD_MACOS.md` and repeats its `--unsigned` advice. That
+* **R5.** The README sends builders to `docs/guides/build-macos.md` and repeats its `--unsigned` advice. That
   guide is itself stale; see B1–B9.
 
-### B — The macOS build guide (`docs/BUILD_MACOS.md`)
+### B — The macOS build guide (`docs/guides/build-macos.md`)
 
 Each row was checked against the file named in the Evidence column.
 
@@ -504,8 +504,8 @@ Rules for the content:
   4. install and first run;
   5. where Help lives (⌘?, ⌘/, ⌘K);
   6. development (pinned Flutter, `--enforce-lockfile`, analyze/test, `live-forge` warning);
-  7. links (`docs/README.md`, `docs/ARCHITECTURE_PLAN.md`, `docs/BUILD_MACOS.md`, `AGENTS.md`).
-* **`docs/BUILD_MACOS.md`** is revised in full around B1–B9, in this order:
+  7. links (`docs/README.md`, `docs/decisions/0056-PLAN-architecture-and-feature-parity.md`, `docs/guides/build-macos.md`, `AGENTS.md`).
+* **`docs/guides/build-macos.md`** is revised in full around B1–B9, in this order:
   1. **Prerequisites.** Xcode and CocoaPods, as today. Flutter is resolved to the pin **3.47.2**, from `PATH`
      when it matches exactly and vendored otherwise. The pin's consequences, and the
      `flutter --version` / `--enforce-lockfile` checks, are taken from AGENTS.md.
@@ -523,7 +523,7 @@ Rules for the content:
      edited a tracked entitlements file (0042).
   8. **Clean up.**
 
-  The guide stays at `docs/BUILD_MACOS.md`. Moving it to `docs/guides/` is part of the pending repository-wide
+  The guide stays at `docs/guides/build-macos.md`. Moving it to `docs/guides/` is part of the pending repository-wide
   layout migration, which needs a link checker first. Doing it here would break inbound links (README,
   AGENTS.md, records) with nothing to catch them. B9's location note is recorded for that migration, not
   acted on.
@@ -623,14 +623,14 @@ Rules for the content:
   `kKeymapActions`: 97 (unchanged since `345ce75`). `lib/` commits since `345ce75`: 196.
 * **Build-guide evidence.** `build_macos.sh`, `macos/Runner/Configs/AppInfo.xcconfig`, `.gitignore`,
   `project.pbxproj`, the working copy of `Local.xcconfig`, and the one scratch run described under B8.
-* **Related records.** [0010-MADR-in-app-help-book-rewrite.md](../0010-MADR-in-app-help-book-rewrite.md)
+* **Related records.** [0010-MADR-in-app-help-book-rewrite.md](0010-MADR-in-app-help-book-rewrite.md)
   (amended here),
-  [0012-MADR-commit-composer-focused-sheet.md](../0012-MADR-commit-composer-focused-sheet.md),
-  [0020-MADR-fetch-pull-push-lag.md](../0020-MADR-fetch-pull-push-lag.md),
-  [0036-MADR-choosing-a-create-destination-while-connected.md](../0036-MADR-choosing-a-create-destination-while-connected.md),
-  [0042-MADR-the-macos-build-mutates-its-own-inputs.md](../0042-MADR-the-macos-build-mutates-its-own-inputs.md),
-  [0048-MADR-preferred-editor-and-terminal-as-settings.md](../0048-MADR-preferred-editor-and-terminal-as-settings.md),
-  [0051-MADR-branches-guided-recovery-for-out-of-sync-repositories.md](../0051-MADR-branches-guided-recovery-for-out-of-sync-repositories.md),
+  [0012-MADR-commit-composer-focused-sheet.md](0012-MADR-commit-composer-focused-sheet.md),
+  [0020-MADR-fetch-pull-push-lag.md](0020-MADR-fetch-pull-push-lag.md),
+  [0036-MADR-choosing-a-create-destination-while-connected.md](0036-MADR-choosing-a-create-destination-while-connected.md),
+  [0042-MADR-the-macos-build-mutates-its-own-inputs.md](0042-MADR-the-macos-build-mutates-its-own-inputs.md),
+  [0048-MADR-preferred-editor-and-terminal-as-settings.md](0048-MADR-preferred-editor-and-terminal-as-settings.md),
+  [0051-MADR-branches-guided-recovery-for-out-of-sync-repositories.md](0051-MADR-branches-guided-recovery-for-out-of-sync-repositories.md),
   [0052-MADR-sidebar-info-card-location-row-and-plain-connections-button.md](0052-MADR-sidebar-info-card-location-row-and-plain-connections-button.md).
 * **Implementation plan.**
   [0053-PLAN-in-app-help-and-readme-currency-refresh.md](0053-PLAN-in-app-help-and-readme-currency-refresh.md)
@@ -660,7 +660,7 @@ machine with no development team. The Runner target's Debug and Profile configur
 65 before any test runs. That configuration dates from the initial commit.
 
 The decision is widened, with the maintainer's approval, to include the same mechanism
-[0042-MADR-the-macos-build-mutates-its-own-inputs.md](../0042-MADR-the-macos-build-mutates-its-own-inputs.md)
+[0042-MADR-the-macos-build-mutates-its-own-inputs.md](0042-MADR-the-macos-build-mutates-its-own-inputs.md)
 chose for Release:
 * a second tracked file, `DebugProfile-unsigned.entitlements`, that differs by exactly `keychain-access-groups`;
 * an xcconfig variable, `MG_DEBUG_ENTITLEMENTS`, defaulting to the existing file;

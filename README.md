@@ -73,7 +73,7 @@ open ~/Applications/Magic\ Git.app
 
 `--unsigned` needs no Apple signing certificate. Saved credentials then live in
 `~/.config/magic_git/credentials.json` (`0600`) instead of the Keychain. See
-[docs/BUILD_MACOS.md](docs/BUILD_MACOS.md) for signed builds, notarization, and
+[docs/guides/build-macos.md](docs/guides/build-macos.md) for signed builds, notarization, and
 troubleshooting.
 
 ## Getting help
@@ -105,14 +105,14 @@ If your `flutter` differs, use `./.flutter-sdk/bin/flutter`, which
 - Tests tagged `live-forge` create and delete **real** GitHub and GitLab
   projects. They are skipped by default; never run them without meaning to.
 - The native Swift tests run through Xcode. See
-  [docs/BUILD_MACOS.md](docs/BUILD_MACOS.md#running-the-xcode-unit-tests-without-a-certificate).
+  [docs/guides/build-macos.md](docs/guides/build-macos.md#running-the-xcode-unit-tests-without-a-certificate).
 
 ## Documentation
 
 - [docs/README.md](docs/README.md) — the index of decision records (MADRs),
   plans and reports, with their current status.
-- [docs/ARCHITECTURE_PLAN.md](docs/ARCHITECTURE_PLAN.md) — the design, including
+- [docs/decisions/0056-PLAN-architecture-and-feature-parity.md](docs/decisions/0056-PLAN-architecture-and-feature-parity.md) — the design, including
   the SSH transport (§0.1).
-- [docs/BUILD_MACOS.md](docs/BUILD_MACOS.md) — building, signing, installing.
+- [docs/guides/build-macos.md](docs/guides/build-macos.md) — building, signing, installing.
 - [AGENTS.md](AGENTS.md) — instructions for coding agents working in this
   repository.

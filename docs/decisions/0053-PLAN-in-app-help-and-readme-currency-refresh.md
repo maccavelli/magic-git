@@ -27,7 +27,7 @@ Ship the MADR's Option B. Each item below is proven by a check that has been see
    * **S2:** `HelpDataModelTests.swift` compiles, is a member of the `RunnerTests` target, and runs.
 4. **App copy (W9).** The Settings sheet's intro names every setting that saves immediately.
 5. **README** rewritten around R1–R5.
-6. **`docs/BUILD_MACOS.md`** revised around B1–B9, and **`build_macos.sh`** fixed for B8.
+6. **`docs/guides/build-macos.md`** revised around B1–B9, and **`build_macos.sh`** fixed for B8.
 
 ## Scope
 
@@ -36,8 +36,8 @@ Ship the MADR's Option B. Each item below is proven by a check that has been see
 | File | Phases | Why |
 |---|---|---|
 | `docs/decisions/0053-MADR-…`, `0053-PLAN-…` (this file), `docs/README.md` | 0, 12 | Records, execution log, index |
-| `docs/0010-MADR-in-app-help-book-rewrite.md` | 0 | "Amended by 0053" note (the MADR amends 0010's locked IA and category ban) |
-| `docs/0010-PLAN-in-app-help-book-rewrite.md` | 12 | Note that Phase 7's maintainer review is carried by this plan's Phase 12 |
+| `docs/decisions/0010-MADR-in-app-help-book-rewrite.md` | 0 | "Amended by 0053" note (the MADR amends 0010's locked IA and category ban) |
+| `docs/decisions/0010-PLAN-in-app-help-book-rewrite.md` | 12 | Note that Phase 7's maintainer review is carried by this plan's Phase 12 |
 | `macos/Runner/help_book.json` | 1–8 | The book |
 | `test/help_book_json_test.dart` | 1–8 | Contract and guards |
 | `lib/features/settings/settings_sheet.dart` | 3 | W9 intro copy (the only `lib/` edit) |
@@ -48,7 +48,7 @@ Ship the MADR's Option B. Each item below is proven by a check that has been see
 | `macos/Runner.xcodeproj/project.pbxproj` | 9 | Add the test file to the `RunnerTests` target (S2) |
 | `tool/mutations/0053-help-book.json` | 10 | Mutation catalogue for the guards |
 | `README.md` | 11 | R1–R5 |
-| `docs/BUILD_MACOS.md` | 11 | B1–B7, B9 |
+| `docs/guides/build-macos.md` | 11 | B1–B7, B9 |
 | `build_macos.sh` | 11 | B8 |
 
 Any other file needed is a **deviation**: stop and prompt, per the rules below.
@@ -57,7 +57,7 @@ Any other file needed is a **deviation**: stop and prompt, per the rules below.
 
 * **S4 (links from the app into Help).** The MADR defers it. Topic IDs are kept stable so later work has fixed
   targets.
-* **Moving `docs/BUILD_MACOS.md` into `docs/guides/`.** That belongs to the pending layout migration (B9).
+* **Moving `docs/guides/build-macos.md` into `docs/guides/`.** That belongs to the pending layout migration (B9).
 * **Changing product behaviour.** Where Help and the app disagree, Help follows the app. The one exception is
   W9's copy, which the MADR decides. If execution finds a *product* defect (a label that is wrong in the app,
   not in Help), it is a deviation to prompt on, not something to fix silently or to document around.
@@ -142,7 +142,7 @@ Once resolved, add a dated entry here, amend the MADR if a fact or decision chan
    `flutter test test/help_book_json_test.dart` (expected `+11: All tests passed!`, as observed 2026-09-18).
 3. Set the MADR to `status: "accepted"` (with the date) and this plan to `status: "in-progress"`. Update the
    `docs/README.md` 0053 row to show `accepted`, with a plan link and `in progress`.
-4. Add a short note under the frontmatter of `docs/0010-MADR-in-app-help-book-rewrite.md`:
+4. Add a short note under the frontmatter of `docs/decisions/0010-MADR-in-app-help-book-rewrite.md`:
    > Amended by 0053-MADR-in-app-help-and-readme-currency-refresh.md: the locked topic list (G6) and the
    > `troubleshooting` category-id ban.
 
@@ -580,7 +580,7 @@ canary doesn't apply to it. The named-test requirement still does.
    once and the old position is gone. Copy the fixed script to the scratchpad and re-run with `--bogus`. It
    must exit `1` and print `Unknown option: --bogus (supported: --unsigned, --install)`. The tracked script is
    never run with a bad argument, and no build runs in this phase.
-2. **`docs/BUILD_MACOS.md`** is rewritten in the MADR's eight sections:
+2. **`docs/guides/build-macos.md`** is rewritten in the MADR's eight sections:
    1. Prerequisites and the Flutter pin (B4)
    2. Build and entitlement selection (B1, B2)
    3. Credential storage (B3)
@@ -600,9 +600,9 @@ canary doesn't apply to it. The named-test requirement still does.
    * AGENTS.md for the pin, `--enforce-lockfile` and `live-forge`;
    * the Help book for where Help lives.
 
-   Links: `docs/README.md`, `docs/ARCHITECTURE_PLAN.md`, `docs/BUILD_MACOS.md`, `AGENTS.md`.
+   Links: `docs/README.md`, `docs/decisions/0056-PLAN-architecture-and-feature-parity.md`, `docs/guides/build-macos.md`, `AGENTS.md`.
 4. **Link check** of the two files. A scratch Python script resolves every relative Markdown link in
-   `README.md` and `docs/BUILD_MACOS.md` to an existing path. Output recorded; exit `0` required.
+   `README.md` and `docs/guides/build-macos.md` to an existing path. Output recorded; exit `0` required.
 5. **R/B checklist.** For each of R1–R5 and B1–B9, record the line in the new text that resolves it.
 6. **No identifiers.** Grep both files for hostnames, account names and absolute home paths other than
    `~/…`/`$HOME` placeholders, per the global rule.
@@ -612,7 +612,7 @@ canary doesn't apply to it. The named-test requirement still does.
 * The link check exits `0`.
 * The checklist is complete.
 * The gate is `0`.
-* Commit (`build_macos.sh`, `docs/BUILD_MACOS.md`, `README.md`).
+* Commit (`build_macos.sh`, `docs/guides/build-macos.md`, `README.md`).
 
 ### Phase 12 — Close
 
@@ -621,14 +621,14 @@ canary doesn't apply to it. The named-test requirement still does.
    * **Help.** Build with `./build_macos.sh --unsigned --install`. Open Help ▸ Support & Help (⌘?). Walk all
      34 topics. Search `gitignore`, `Reconcile`, `rate limit`, `dotfiles`, and confirm each finds its topic.
      This also discharges `0010-PLAN-in-app-help-book-rewrite.md` Phase 7.
-   * **Build guide.** Follow the revised `docs/BUILD_MACOS.md` from a fresh clone and report any step that
+   * **Build guide.** Follow the revised `docs/guides/build-macos.md` from a fresh clone and report any step that
      doesn't match.
 3. Update the records:
    * this plan's status (`complete` only once both maintainer checks are done, `in-progress` otherwise, with
      the residual named);
    * the MADR's `verified:` date;
    * the `docs/README.md` 0053 row, and a note on the 0010 row that its Phase 7 is carried by 0053's Phase 12;
-   * a one-line pointer in `docs/0010-PLAN-in-app-help-book-rewrite.md` to the same effect.
+   * a one-line pointer in `docs/decisions/0010-PLAN-in-app-help-book-rewrite.md` to the same effect.
 4. Commit the records.
 
 ## Verification
@@ -1137,7 +1137,7 @@ Plan approved by the maintainer on 2026-09-18.
   * After: `bash b8_after/build_copy.sh --bogus` → exit **1**, `Error: Unknown option: --bogus (supported:
     --unsigned, --install)`.
   * `bash -n build_macos.sh` passes. The tracked script was never run, and no build ran in this phase.
-* **`docs/BUILD_MACOS.md` rewritten** in the MADR's order: prerequisites and the Flutter pin; build and
+* **`docs/guides/build-macos.md` rewritten** in the MADR's order: prerequisites and the Flutter pin; build and
   entitlement selection; credential storage; install; output and targets; signing and notarizing;
   troubleshooting; clean up.
   * It also gained a section on running the Xcode unit tests without a certificate
@@ -1184,7 +1184,7 @@ Plan approved by the maintainer on 2026-09-18.
   * JSON valid.
 * **Records.**
   * `docs/README.md`: the 0053 row describes the executed state; the 0010 row says Phase 7 is carried here.
-  * `docs/0010-PLAN-in-app-help-book-rewrite.md` has a dated pointer.
+  * `docs/decisions/0010-PLAN-in-app-help-book-rewrite.md` has a dated pointer.
   * The MADR's `verified:` stays 2026-09-18, the day every claim was re-checked during execution.
 * **Status: `in-progress`, deliberately** (superseded 2026-09-19 — both checks done; see *Phase 12, maintainer
   checks* below). Every engineering acceptance criterion is met. The plan becomes
@@ -1192,11 +1192,11 @@ Plan approved by the maintainer on 2026-09-18.
   1. **Help on a running app.** Build with `./build_macos.sh --unsigned --install`, open Help ▸ Support &
      Help (⌘?), walk all 34 topics, and search `gitignore`, `Reconcile`, `rate limit` and `dotfiles`,
      confirming each finds its topic. This also discharges 0010-PLAN Phase 7.
-  2. **Build guide from a fresh clone.** Follow the revised `docs/BUILD_MACOS.md` and report any step that
+  2. **Build guide from a fresh clone.** Follow the revised `docs/guides/build-macos.md` and report any step that
      doesn't match.
 * **Not done, and why.**
   * S4 (links from the app into Help) is out of scope by the MADR's decision.
-  * `docs/BUILD_MACOS.md` stays in `docs/` pending the layout migration (B9).
+  * `docs/guides/build-macos.md` stays in `docs/` pending the layout migration (B9).
   * Nothing was pushed.
 
 ### Phase 12, maintainer checks (2026-09-19)

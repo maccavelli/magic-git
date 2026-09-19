@@ -338,7 +338,7 @@ its own. `LogoutButton` is untouched.
     showing.
 * **Multi-tab:** the Location row reads `connectionProvider` in the same scope as the Repository row,
   so it follows the active tab exactly as that row already does.
-* Related: [0008-MADR-unified-repository-chrome.md](../0008-MADR-unified-repository-chrome.md) for the app's chrome.
+* Related: [0008-MADR-unified-repository-chrome.md](0008-MADR-unified-repository-chrome.md) for the app's chrome.
 * The implementation plan, `0052-PLAN-sidebar-info-card-location-row-and-plain-connections-button.md`, is its
   implementation plan.
 

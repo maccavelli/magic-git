@@ -3,8 +3,9 @@ library;
 
 // Transport paths that only a REAL sshd can exercise.
 //
-// ACTION_PLAN admitted four of these were untestable without one. This closes
-// the honest subset and says plainly which it does NOT close:
+// 0055-PLAN-post-review-action-plan.md (formerly ACTION_PLAN) admitted four of
+// these were untestable without one. This closes the honest subset and says
+// plainly which it does NOT close:
 //
 //   * malformed UTF-8 decode ............ covered here
 //   * unified open+drain timeout ........ DRAIN half covered; the

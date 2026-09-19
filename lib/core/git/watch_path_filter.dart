@@ -31,8 +31,8 @@ bool shouldTriggerWatch(String path) {
         // which then queued behind that commit's exclusive lane and landed as
         // a redundant burst the moment it finished. Nothing in the app reads
         // this file (the commit preview deliberately uses its own mktemp
-        // file), and ARCHITECTURE_PLAN §watch already lists it as an ignore
-        // that was never implemented.
+        // file), and 0056-PLAN-architecture-and-feature-parity.md §5 already
+        // lists it as an ignore that was never implemented.
         path.endsWith('/COMMIT_EDITMSG') ||
         // The watcher's own registry: the pid it records at arm time and the
         // heartbeat the client refreshes while it is alive (0025 C3). Both
