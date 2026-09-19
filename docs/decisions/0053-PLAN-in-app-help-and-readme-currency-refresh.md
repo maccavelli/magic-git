@@ -739,3 +739,45 @@ Plan approved by the maintainer on 2026-09-18.
   * `flutter test`: `03:36 +4193 ~3: All tests passed!`.
   * JSON valid.
 * Commit `0eb21cb`.
+
+### Phase 3, executed
+
+* **Settings copy (W9), test first.**
+  * `test/settings_sheet_keymap_test.dart` was retitled `Settings discloses every setting that saves
+    immediately` and now expects "Keyboard Mappings, Forget Host and Open files with save immediately".
+  * Red run: exit 1, `Settings discloses every setting that saves immediately [E]` — "Found 0 widgets with
+    text containing Keyboard Mappings, …".
+  * `settings_sheet.dart`'s intro then changed to the plan's wording, and the test ran green (`+5`).
+* **Help contract.**
+  * Seven W falsehoods added (W2, W3, W4, W8, W9, W10, W11).
+  * Required facts for the four Workspace topics.
+  * Anchors: `More sync actions`; `Commit in ` (the static fragment of `'Commit in ${surface.label}'`, as the
+    label discipline requires) plus `Focused sheet`; `Show Dashboard View` and `Show Recovery View` (native
+    source); `Restore files`; `Delete snapshot`; `Clear output`; `Open files with`.
+  * All were confirmed in the corpus first.
+* **Red run:** exit 1, with 3 named failures:
+  * the label-anchor test ("topic workspace_chrome must quote the UI label 'More sync actions'");
+  * the falsehoods test ("not contains 'Leading controls: Back, Forward, then Fetch'");
+  * the required-facts test.
+* **Content.** Revised `workspace_chrome`, `file_view_and_output`, `dashboard_recovery_activity` and
+  `settings`. Facts were re-read from:
+  * `repository_context_bar.dart` (order, watch-dot colours, sync overflow);
+  * `workspace_view_options.dart`;
+  * `output_log.dart` (`maxLines = 2000`);
+  * `dashboard_sheet.dart`;
+  * `recovery_sheet.dart` (`snapshotExpiry` of 7 days, Restore…/Actions items);
+  * `activity_center.dart` (phases, tooltip);
+  * `dock_progress.dart`;
+  * `settings_sheet.dart` (`_fetchChoices`, `_minTimeoutSecs = 5`);
+  * `git_service.dart:1089-1094`.
+* **The guards caught one more of my own drafts:** 0010's `Auto-fetch` fact was lost from `settings`, and I
+  restored it.
+* **Gate.**
+  * The first `dart format` check flagged my settings-test edit (exit 1). I formatted it and re-ran the whole
+    gate on the final bytes:
+    * `dart format`: 0 changed.
+    * `flutter analyze`: `No issues found!`.
+    * `flutter test`: `03:35 +4193 ~3: All tests passed!`.
+    * Targeted Help + Settings tests: `+20`.
+    * JSON valid.
+* Commit `205b0d0`.
