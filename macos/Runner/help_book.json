@@ -1,6 +1,6 @@
 {
   "title": "Magic Git User Guide",
-  "version": "2.0",
+  "version": "3.0",
   "categories": [
     {
       "id": "getting_started",
@@ -2163,6 +2163,210 @@
             {
               "type": "paragraph",
               "text": "Output (⇧⌘O) is the docked command log described in File View and Output. Recovery is a separate sheet — see Dashboard, Recovery, and Activity, and Undo, Redo, and Recovery."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "troubleshooting",
+      "title": "Troubleshooting",
+      "icon": "wrench.and.screwdriver",
+      "topics": [
+        {
+          "id": "trouble_connection",
+          "title": "Connection Problems",
+          "summary": "Dropped SSH sessions, a changed host key, and missing tools on the host.",
+          "keywords": [
+            "connection",
+            "ssh",
+            "disconnected",
+            "reconnect",
+            "host key",
+            "fingerprint",
+            "timeout",
+            "missing tool",
+            "git not found"
+          ],
+          "sections": [
+            {
+              "type": "heading",
+              "text": "The session dropped"
+            },
+            {
+              "type": "paragraph",
+              "text": "Symptom: a Connection interrupted overlay with \"Reconnecting… (attempt N)\" and \"Disconnected for …\". Cause: the network or the SSH server went away. Fix: wait — it retries on its own. Stop Retrying pauses it and shows Connection lost, with Reconnect or Start Fresh. Cancel disconnects fully, and asks first if work is at risk."
+            },
+            {
+              "type": "heading",
+              "text": "Host Key Changed"
+            },
+            {
+              "type": "paragraph",
+              "text": "Symptom: a Host Key Changed dialog showing the Previously trusted and Now presented fingerprints. Cause: the server's key differs from the one recorded the first time you connected — expected after a server rebuild, suspicious otherwise. Fix: if you did not expect a change, choose Cancel Connection and check with the server's owner. Otherwise choose Refresh Key and Continue. Settings ▸ Known Hosts can Forget a recorded key."
+            },
+            {
+              "type": "heading",
+              "text": "A command times out"
+            },
+            {
+              "type": "paragraph",
+              "text": "Symptom: a fetch, pull, or push stops with a timeout. Cause: it printed nothing for the network stall budget (3 minutes by default). Fix: raise Network (fetch/pull/push) in Settings ▸ Command timeouts. A slow hook that cuts a commit off needs a larger Commit timeout."
+            },
+            {
+              "type": "heading",
+              "text": "A tool is missing or too old"
+            },
+            {
+              "type": "paragraph",
+              "text": "Symptom: a red or orange Tool Health banner after connecting. Cause: git, gh, or glab is missing or older than Magic Git needs on that host. Fix: Scan environment, then install from Environment health — see Tool Health."
+            }
+          ]
+        },
+        {
+          "id": "trouble_forge",
+          "title": "Forge Problems",
+          "summary": "Sign-in failures, rate limits, repositories with no forge, and self-hosted GitLab.",
+          "keywords": [
+            "forge",
+            "github",
+            "gitlab",
+            "sign in",
+            "auth",
+            "login",
+            "token",
+            "rate limit",
+            "self-hosted",
+            "no remote",
+            "unsupported",
+            "project not found"
+          ],
+          "sections": [
+            {
+              "type": "heading",
+              "text": "A sign-in problem"
+            },
+            {
+              "type": "paragraph",
+              "text": "Symptom: \"This looks like a sign-in problem — run `gh auth login` (or `glab auth login`) on the target, then refresh.\" with Open Dashboard. Cause: the forge CLI on the host running git is not signed in, or its token expired. Fix: run the auth login command on that machine — this Mac or the SSH host — or add a GitHub token or GitLab token to the saved connection. Dashboard ▸ Authentication shows which CLIs are signed in where."
+            },
+            {
+              "type": "heading",
+              "text": "Rate limited"
+            },
+            {
+              "type": "paragraph",
+              "text": "Symptom: \"… was rate limited by the forge. Try again in …\". Cause: the forge is throttling requests. Fix: wait for the time shown, then refresh. Magic Git never retries on its own."
+            },
+            {
+              "type": "heading",
+              "text": "No remote detected, or Unsupported forge"
+            },
+            {
+              "type": "paragraph",
+              "text": "Symptom: the Forge panel says No remote detected, or Unsupported forge. Cause: the repository has no remote, or its origin is not a GitHub or GitLab host Magic Git can recognize. Fix: add an origin remote that points at GitHub or GitLab. For a host whose name does not say which forge it is, sign gh or glab in to it — Magic Git asks the CLIs which hosts they are signed in to."
+            },
+            {
+              "type": "heading",
+              "text": "GitLab reports no project"
+            },
+            {
+              "type": "paragraph",
+              "text": "Symptom: \"GitLab reports no project at …\". Cause: the origin path is wrong, or the token cannot see the project — GitLab answers both the same way. Fix: check the origin URL and the token's access."
+            },
+            {
+              "type": "callout",
+              "style": "info",
+              "title": "Self-hosted GitLab",
+              "text": "Every glab call is pinned to the host in the origin remote, so a self-hosted GitLab works even when glab's default host is gitlab.com. Sign glab in to that host (glab auth login --hostname <host>) on the machine that runs git."
+            }
+          ]
+        },
+        {
+          "id": "trouble_refresh",
+          "title": "Refresh and Change Detection",
+          "summary": "Why changes appear late, what the orange dot means, and how to speed up status.",
+          "keywords": [
+            "refresh",
+            "polling",
+            "watcher",
+            "slow",
+            "stale",
+            "fswatch",
+            "inotifywait",
+            "fsmonitor",
+            "large repository",
+            "dot"
+          ],
+          "sections": [
+            {
+              "type": "heading",
+              "text": "Changes appear late"
+            },
+            {
+              "type": "paragraph",
+              "text": "Symptom: the dot beside the repository name is orange, the Repository panel says \"Polling for changes (watcher unavailable)\", and Dashboard ▸ Change watcher shows Polling fallback. Cause: no live file watcher could start on the host, so Magic Git re-checks every few seconds instead. Fix: install fswatch (macOS hosts) or inotifywait (Linux hosts) — see Tool Health — then reconnect."
+            },
+            {
+              "type": "heading",
+              "text": "Nothing refreshes"
+            },
+            {
+              "type": "paragraph",
+              "text": "Symptom: the dot is grey and Change watcher shows Stopped. Cause: nothing is watching this repository. Fix: press ⌘R to refresh by hand (the Dashboard says \"changes refresh manually\")."
+            },
+            {
+              "type": "heading",
+              "text": "Status is slow on a large repository"
+            },
+            {
+              "type": "paragraph",
+              "text": "Turn on git fsmonitor for the repository: Enable filesystem monitor when adding it, or the fsmonitor toggle on its Connections Manager row. It is unavailable for a scoped (dotfiles) repository, which watches only tracked files instead."
+            }
+          ]
+        },
+        {
+          "id": "trouble_access",
+          "title": "Access and Credentials",
+          "summary": "macOS folder-access prompts, and where saved credentials are stored.",
+          "keywords": [
+            "access",
+            "permission",
+            "sandbox",
+            "grant",
+            "bookmark",
+            "worktree",
+            "credentials",
+            "keychain",
+            "unsigned",
+            "password"
+          ],
+          "sections": [
+            {
+              "type": "heading",
+              "text": "Grant access prompts"
+            },
+            {
+              "type": "items",
+              "items": [
+                "Grant access to this worktree — a worktree outside the main repository folder must be selected once before macOS lets Magic Git read it. Choose Folder… and pick it.",
+                "Grant access to the main repository — opening a linked worktree needs its main repository, which holds the branches and history. Choose Folder… and pick that repository.",
+                "Access is remembered with a security-scoped bookmark, so you are asked only once. SSH repositories never ask."
+              ]
+            },
+            {
+              "type": "heading",
+              "text": "Where saved credentials live"
+            },
+            {
+              "type": "paragraph",
+              "text": "Save connection stores passwords, keys, and tokens in the macOS Keychain on a signed build. An unsigned build cannot reach the Keychain, so it stores them in ~/.config/magic_git/credentials.json, readable only by you (0600). Delete that file to remove them."
+            },
+            {
+              "type": "callout",
+              "style": "warning",
+              "title": "Plaintext on unsigned builds",
+              "text": "The credentials.json fallback is protected only by file permissions. Use a signed build for Keychain storage."
             }
           ]
         }

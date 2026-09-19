@@ -232,6 +232,21 @@ const _labelAnchors = <String, List<String>>{
   ],
   'undo_recovery': ['Files Changed Since'],
   'tool_health': ['Environment health', 'Install from file…'],
+  'trouble_connection': ['Refresh Key and Continue'],
+  'trouble_forge': [
+    'Open Dashboard',
+    'No remote detected',
+    'Unsupported forge',
+    'was rate limited by the forge',
+  ],
+  'trouble_refresh': [
+    'Polling for changes (watcher unavailable)',
+    'Polling fallback',
+  ],
+  'trouble_access': [
+    'Grant access to this worktree',
+    'Grant access to the main repository',
+  ],
   'tab_branches': [
     'Fetch & Prune',
     'Unhide',
@@ -443,6 +458,33 @@ const _requiredFacts0053 = <String, List<String>>{
     'fswatch',
     'inotifywait',
   ],
+  'trouble_connection': [
+    'Connection interrupted',
+    'Host Key Changed',
+    'Refresh Key and Continue',
+    'Scan environment',
+  ],
+  'trouble_forge': [
+    'auth login',
+    'Open Dashboard',
+    'rate limited',
+    'No remote detected',
+    'Unsupported forge',
+    'self-hosted',
+  ],
+  'trouble_refresh': [
+    'Polling for changes (watcher unavailable)',
+    'orange',
+    'fswatch',
+    'inotifywait',
+    'fsmonitor',
+  ],
+  'trouble_access': [
+    'Grant access to this worktree',
+    'Grant access to the main repository',
+    'credentials.json',
+    '0600',
+  ],
   'tab_forge': [
     'No blockers',
     'Show closed pull requests',
@@ -637,7 +679,7 @@ void main() {
 
     test('book header contains title and version', () {
       expect(jsonBook['title'], equals('Magic Git User Guide'));
-      expect(jsonBook['version'], equals('2.0'));
+      expect(jsonBook['version'], equals('3.0'));
     });
 
     test('categories follow the 0010 information architecture', () {
@@ -651,10 +693,13 @@ void main() {
         'files',
         'commands',
         'safety',
+        'troubleshooting',
       ]);
       expect(categoryIds, isNot(contains('tabs')));
       expect(categoryIds, isNot(contains('features')));
-      expect(categoryIds, isNot(contains('troubleshooting')));
+      // 0010 banned a `troubleshooting` category to keep v1.1's stale one
+      // out. 0053 amends that ban: the category returns, written against the
+      // current app, with its four topics locked below.
       final book = File('macos/Runner/help_book.json').readAsStringSync();
       expect(book, isNot(contains('Main Application Tabs')));
     });
@@ -695,7 +740,18 @@ void main() {
         ],
         'commands': ['feature_palette', 'menus_and_keymap'],
         'safety': ['feature_ssh', 'undo_recovery', 'tool_health', 'output_log'],
+        'troubleshooting': [
+          'trouble_connection',
+          'trouble_forge',
+          'trouble_refresh',
+          'trouble_access',
+        ],
       };
+      final totalTopics = [
+        for (final cat in jsonBook['categories'] as List<dynamic>)
+          ...(cat as Map<String, dynamic>)['topics'] as List<dynamic>,
+      ].length;
+      expect(totalTopics, 34, reason: '0053 locks 34 topics in 7 categories');
       for (final cat in jsonBook['categories'] as List<dynamic>) {
         final category = cat as Map<String, dynamic>;
         final ids = (category['topics'] as List<dynamic>)
