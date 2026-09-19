@@ -1,5 +1,5 @@
 ---
-status: "in-progress"
+status: "complete"
 date: 2026-09-19
 associated-madr: "0054-MADR-docs-link-checker-and-standard-layout-migration.md"
 ---
@@ -659,4 +659,29 @@ note under its title and an annotation under §0.1.
 * `dart run tool/records.dart check` (all six rules) → `RC=0`, 0 findings.
   `flutter analyze` clean. `flutter test` → **`+4223 ~3: All tests passed!`** (+1, the R6
   test).
+
+### Phase 4 — committed as `f99b6a1`
+
+### Phase 5 — executed 2026-09-19
+
+* The 0054 catalogue on the final tree: `--check` 18 sound; run → **18 killed, 0 survived,
+  0 did not apply, 0 did not compile**. The R6 mutations were killed exactly as in Phase 1,
+  as D1 predicted: the fixtures kill them, and the real-tree R6 test does not change that.
+* **Other catalogues.** Phase 2 edited comments in four files
+  (`lib/core/git/watch_path_filter.dart`, `test/ssh_live_transport_test.dart`,
+  `test/drop_registry_test.dart`, `test/helpers/fake_watcher_handle.dart`), and a
+  catalogue anchor containing that text would stop applying. A full
+  `tool/mutate.py --check` over every catalogue was started, and then stopped at the
+  maintainer's request because it was slow. The same question was answered directly
+  instead: a scan of all **302 entries** in `tool/mutations/*.json` found **none that even
+  targets** one of the four files, so none can be anchored on the changed text. The
+  stopped run's scratch worktree was removed with `git worktree remove --force`, as the
+  harness does itself.
+* The index row for 0054 is `accepted` / `complete`. The MADR is `accepted`,
+  `verified: 2026-09-19`. This PLAN is `complete`.
+
+**Residuals.**
+* The `verified:` backfill for the 27 PLANs that lack it, deferred by the maintainer.
+* Whether to mark the dotfiles repository's 0007-PLAN Phase 6 done for this repository.
+  That is outside this repository, and the maintainer's call.
 
