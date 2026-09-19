@@ -635,3 +635,19 @@ Rules for the content:
 * **Implementation plan.**
   [0053-PLAN-in-app-help-and-readme-currency-refresh.md](0053-PLAN-in-app-help-and-readme-currency-refresh.md)
   (approved 2026-09-18; execution in progress).
+
+## Amendment 0053.1 (2026-09-18): M3's push-failure message is not what users see
+
+M3 lists "Committed, but the push failed." (`commit_composer_controller.dart:379`) as part of the commit flow.
+Execution found that the message is set only when the push callback throws, and the production callback
+(`_push`, via `runLogged` in `lib/features/common/busy_action.dart:137-150`) never does. It catches the error,
+shows an error dialog with git's message, logs to Output, and returns `false`.
+
+A failed push after a commit therefore appears as:
+* an error dialog;
+* the command in Output;
+* a Failed row in Activity;
+* the commit kept locally.
+
+Help teaches that instead, and does not quote the controller string. The decision is unchanged. See
+0053-PLAN Deviation D1.

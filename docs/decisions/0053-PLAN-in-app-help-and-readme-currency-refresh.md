@@ -306,7 +306,8 @@ saves immediately uses the same words as the sheet.
   * `tab_repository`: `Use Ours (HEAD)`, `Use Theirs (incoming)`, `Use Onto (ours)`, `Abort `, `Stage All`,
     `Unstage All`, `Branches`
   * `committing`: `Focused sheet`, `Task dock`, `background`, `Co-author`, `Regenerate`,
-    `prepare-commit-msg`, `--no-gpg-sign`, `Amend Last Commit…`, `Committed, but the push failed.`
+    `prepare-commit-msg`, `--no-gpg-sign`, `Amend Last Commit…`, ~~`Committed, but the push failed.`~~
+    `error dialog`, `Failed` (Deviation D1, 2026-09-18)
   * `sync_fetch_pull_push`: `--prune`, `@{upstream}`, `Fast-forward only`, `Remote has new commits`,
     `Pull, then Push`, `Force push`, `staging`, `Auto-fetch`, `This branch has no upstream yet`
   * `tab_stashes`: `Apply latest stash`, `Pop latest stash`, `Clear all stashes…`, `Apply, restoring staged files`
@@ -781,3 +782,22 @@ Plan approved by the maintainer on 2026-09-18.
     * Targeted Help + Settings tests: `+20`.
     * JSON valid.
 * Commit `205b0d0`.
+
+### Deviation D1 (2026-09-18): a failed push after a commit never shows "Committed, but the push failed."
+
+* **Found.** During Phase 4, before any Phase 4 edit, and checked by reading the unmodified tree. MADR M3,
+  and this plan's `committing` required fact, say a failed push shows "Committed, but the push failed."
+  (`commit_composer_controller.dart:379`). That message is set only when the push callback **throws**. The
+  real callback is `_push`, which runs through `runLogged` (`lib/features/common/busy_action.dart:137-150`);
+  `runLogged` catches every error, shows an error dialog with git's message, logs to Output and returns
+  `false`, so it never throws. The commit sheet has also already closed when the commit landed
+  (`commit_dialog.dart:82-94`).
+
+  What a user sees is: an error dialog, the command in Output, the operation marked Failed in Activity, and
+  the commit kept locally. `test/commit_composer_controller_test.dart:84-101` covers the path production
+  takes (`push: () async => false`). No test covers the throw branch.
+* **Decision (maintainer).** Teach the real behaviour.
+  * The required fact is struck through above and replaced with `error dialog` and `Failed`.
+  * MADR 0053 carries Amendment 0053.1 correcting M3.
+  * No code change: the controller's catch branch remains a guard for any future push callback that throws.
+  * No files added to the phase.
