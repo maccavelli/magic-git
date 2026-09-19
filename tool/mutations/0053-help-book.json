@@ -1,0 +1,74 @@
+[
+  {
+    "label": "p10 anchor: label renamed in code (D4)",
+    "file": "lib/features/branches/branches_view.dart",
+    "find": "confirmLabel: 'Merge Anyway',",
+    "replace": "confirmLabel: 'Merge Regardless',",
+    "tests": [
+      "test/help_book_json_test.dart"
+    ]
+  },
+  {
+    "label": "p10 anchor: label dropped from Help",
+    "file": "macos/Runner/help_book.json",
+    "find": "Show closed pull requests",
+    "replace": "Show more pull requests",
+    "tests": [
+      "test/help_book_json_test.dart"
+    ]
+  },
+  {
+    "label": "p10 menu: new Dart menu item undocumented",
+    "file": "lib/features/common/menu_bar_spec.dart",
+    "find": "MenuBarItem('Re-run Failed Jobs', 'github.rerun'),",
+    "replace": "MenuBarItem('Re-run Failed Jobs Now', 'github.rerun'),",
+    "tests": [
+      "test/help_book_json_test.dart"
+    ]
+  },
+  {
+    "label": "p10 menu: native View item undocumented",
+    "file": "macos/Runner/MainFlutterWindow.swift",
+    "find": "title: \"Show Recovery View\"",
+    "replace": "title: \"Show Recovery Panel\"",
+    "tests": [
+      "test/help_book_json_test.dart"
+    ]
+  },
+  {
+    "label": "p10 forbidden: W1 falsehood returns",
+    "file": "macos/Runner/help_book.json",
+    "find": "By default this opens the Focused sheet over the workspace.",
+    "replace": "By default ⌘G expands the composer in the task dock.",
+    "tests": [
+      "test/help_book_json_test.dart"
+    ]
+  },
+  {
+    "label": "p10 schema: heading words moved to an unrendered title",
+    "file": "macos/Runner/help_book.json",
+    "find": "\"type\": \"heading\",\n              \"text\": \"Interactive rebase\"",
+    "replace": "\"type\": \"heading\",\n              \"title\": \"Interactive rebase\"",
+    "tests": [
+      "test/help_book_json_test.dart"
+    ]
+  },
+  {
+    "label": "p10 required fact removed (D4)",
+    "file": "macos/Runner/help_book.json",
+    "find": "Clean up stale branches?",
+    "replace": "Clean up old branches?",
+    "tests": [
+      "test/help_book_json_test.dart"
+    ]
+  },
+  {
+    "label": "p10 IA: locked topic id renamed",
+    "file": "macos/Runner/help_book.json",
+    "find": "\"id\": \"trouble_forge\",",
+    "replace": "\"id\": \"trouble_forges\",",
+    "tests": [
+      "test/help_book_json_test.dart"
+    ]
+  }
+]
