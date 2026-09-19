@@ -56,6 +56,10 @@ readonly LEGACY_APP_BUNDLES=(
   "remote_magic_git.app"
 )
 
+# Defined before the option loop, which calls die for an unknown option.
+log() { printf '\033[1;34m==>\033[0m %s\n' "$1"; }
+die() { printf '\033[1;31mError:\033[0m %s\n' "$1" >&2; exit 1; }
+
 UNSIGNED=0
 INSTALL=0
 for arg in "$@"; do
@@ -67,9 +71,6 @@ for arg in "$@"; do
       ;;
   esac
 done
-
-log() { printf '\033[1;34m==>\033[0m %s\n' "$1"; }
-die() { printf '\033[1;31mError:\033[0m %s\n' "$1" >&2; exit 1; }
 
 read_product_name() {
   local line
