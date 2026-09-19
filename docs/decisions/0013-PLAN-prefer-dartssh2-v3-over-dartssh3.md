@@ -1,5 +1,5 @@
 ---
-status: "executed"
+status: "in-progress"
 date: 2026-08-19
 associated-madr: "0013-MADR-prefer-dartssh2-v3-over-dartssh3.md"
 owner: [Maintainer]

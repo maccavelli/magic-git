@@ -1,5 +1,5 @@
 ---
-status: executed
+status: "complete"
 date: 2026-08-15
 associated-madr: "0010-MADR-in-app-help-book-rewrite.md"
 owner: [implementation agent + maintainer review]

@@ -1,5 +1,5 @@
 ---
-status: "executed"
+status: "in-progress"
 date: 2026-09-03
 verified: 2026-09-03
 associated-madr: "0018-MADR-transport-readiness-is-not-an-error.md"

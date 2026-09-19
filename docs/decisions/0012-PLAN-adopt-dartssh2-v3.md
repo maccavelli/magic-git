@@ -1,5 +1,5 @@
 ---
-status: "executed"
+status: "superseded"
 date: 2026-08-18
 associated-madr: "0012-MADR-adopt-dartssh2-v3.md"
 owner: [Maintainer]

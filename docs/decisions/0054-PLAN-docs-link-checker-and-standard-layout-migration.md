@@ -729,3 +729,50 @@ note under its title and an annotation under §0.1.
 **4. The dotfiles 0007-PLAN.** Its Phase 6b (this repository's migration) is recorded
 done there, with the ways it differed from that plan as written. It stays `in-progress`
 for its own Phase 5 and remaining flat records, by the maintainer's choice.
+
+### Follow-up 2 — the legacy `executed` statuses mapped (2026-09-19)
+
+The status vocabulary became the `madr-and-plan-writing` skill's (commit `310b68f`). The
+27 plans and one report still marked `executed` were each mapped by one rule:
+* `in-progress` if the body still expects something under the plan (an unrecorded
+  maintainer check, an unrun step);
+* `partial` if a planned step was deliberately dropped and nothing more is expected;
+* `complete` if everything is done, or every leftover went to a named later record
+  that has since finished it.
+
+Where one plan had both, `in-progress` won. Four read-only agents classified them,
+quoting the body at `file:line`.
+
+| Mapped to | Records |
+| --- | --- |
+| `complete` (10) | 0002, 0004, 0008, 0010, 0014, 0015, 0016, 0017, 0020, 0031 |
+| `in-progress` (16) | 0003, 0005, 0006, 0007, 0009, 0011, 0012-PLAN-commit-composer-focused-sheet, 0013, 0018, 0019, 0021, 0022, 0023, 0039, 0051, 0052 |
+| `superseded` (1) | 0012-PLAN-adopt-dartssh2-v3 ("Do not execute this plan"; 0013 absorbed it) |
+| `partial` (1) | 0060-REPORT (every roadmap phase shipped; its cross-cutting hardening, including a coach-mark and a click-to-pick mode, was never built) |
+
+The index rows were updated to match. `verified:` dates are unchanged, since the mapping
+read each body and did not re-check the code, with one exception:
+* **0006's `executed` was false against the code.** The title-bar flip never shipped:
+  `lib/main.dart:57` is still `TitleBarStyle.hidden`, and 0009-MADR says it "remains
+  gated on live macOS verification". It is `in-progress`, with `verified:
+  2026-09-19`.
+
+Judgement calls a maintainer may want to overturn:
+* **0018**: its only open item is a cold-connect check that may have been overtaken
+  since.
+* **0009**: its live check is labelled "not a CI gate".
+* **0031**: the GitHub-org live create was never run, but it was never a numbered
+  step.
+* **0007**: its step 6.1 "execute" half is owed via 0006.
+* **0060**: its hardening list says "do continuously, not a phase".
+
+Also found, not changed:
+* stale pre-execution lines in 0023 ("Not yet executed. This plan is `proposed`.") and
+  in 0024;
+* 0022's H2 live half is still open;
+* 0004's hand-off of L9 to 0006 was never discharged;
+* **a real SSH host alias** (not named here) in the committed tree, in
+  `0011-MADR-toolbar-slot-schema-migration.md` (two places) and
+  `0012-PLAN-commit-composer-focused-sheet.md`. The identifier scan does not know the
+  name. It is already pushed, and reported to the maintainer.
+

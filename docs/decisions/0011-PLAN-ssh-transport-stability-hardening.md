@@ -1,5 +1,5 @@
 ---
-status: "executed"
+status: "in-progress"
 date: 2026-08-18
 associated-madr: "0011-MADR-ssh-transport-stability-hardening.md"
 owner: [Maintainer]

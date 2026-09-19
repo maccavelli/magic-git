@@ -1,5 +1,5 @@
 ---
-status: executed
+status: "complete"
 date: 2026-08-28
 executed: 2026-08-28
 verified: 2026-08-28

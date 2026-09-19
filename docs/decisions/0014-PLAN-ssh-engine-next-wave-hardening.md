@@ -1,5 +1,5 @@
 ---
-status: "executed"
+status: "complete"
 date: 2026-08-20
 associated-madr: "0014-MADR-ssh-engine-next-wave-hardening.md"
 owner: [Maintainer]

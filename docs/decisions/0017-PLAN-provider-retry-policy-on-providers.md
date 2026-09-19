@@ -1,5 +1,5 @@
 ---
-status: "executed"
+status: "complete"
 date: 2026-08-20
 executed: 2026-08-20
 associated-madr: "0017-MADR-provider-retry-policy-on-providers.md"

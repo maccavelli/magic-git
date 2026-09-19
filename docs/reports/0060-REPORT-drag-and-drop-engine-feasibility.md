@@ -1,5 +1,5 @@
 ---
-status: "executed"
+status: "partial"
 date: 2026-07-16
 verified: 2026-08-20  # 0004-MADR-ui-ux-deep-debug-audit.md: "A–E shipped"
 former-path: "docs/DRAG_AND_DROP_ENGINE.md"

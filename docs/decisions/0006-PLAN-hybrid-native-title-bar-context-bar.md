@@ -1,7 +1,7 @@
 ---
-status: "executed"
+status: "in-progress"
 date: 2026-08-14
-verified: 2026-08-20
+verified: 2026-09-19  # the "executed" claim was false against the code: lib/main.dart:57 is still TitleBarStyle.hidden
 ---
 # Implement the hybrid native title bar + context bar
 

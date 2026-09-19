@@ -1,5 +1,5 @@
 ---
-status: executed
+status: "in-progress"
 verified: 2026-09-19  # checked against the code at d67953c: shipped deliverables located, supersessions traced (0054 follow-up)
 date: 2026-09-03
 associated-madr: "0022-MADR-git-gh-glab-engine-debug-audit.md"

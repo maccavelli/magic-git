@@ -166,11 +166,10 @@ MADR 4.0.0:
   the body says which.
 - **Reports:** `partial` or `complete`, by the same meanings.
 
-Older plans still carry `executed` ("engineering phases shipped; the body names
-any residual") or `complete (amended)`. Those are legacy values: map one to
-`complete` or `in-progress` when the plan is next verified, according to
-whether its body still names something owed. Wherever a status and the body
-disagree, the body wins. [`docs/README.md`](docs/README.md) is the index and the one
+`executed` is a retired value ("engineering phases shipped; the body names any
+residual"). Every plan that carried it was mapped on 2026-09-19. Two older plans
+still say `complete (amended)`: read it as `complete`. Wherever a status and the
+body disagree, the body wins. [`docs/README.md`](docs/README.md) is the index and the one
 place to see live state.
 
 ## Working style

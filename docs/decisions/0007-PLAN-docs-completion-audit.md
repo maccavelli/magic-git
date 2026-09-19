@@ -1,5 +1,5 @@
 ---
-status: "executed"
+status: "in-progress"
 date: 2026-08-14
 verified: 2026-08-20
 ---
