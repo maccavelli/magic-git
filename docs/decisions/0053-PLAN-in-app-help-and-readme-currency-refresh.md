@@ -700,3 +700,42 @@ Plan approved by the maintainer on 2026-09-18.
   * `flutter test`: `03:39 +4192 ~3: All tests passed!`.
   * JSON valid.
 * Commit `011d00f`.
+
+### Phase 2, executed
+
+* **Contract.**
+  * `connections_manager` added to the locked `getting_started` list.
+  * New test `Help does not teach the 0053 falsehoods`, holding `_falsehoods0053` (W5, W6, W7).
+  * `_requiredFacts0053`, merged into the existing required-facts loop.
+  * 12 label anchors, all confirmed present in `lib/` first.
+* **Red run** against the unchanged book (`flutter test test/help_book_json_test.dart`, exit 1) had 4 named
+  failures:
+  * `quoted UI labels exist in their topic and in source`: "topic quickstart must quote the UI label 'Add
+    Existing Repository'".
+  * `Help does not teach the 0053 falsehoods`: "not contains 'opens the macOS folder panel'".
+  * `every locked topic id exists in its category, in order`: "at location [2] is 'clone_create' instead of
+    'connections_manager'".
+  * `required facts appear in their topics`: "topic overview must contain 'Connections'".
+* **Content.**
+  * Revised `overview`, `quickstart`, `clone_create` and `tabs_workspaces`.
+  * New `connections_manager` topic, inserted after `quickstart`.
+  * Every label was re-read from source (`connection_form.dart`, `local_repo_form.dart`,
+    `connection_switcher.dart`, `edit_entry_sheets.dart`, `current_repo_indicator.dart`, `clone_sheet.dart`,
+    `create_repo_sheet.dart`, `namespace_field.dart`, `remote_directory_browser.dart`, `tab_strip.dart`,
+    `saved_workspaces_sheet.dart`, `session_exit_guard.dart`, `tabs_host.dart`).
+  * Written through a scratch serializer that reproduces the committed file byte for byte (checked before
+    each write).
+* **The guards caught my own drafts three times**, each fixed in content:
+  * a new sentence reused the banned W7 phrase;
+  * 0010's lowercase `password` fact was lost;
+  * 0010's `git identity` fact was lost.
+* **Analyzer.** The first gate found 2 errors in my loop over the merged required-facts entries (an untyped
+  list literal inferred `dynamic`). I typed it `<MapEntry<String, List<String>>>`. The full suite was re-run
+  after the fix.
+* **Gate:**
+  * `dart format`: 0 changed.
+  * `flutter analyze`: `No issues found!`.
+  * Help test: `+15: All tests passed!`.
+  * `flutter test`: `03:36 +4193 ~3: All tests passed!`.
+  * JSON valid.
+* Commit `0eb21cb`.
