@@ -111,8 +111,8 @@ If your `flutter` differs, use `./.flutter-sdk/bin/flutter`, which
 
 - [docs/README.md](docs/README.md) — the index of decision records (MADRs),
   plans and reports, with their current status.
-- [docs/decisions/0056-PLAN-architecture-and-feature-parity.md](docs/decisions/0056-PLAN-architecture-and-feature-parity.md) — the design, including
-  the SSH transport (§0.1).
+- [docs/architecture.md](docs/architecture.md) — how the app is built, as it is now:
+  the executors, the SSH transport, scheduling, watching and state.
 - [docs/guides/build-macos.md](docs/guides/build-macos.md) — building, signing, installing.
 - [AGENTS.md](AGENTS.md) — instructions for coding agents working in this
   repository.

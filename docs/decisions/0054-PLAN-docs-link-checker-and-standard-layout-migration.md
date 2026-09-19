@@ -538,3 +538,99 @@ deferred.
   commit. The blockquote is deleted in Phase 2 as planned. Correct the Phase 5 text. No files were added
   to any phase's scope, and the MADR is unaffected: it asserted the exemption, and the plan step
   contradicted it.
+
+### Phase 1 — committed as `7083d7a`
+
+### Phase 2 — executed 2026-09-19, committed as `fea3dcf`
+
+* `dart run tool/records.dart next` → `0055` before anything moved, matching the map.
+* **The rehearsal, moves only** (scratch clone): the script recorded 440 relative links and
+  moved 111 files. The checker then reported **`RC=1`, 269 findings: 145 `links`, 117
+  `paths`, 7 `frontmatter`**. This is the checker's real-world negative test. (440 is
+  lower than the investigation's 434 + 10 + the pair's links, because the script, like
+  R1, does not record `#fragment`-only links.)
+* **The rehearsal, full** (fresh clone): 194 link occurrences rewritten, and 117 path
+  mentions in 37 files. **All 440 links verified by target: 0 files mismatched.** Checker
+  `RC=0`. `git diff --cached -M` showed **111 renames (`R`) and 5 in-place edits**; the
+  lowest rename similarity was 94%.
+* **The real tree:** the same output as the full rehearsal: 440 recorded, 111 moved, 194
+  links, 117 mentions in 37 files, 0 mismatched. Then the 2.5 hand edits:
+  * `AGENTS.md`: the blockquote deleted, the `0005` note updated, and the architecture
+    line pointed at 0056;
+  * the skill's `docs/decisions/`;
+  * the `watch_path_filter.dart` comment ("§watch" is §5, *Layer 4 — Real-time remote
+    state*, whose `.git/` watch/ignore list is at its line 417);
+  * the `ssh_live_transport_test.dart` comment, reflowed.
+* Checker (R1–R5) → 0 findings. `flutter analyze` clean. `flutter test` →
+  **`+4222 ~3: All tests passed!`** (unchanged from Phase 1).
+* **The commit:** 123 files, **111 `R` + 12 `M`**, and nothing else. The PLAN's own
+  execution entry was deliberately held to the next commit.
+* **History follows** (`git log --follow`, the first commit before the move vs after):
+  | File | Before | After |
+  | --- | --- | --- |
+  | 0001-MADR (flat record) | `ef3415e` | `ef3415e` |
+  | 0005-REPORT (was UX-BASELINE) | `60adb02` | `60adb02` |
+  | 0059-REPORT (was `memory_audit.md`) | `afda1e4` | `afda1e4` |
+  | the build guide | `2d8a357` | `2d8a357` |
+  | 0056-PLAN (was `ARCHITECTURE_PLAN.md`) | `2d8a357` | `2d8a357` |
+* `TEST_COVERAGE_PLAN` (2.4): 12 of 14 named test files exist; the note in 0061 says the
+  check was existence only.
+
+### Phase 3 — executed 2026-09-19
+
+`architecture.md` is written in `docs/`. Every claim was checked against the code. The
+evidence behind each one:
+
+| Claim | Evidence |
+| --- | --- |
+| three executors behind `CommandExecutor` | `lib/core/ssh/ssh_command_executor.dart:223`, `:307`; `lib/core/exec/local_command_executor.dart:20`; `lib/core/exec/proxy_command_executor.dart:25` |
+| services depend on the active executor | `activeExecutorProvider`, `lib/core/providers/app_providers.dart:256` |
+| dartssh2 3.3.0 exact | `pubspec.yaml` (`dartssh2: 3.3.0`) |
+| triple client, serialized host-key verification | `SSHClientManager`, `ssh_client_manager.dart:139`; `serializeHostKeyVerifier`, `:799` |
+| redial 15→30→60→120 s, 5 failures | `streamRedialDelay`, `ssh_client_manager.dart:273`; `_maxRedialFailures = 5`, `:226` |
+| generation supersession | `SSHCommandSuperseded`, `ssh_command_executor.dart:78` |
+| keepalive 15 s / 15 s, busy pause | `ConnectionHealthMonitor`, `ssh_client_manager.dart:51`, `:56-57`, `isBusy` `:107` |
+| `NativeSshSocket`, `TransportDropCause` | `native_ssh_socket.dart:14`; `command_telemetry.dart:41` |
+| reconnect 1/2/4/8/15 s, pause after 20 | `_reconnectDelays`, `app_providers.dart:2222`; `_maxAutoReconnectAttempts = 20`, `:2239`; `isRetryableReconnectError`, `ssh_error_messages.dart:30` |
+| `RemoteEnvironment`; token neutralising | `environment_probe.dart:11`; `command_formatter.dart:43` (`GITLAB_TOKEN`) |
+| gzip + EXIT trailer; 256 KiB offload | `command_formatter.dart:95`, `:146`; `gzipOffloadWireBytes`, `ssh_command_executor.dart:330` |
+| four lanes; `GIT_OPTIONAL_LOCKS=0` | `ExecLane`, `command_lanes.dart:14`; `command_formatter.dart:22` |
+| read cap 3 → 1..4 by duration buckets; error floor | `adaptive_read_concurrency.dart:1-47`, `:52-53`, `:185`; `onReadSample` fed by `ssh_command_executor.dart:434` |
+| scheduler clamp 8; watchdog +30 s; isolated cap 2 | `command_lanes.dart:158`, `:154`, `:134` |
+| streams 8 / 2 degraded | `maxConcurrentStreams`, `ssh_command_executor.dart:385` |
+| 50 MiB budget; 400 ms kill grace; retry between enqueues | `command_drain.dart:25`; `killGrace`, `ssh_command_executor.dart:1143`; `_retryBackoff` and its doc, `:630-649` |
+| porcelain v2; `Isolate.run`; `GitCatFileBatch`; `registerRepoScope` | `git_service.dart:1938`, `:517`; `git_cat_file_batch.dart:158`; `git_service.dart:1175` |
+| glab token over stdin | `glab_service.dart:93` |
+| `HostFsService` operations | `host_fs_service.dart:51`, `:98`, `:119`, `:143` |
+| watch owners | `watch_target.dart:55`; `watch_admission.dart:11`; `watch_engine.dart:41`; `watch_source.dart:10`, `remote_watch_source.dart:21`, `directory_watch_source.dart:48`; `watch_timings.dart:14`; `watcher_id.dart:7`; `watcherProvider`/`repoWatchProvider`, `app_providers.dart:3887`, `:3903` |
+| restart 2 s·n ×3, poll 5 s, recover 3 min | `watch_timings.dart:73`, `:76`, `:67`, `:70`; `watch_engine.dart:312` |
+| `Coalescer` guards | `coalescer.dart:1-28` |
+| host-side watchdog (stdin EOF, lease poll, trap) | `bounded_watch.dart:270-300`; `WatchLease`, `watch_lease.dart:25` |
+| `noProviderRetry`; failures to the Output pane | `provider_retry_policy.dart:28`; `ProviderFailureObserver`, `provider_failure_observer.dart:23`, writing `outputLogProvider` |
+| undo/redo journals | `undo_journal.dart:16`, `:57` |
+| secondary entrypoint; hub channel; `Uint8List` codec | `lib/main.dart:18`; `window_channels.dart:36`; `exec_proxy_codec.dart:10` |
+| menu spec; keymap | `menu_bar_spec.dart:111`; `keymap.dart:155` |
+| Help files and test | `macos/Runner/HelpView.swift`, `HelpWindowController.swift`, `help_book.json`; `test/help_book_json_test.dart` |
+| bookmarks; Keychain; `credentials.json` 0600 | `security_scoped_bookmark.dart:12`; `connection_store.dart:3`, `:15-16`, `:82` |
+| Flutter pin; SDK vendoring; debug entitlements variable | `build_macos.sh:45`, `:144-168`; `AppInfo.xcconfig:36` |
+| scan tests named | each exists in `test/` (listed at execution) |
+
+**Two claims in the first draft failed the check and were corrected before commit:**
+* "`HostFsService` does reads, writes, directory listings" — the class provides
+  `homeDir`, `probePath`, `makeDirs` and `removeDirGuarded` only.
+* "every command is recorded in the Output pane" — unverified, so it was replaced with
+  what the code shows (`ProviderFailureObserver` writes provider failures to
+  `outputLogProvider`).
+
+**Findings about 0056's §0.1** (annotated in place, not rewritten). Three statements the
+code contradicts:
+1. watcher restarts run in `WatchEngine`, not `watchLifecycle`;
+2. the read cap follows per-command read durations, not keepalive RTT bands;
+3. the stream client carries 8 concurrent streams, not "1 watcher + 1 CI".
+
+0056's `verified:` moves to 2026-09-19 on the strength of that check.
+
+**Pointers:** `AGENTS.md` *Architecture* names `architecture.md` as the authority, and
+0056 as history. `README.md` links `architecture.md`. 0056 carries a dated "Historical"
+note under its title and an annotation under §0.1.
+

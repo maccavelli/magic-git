@@ -1,11 +1,16 @@
 ---
 status: "partial"
 date: 2026-07-06
-verified: 2026-08-14  # 0007-MADR-docs-completion-audit.md checked its env-token claims (line 319)
+verified: 2026-09-19  # 0054-PLAN Phase 3 checked §0.1 against the code (see the annotation there)
 former-path: "docs/ARCHITECTURE_PLAN.md"
 ---
 
 # Remote Magic Git — Architecture & Feature-Parity Plan
+
+> **Historical, 2026-09-19.** The system as it is now is described in
+> [architecture.md](../architecture.md). This plan is kept as written; it moved here from
+> `docs/ARCHITECTURE_PLAN.md` under
+> [0054-MADR](0054-MADR-docs-link-checker-and-standard-layout-migration.md).
 
 > Actionable, standards-based plan for turning the current scaffold into a robust,
 > comprehensive Flutter/macOS GUI that manages and visualizes **remote** GitLab
@@ -25,6 +30,16 @@ former-path: "docs/ARCHITECTURE_PLAN.md"
 ---
 
 ## 0.1 Current SSH transport (authoritative, 2026-08-20)
+
+*Annotated 2026-09-19: authoritative until that date, and superseded by
+[architecture.md](../architecture.md), which carried this section forward only where the
+code still agrees. Checking it found three statements the code now contradicts: watcher
+restarts run in `WatchEngine`, not `watchLifecycle` (MADR 0045; the backoff, restart and
+polling values below still hold); the read cap is driven by per-command read durations in
+per-command buckets, not by keepalive RTT bands, and ping RTTs no longer feed it (0024 A2,
+0039 H1; the ceiling of 4 and the no-sample cap of 3 still hold); and the stream client
+carries up to 8 concurrent streams (2 when degraded, `maxConcurrentStreams`), not "1
+watcher + 1 CI" (0024 M2).*
 
 - **Library:** `dartssh2` **3.3.0** (exact pin). Stay on the `dartssh2`
   package — the `dartssh3` pub package is a stale fork and is not a

@@ -165,9 +165,12 @@ place to see live state.
 
 ## Architecture
 
+[`docs/architecture.md`](docs/architecture.md) describes the system as it is
+now and is the authority; this section is the short version agents need most.
 `docs/decisions/0056-PLAN-architecture-and-feature-parity.md` (formerly
-`ARCHITECTURE_PLAN.md`) is the detailed design doc — **§0.1 is the
-authoritative description of the SSH transport**; older sections are historical.
+`ARCHITECTURE_PLAN.md`) is the original plan, kept as history — its §0.1
+transport notes were carried into `architecture.md` where the code still
+agrees.
 
 ### The executor seam (the load-bearing abstraction)
 
