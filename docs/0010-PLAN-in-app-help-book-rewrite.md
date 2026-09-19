@@ -20,6 +20,10 @@ verified: 2026-08-20
 > [0053-PLAN-in-app-help-and-readme-currency-refresh.md](decisions/0053-PLAN-in-app-help-and-readme-currency-refresh.md).
 > Phase 7's maintainer review is carried by that plan's Phase 12, and happens
 > once, against v3.0.
+>
+> **Closed (2026-09-19).** The maintainer read Help v3.0 on a built `.app` as
+> 0053-PLAN Phase 12, which discharges Phase 7. The v2.0-specific task list
+> below is left as written; it describes a book that no longer ships.
 
 # Plan: Rewrite the in-app Help Book against the current workspace
 
@@ -1257,8 +1261,9 @@ the lies without the IA reshape.
   - [x] 6.3 Version `2.0` + ordered IA
   - [x] 6.4 X1–X5 absence
   - [x] 6.5 HIGH forbidden phrases still asserted
-- [ ] **Phase 7: Maintainer Mac verification**
-  - [ ] Build unsigned app and walk Confirmation item 7
+- [x] **Phase 7: Maintainer Mac verification** — discharged 2026-09-19 by
+  0053-PLAN Phase 12, against Help v3.0
+  - [x] Build unsigned app and walk Confirmation item 7 (v3.0 book)
 
 ---
 

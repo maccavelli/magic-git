@@ -4,7 +4,7 @@ date: 2026-09-18
 decision-makers: [Maintainer]
 consulted: [macos/Runner/help_book.json v2.0, test/help_book_json_test.dart, lib/ as of fcd70fb, records 0011–0052, README.md, docs/BUILD_MACOS.md, build_macos.sh]
 informed: [Magic Git contributors]
-verified: 2026-09-18
+verified: 2026-09-19
 ---
 
 # Bring the in-app Help Book, the README and the macOS build guide back into agreement with the shipped app, widen Help to cover what 0010 never had to, and add guards against drift that do more than check chords

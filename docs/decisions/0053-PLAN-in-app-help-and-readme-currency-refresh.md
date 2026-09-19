@@ -1,6 +1,6 @@
 ---
-status: "in-progress"
-date: 2026-09-18
+status: "complete"
+date: 2026-09-19
 associated-madr: "0053-MADR-in-app-help-and-readme-currency-refresh.md"
 ---
 
@@ -1186,7 +1186,8 @@ Plan approved by the maintainer on 2026-09-18.
   * `docs/README.md`: the 0053 row describes the executed state; the 0010 row says Phase 7 is carried here.
   * `docs/0010-PLAN-in-app-help-book-rewrite.md` has a dated pointer.
   * The MADR's `verified:` stays 2026-09-18, the day every claim was re-checked during execution.
-* **Status: `in-progress`, deliberately.** Every engineering acceptance criterion is met. The plan becomes
+* **Status: `in-progress`, deliberately** (superseded 2026-09-19 — both checks done; see *Phase 12, maintainer
+  checks* below). Every engineering acceptance criterion is met. The plan becomes
   `complete` only after the two maintainer checks, which an engineer cannot perform:
   1. **Help on a running app.** Build with `./build_macos.sh --unsigned --install`, open Help ▸ Support &
      Help (⌘?), walk all 34 topics, and search `gitignore`, `Reconcile`, `rate limit` and `dotfiles`,
@@ -1197,6 +1198,17 @@ Plan approved by the maintainer on 2026-09-18.
   * S4 (links from the app into Help) is out of scope by the MADR's decision.
   * `docs/BUILD_MACOS.md` stays in `docs/` pending the layout migration (B9).
   * Nothing was pushed.
+
+### Phase 12, maintainer checks (2026-09-19)
+
+The maintainer ran both checks and reported them passed:
+
+1. **Help on a running app** — done. The maintainer read the v3.0 Help on a built `.app` and reported that
+   "the new help docs look awesome". This also discharges 0010-PLAN Phase 7.
+2. **Build guide from a fresh clone** — done. The maintainer reported that "the build guide is accurate". No
+   step needed a change.
+
+Every acceptance criterion is now met, so the plan is `complete`. No files changed apart from these records.
 
 ### Handoff: what the guards do not cover
 
