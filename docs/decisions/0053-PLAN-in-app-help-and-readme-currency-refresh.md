@@ -956,3 +956,36 @@ Plan approved by the maintainer on 2026-09-18.
   * `flutter test`: `03:41 +4194 ~3: All tests passed!`.
   * JSON valid.
 * Commit `b000061`.
+
+### Phase 8, executed
+
+* **Contract.**
+  * Categories now end with `troubleshooting`. 0010's `isNot(contains('troubleshooting'))` was replaced by
+    a comment citing the 0053 amendment; the `tabs` and `features` bans stay.
+  * `troubleshooting` topic list locked.
+  * `version` asserted as `3.0`.
+  * `expect(totalTopics, 34)` added to the topic-order test.
+  * Required facts and 10 anchors for the four topics. `was rate limited by the forge` is the static
+    fragment of `forgeRateLimitMessage` (`lib/core/forge/forge_rate_limit.dart`).
+* **Red run:** exit 1, with 5 named failures:
+  * the label-anchor test (topic `trouble_connection` missing);
+  * `book header contains title and version` ("Expected: '3.0'");
+  * `categories follow the 0010 information architecture` ("at location [6] … shorter than expected");
+  * the topic-order test ("Expected: <34>" — "0053 locks 34 topics in 7 categories");
+  * the required-facts test.
+* **Content.**
+  * New category `troubleshooting` (SF Symbol `wrench.and.screwdriver`) with `trouble_connection`,
+    `trouble_forge`, `trouble_refresh` and `trouble_access`, each written symptom → cause → fix.
+  * Version set to `3.0`.
+  * Facts were re-read from `forge_widgets.dart` 205-245, `forge_rate_limit.dart`,
+    `glab_service.dart` 1120-1132, `worktree_access.dart`, `local_repo_form.dart` 87-107,
+    `connection_store.dart` (credentials path, 0600), `app_shell.dart` (reconnect overlay),
+    `dashboard_sheet.dart` (watcher states), and `repo_status_view.dart:1682`.
+  * One unverified sentence in my draft ("reconnecting starts watching again") was removed before applying.
+* **Gate:**
+  * `dart format`: 0 changed.
+  * `flutter analyze`: `No issues found!`.
+  * Help test: `+16`.
+  * `flutter test`: `03:37 +4194 ~3: All tests passed!`.
+  * JSON valid.
+* Commit `704e12b`.
