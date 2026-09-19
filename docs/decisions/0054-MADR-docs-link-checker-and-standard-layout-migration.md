@@ -1,5 +1,5 @@
 ---
-status: "proposed"
+status: "accepted"
 date: 2026-09-19
 decision-makers: [Maintainer]
 consulted: [AGENTS.md, docs/ as of 9df6338, the dotfiles repository's 0007 MADR and PLAN (standard documentation layout), test/source_is_text_scan_test.dart, test/no_real_identifiers_scan_test.dart, tool/mutate.py]
@@ -78,7 +78,7 @@ Measured over every tracked, non-symlink Markdown file (the inventory scripts ar
 * **169 path-shaped mentions** of the form `docs/<name>.md` outside link syntax, in prose and inline code
   (for example `docs/0004-MADR-ui-ux-deep-debug-audit.md:29-31` names four of the unnumbered documents
   this way). One more sits inside a fenced block. None is broken today except
-  `AGENTS.md:114`, which names the architecture document at the path this migration creates.
+  `AGENTS.md:115`, which names the architecture document at the path this migration creates.
 * **Outside Markdown**: two test comments cite a record by path
   (`test/drop_registry_test.dart:122`, `test/helpers/fake_watcher_handle.dart:18`), and two code comments
   cite an unnumbered document by name (`lib/core/git/watch_path_filter.dart:34` "ARCHITECTURE_PLAN
@@ -381,8 +381,8 @@ report. R6's index-completeness rule keeps it complete from then on.
   against the code, which is a statuses audit (the kind 0007 and 0022 did), not a migration. Adding it
   with a made-up date would falsify the one field whose purpose is to say when a claim was checked.
   R5 is written so that requiring `verified:` later is a one-line change, and the plan records the gap
-  as an open item. **This is flagged for the maintainer's decision at review**: close it in this
-  work as an extra phase, or leave it for a separate audit.
+  as an open item. **Maintainer's decision (2026-09-19): deferred** to a separate statuses audit;
+  not part of this work.
 * **Why there is no rule for bare record names.** An earlier draft had one: every token shaped like a
   record filename must name a record that exists. It was dropped for two reasons. First, it contradicts
   keeping bare names as historical identifiers, as above. Second, it flags every record that names a
@@ -392,3 +392,14 @@ report. R6's index-completeness rule keeps it complete from then on.
   documented behaviour and checked against the six anchors that exist. It is not guaranteed for every
   possible heading. Whether GitHub's web view renders every link identically to a filesystem
   resolution (for example a link to a directory) is assumed rather than tested.
+
+## Decision (2026-09-19)
+
+Accepted by the maintainer as proposed, with these answers to the four review points:
+
+1. **The architecture document is a full rewrite to the standard** (C2). `ARCHITECTURE_PLAN.md` becomes
+   `0056-PLAN-architecture-and-feature-parity.md`, and `architecture.md` is written new.
+2. **The `verified:` backfill for the 27 PLANs is deferred** (see *More Information*).
+3. **Bare names, blockquotes and fenced blocks are not rewritten** — accepted.
+4. **The R3 writing convention** (a file that does not exist yet is named without the `docs/` prefix)
+   — accepted.
