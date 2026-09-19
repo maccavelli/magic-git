@@ -172,10 +172,10 @@ class _SettingsSheetState extends ConsumerState<SettingsSheet> {
               ),
               const SheetDescription(
                 'App-wide preferences: command timeouts, who commits are '
-                'authored as, default pull/push behavior, background '
-                'fetching, trusted SSH hosts, and keyboard shortcuts. '
-                'Changes apply after Save. Keyboard Mappings and Forget '
-                'Host save immediately.',
+                'authored as, default pull/push behavior, which app opens '
+                'files, background fetching, trusted SSH hosts, and keyboard '
+                'shortcuts. Changes apply after Save. Keyboard Mappings, '
+                'Forget Host and Open files with save immediately.',
               ),
               const SizedBox(height: 18),
 

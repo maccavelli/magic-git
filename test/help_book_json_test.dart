@@ -136,11 +136,19 @@ const _labelAnchors = <String, List<String>>{
     'Are you sure you want to quit?',
   ],
   'overview': ['Log out?'],
+  'workspace_chrome': ['More sync actions', 'Commit in ', 'Focused sheet'],
+  'dashboard_recovery_activity': [
+    'Show Dashboard View',
+    'Show Recovery View',
+    'Restore files',
+    'Delete snapshot',
+  ],
+  'file_view_and_output': ['Clear output'],
   'tab_repository': ['Hide reviewed', 'Mark Resolved'],
   'tab_stashes': ['Stash with Message…'],
   'tab_worktrees': ['Add Worktree'],
   'tab_branches': ['Fetch & Prune'],
-  'settings': ['Known Hosts', 'Keyboard Mappings'],
+  'settings': ['Known Hosts', 'Keyboard Mappings', 'Open files with'],
 };
 
 /// Sentences Help taught that the app contradicts (0053 W1–W21). Each is
@@ -149,6 +157,13 @@ const _falsehoods0053 = <String>[
   'opens the macOS folder panel', // W7
   'alias a set of tabs', // W6
   'Close tab, Log out, Disconnect, Quit, and Close window confirm when', // W5
+  'Leading controls: Back, Forward, then Fetch', // W2
+  'one emphasized', // W3
+  '⋯ control opens Repository details', // W4
+  'View ▸ Show Dashboard,', // W8
+  'except Keyboard Mappings and Forget Host', // W9
+  'defaults to 3 minutes', // W10
+  'or this book', // W11
 ];
 
 /// Facts 0053 requires, by topic, alongside 0010's list.
@@ -186,6 +201,32 @@ const _requiredFacts0053 = <String, List<String>>{
     'Visibility',
     'own tab',
     '8',
+  ],
+  'workspace_chrome': [
+    'View options',
+    'More sync actions',
+    'green',
+    'orange',
+    'grey',
+    'recommended',
+    'Commit in Focused sheet',
+  ],
+  'file_view_and_output': ['live', 'Clear output', '2000'],
+  'dashboard_recovery_activity': [
+    'Show Dashboard View',
+    'Show Recovery View',
+    'Measure',
+    'Restore…',
+    '7 days',
+    'Canceled',
+    'Dock',
+  ],
+  'settings': [
+    'Open files with',
+    'System default',
+    'stall',
+    '30 minutes',
+    'Terminal.app',
   ],
   'tabs_workspaces': [
     'Rename Tab',

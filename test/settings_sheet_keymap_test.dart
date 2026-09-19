@@ -45,34 +45,35 @@ void main() {
   });
 
   // 0009 L17: keymap edits and Forget Host persist on the spot — the
-  // sheet's "apply after Save" blurb must not imply they wait too.
-  testWidgets(
-    'Settings discloses that Keyboard Mappings and Forget Host save immediately',
-    (tester) async {
-      SharedPreferences.setMockInitialValues({});
-      await tester.pumpWidget(
-        const ProviderScope(
-          child: MacosApp(
-            debugShowCheckedModeBanner: false,
-            home: SettingsSheet(),
-          ),
+  // sheet's "apply after Save" blurb must not imply they wait too. 0053 W9:
+  // so does Open files with.
+  testWidgets('Settings discloses every setting that saves immediately', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    await tester.pumpWidget(
+      const ProviderScope(
+        child: MacosApp(
+          debugShowCheckedModeBanner: false,
+          home: SettingsSheet(),
         ),
-      );
-      await tester.pumpAndSettle();
+      ),
+    );
+    await tester.pumpAndSettle();
 
-      expect(
-        find.textContaining(
-          'Keyboard Mappings and Forget Host save immediately',
-        ),
-        findsOneWidget,
-      );
-      expect(find.textContaining('Changes save immediately'), findsOneWidget);
-      final forget = find.text('Known Hosts');
-      await tester.ensureVisible(forget);
-      await tester.pumpAndSettle();
-      expect(find.textContaining('Forget saves immediately'), findsOneWidget);
-    },
-  );
+    expect(
+      find.textContaining(
+        'Keyboard Mappings, Forget Host and Open files with save '
+        'immediately',
+      ),
+      findsOneWidget,
+    );
+    expect(find.textContaining('Changes save immediately'), findsOneWidget);
+    final forget = find.text('Known Hosts');
+    await tester.ensureVisible(forget);
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Forget saves immediately'), findsOneWidget);
+  });
 
   testWidgets('workspace appearance controls are visible in Settings', (
     tester,

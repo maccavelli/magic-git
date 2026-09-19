@@ -368,28 +368,60 @@
         {
           "id": "workspace_chrome",
           "title": "Context Bar, Size, and Menus",
-          "summary": "How the repository chrome adapts below 720 px and at 1200 px, and what the context bar and menus contain.",
+          "summary": "The bar above every panel: navigation, repository status, view options, and the sync group.",
           "keywords": [
             "context bar",
+            "toolbar",
             "compact",
             "sync",
-            "preset",
-            "menu bar",
-            "720",
-            "1200"
+            "fetch",
+            "pull",
+            "push",
+            "view options",
+            "presets",
+            "watch dot",
+            "menus"
           ],
           "sections": [
             {
               "type": "paragraph",
-              "text": "The workspace is compact below 720 px (navigator or canvas, not both; the sync group collapses; a sidebar toggle sits on the bar), standard from 720 to 1199, and wide at 1200 px and above."
+              "text": "The workspace is compact below 720 px (navigator or canvas, not both; the sync group collapses; a Toggle sidebar button sits on the bar), standard from 720 to 1199, and wide at 1200 px and above."
             },
             {
               "type": "heading",
-              "text": "Context bar"
+              "text": "Context bar, left to right"
+            },
+            {
+              "type": "items",
+              "items": [
+                "Back and Forward — move between places you visited in this repository.",
+                "Repository identity — name, branch, and status summary. On SSH it also shows the connection. Below 720 px the detail moves into a hover tooltip (Repository details).",
+                "View options — the workspace view options menu (below).",
+                "Activity — live operations (see Dashboard, Recovery, and Activity).",
+                "Stash changes and Refresh.",
+                "Fetch · Pull · Push · Sync — the sync group, last."
+              ]
+            },
+            {
+              "type": "heading",
+              "text": "The change-detection dot"
             },
             {
               "type": "paragraph",
-              "text": "The bar always shows the repository identity, watch-health dot, status summary, and one primary action. On SSH it also shows link chips. Leading controls: Back, Forward, then Fetch · Pull · Push · Sync (one emphasized, variants in the overflow). Trailing: Stash, Refresh, Activity, view options. Below 720 px a ⋯ control opens Repository details."
+              "text": "Beside the repository name, a dot shows how Magic Git notices file changes: green means a live file watcher, orange means it is polling instead (slower; see Troubleshooting ▸ Refresh), and grey means nothing is watching — press ⌘R to refresh."
+            },
+            {
+              "type": "heading",
+              "text": "The sync group"
+            },
+            {
+              "type": "items",
+              "items": [
+                "Every verb that applies right now is highlighted: Fetch always, Pull when you are behind, Push when you are ahead, Sync when both.",
+                "The recommended verb carries the ↓N ↑M ahead/behind badge. Below 720 px only the recommended verb keeps a button.",
+                "More sync actions, beside the group, holds Pull with Rebase, Pull with Merge, Push and Set Upstream, Push Tags, Force Push with Lease, and Force Push.",
+                "Hover a dimmed verb to see why it is unavailable — for example \"This branch has no upstream yet\"."
+              ]
             },
             {
               "type": "heading",
@@ -398,8 +430,9 @@
             {
               "type": "items",
               "items": [
-                "Show or hide secondary action labels (off by default).",
+                "Show secondary action labels (off by default).",
                 "Show or hide Back, Forward, Sync actions, Stash, Refresh, Activity, View options, Status summary, and Connection status.",
+                "Commit in Focused sheet (default) or Commit in Task dock — where Commit… and ⌘G open the composer. Switching keeps your draft.",
                 "Presets Review, Commit, Investigate, and Minimal. Default is Review. Investigate names an inspector slot that is unused — Focus Inspector does nothing."
               ]
             },
@@ -409,20 +442,22 @@
             },
             {
               "type": "paragraph",
-              "text": "File, Repository, Branch, Stash, Forge, and Worktree sit in the macOS menu bar with App, Edit, View, Window, and Help. Unavailable items stay visible and dim. View ▸ Focus Navigator, Canvas, Task Dock, and Activity exist and are unbound. Choosing a command from another panel switches there and runs it."
+              "text": "File, Repository, Branch, Stash, Forge, and Worktree sit in the macOS menu bar with App, Edit, View, Window, and Help. Unavailable items stay visible and dim. View ▸ Focus Navigator, Canvas, Task Dock, and Activity exist and are unbound. Choosing a command from another panel switches there and runs it. Menus and Factory-Default Shortcuts lists every menu item."
             }
           ]
         },
         {
           "id": "file_view_and_output",
           "title": "File View and Output",
-          "summary": "The docked file tree (⇧⌘E) and the command Output log (⇧⌘O).",
+          "summary": "The docked file tree (⇧⌘E) and the live command Output log (⇧⌘O).",
           "keywords": [
             "file view",
+            "file tree",
             "output",
-            "pin",
-            "tree",
-            "log"
+            "log",
+            "console",
+            "progress",
+            "commands"
           ],
           "shortcuts": [
             {
@@ -442,21 +477,39 @@
               "text": "File View is View ▸ Show File View (⇧⌘E). It is on by default but hidden until the canvas is at least 1200 px wide unless you Pin file view open. Hide and Collapse all sit on the Files header. There is no Changes | Files switch — the change list stays in the navigator and the tree is this third pane."
             },
             {
+              "type": "heading",
+              "text": "Output"
+            },
+            {
               "type": "paragraph",
-              "text": "Output is a docked command log under the Repository canvas, visible by default. Toggle it with ⇧⌘O. It shows git and SSH invocations, stdout, stderr, and exit codes, including doctor install output."
+              "text": "Output (View ▸ Show Output View, ⇧⌘O) is a docked command log under the Repository canvas, visible by default. It shows git and SSH invocations, stdout, stderr, and exit codes, including doctor install output."
+            },
+            {
+              "type": "items",
+              "items": [
+                "Fetch, pull, push, sync, Fetch & Prune, and clone stream their progress live as they run.",
+                "A Pull shows two commands: the fetch, then the merge or rebase.",
+                "After a pull, push, or sync, Output lists the files that were pulled or pushed.",
+                "Clear output empties the log; Hide output view closes it. Drag the top edge to resize.",
+                "The log keeps the last 2000 lines."
+              ]
             }
           ]
         },
         {
           "id": "dashboard_recovery_activity",
           "title": "Dashboard, Recovery, and Activity",
-          "summary": "Session telemetry, reflog snapshots, and the live operations sheet.",
+          "summary": "Session health, reflog and snapshot recovery, and the live operations list.",
           "keywords": [
             "dashboard",
             "recovery",
-            "activity",
             "reflog",
-            "heatmap"
+            "snapshots",
+            "activity",
+            "operations",
+            "telemetry",
+            "authentication",
+            "dock"
           ],
           "shortcuts": [
             {
@@ -472,30 +525,76 @@
           ],
           "sections": [
             {
-              "type": "paragraph",
-              "text": "Dashboard (View ▸ Show Dashboard, ⇧⌘D) is session telemetry — connection, latency, watcher and tool health, forge auth, command counts, and a heatmap of the last 200 commits. It is not the Forge panel."
+              "type": "heading",
+              "text": "Dashboard"
             },
             {
               "type": "paragraph",
-              "text": "Recovery (⇧⌘U) is a sheet over HEAD's reflog plus refs/magic-git/snapshots/. Use it for state Undo Git Operation can no longer reach."
+              "text": "View ▸ Show Dashboard View (⇧⌘D) is a live overview of the session. It is not the Forge panel."
+            },
+            {
+              "type": "items",
+              "items": [
+                "Connection — backend, host, reconnects, and the last drop.",
+                "Authentication — whether git, gh, and glab are installed and signed in, on this Mac and on the connected host.",
+                "Link latency (SSH keepalive) — one sample every 15 s.",
+                "Repository — upstream state, for example \"This branch has no upstream\".",
+                "Commit activity (30 days) with top authors, and Contributions (last 200 commits) as a heatmap.",
+                "Commands (this session) — command counts.",
+                "Change watcher — Live, Polling fallback, or Stopped.",
+                "Repository footprint — Measure runs git count-objects and suggests `git gc` when it would help."
+              ]
+            },
+            {
+              "type": "heading",
+              "text": "Recovery"
             },
             {
               "type": "paragraph",
-              "text": "Activity is the context-bar bell. It opens a live sheet of running and failed operations, can reveal a command in Output, and can undo the newest undoable record."
+              "text": "View ▸ Show Recovery View (⇧⌘U) lists every place HEAD has pointed (the reflog) and the snapshots in refs/magic-git/snapshots/. A snapshot is taken automatically before each discard or delete and kept for 7 days. Use Recovery for state that Undo Git Operation can no longer reach."
+            },
+            {
+              "type": "items",
+              "items": [
+                "Select a reflog entry, then Restore…: Checkout this state, Create branch here…, Reset current branch here (soft), Reset current branch here (hard), or Copy hash.",
+                "Select a snapshot, then Actions: Restore files, Delete snapshot, or Copy hash."
+              ]
+            },
+            {
+              "type": "heading",
+              "text": "Activity"
+            },
+            {
+              "type": "paragraph",
+              "text": "Activity is on the context bar. Its icon spins while operations run; its tooltip counts them (\"2 active operations\", or failed ones). It opens a list of repository operations — Queued, Running, Completed, Failed, or Canceled — each with a live elapsed time."
+            },
+            {
+              "type": "items",
+              "items": [
+                "Output reveals the command in the Output log.",
+                "Undo undoes the newest undoable operation.",
+                "Recovery opens the Recovery sheet.",
+                "While fetch, pull, or push runs, the Dock icon shows a progress bar; a clone shows its percentage."
+              ]
             }
           ]
         },
         {
           "id": "settings",
           "title": "Settings",
-          "summary": "Timeouts, identity, sync defaults, appearance, known hosts, and keyboard mappings.",
+          "summary": "Timeouts, identity, sync defaults, opening files, auto-fetch, appearance, known hosts, shortcuts.",
           "keywords": [
             "settings",
             "preferences",
-            "timeouts",
+            "timeout",
+            "identity",
+            "pull mode",
+            "open files with",
+            "editor",
             "auto-fetch",
+            "appearance",
             "known hosts",
-            "keyboard"
+            "keyboard mappings"
           ],
           "shortcuts": [
             {
@@ -507,19 +606,20 @@
           "sections": [
             {
               "type": "paragraph",
-              "text": "Open Settings from Magic Git ▸ Settings… (⌘,), the palette, or this book. Changes apply after Save, except Keyboard Mappings and Forget Host, which save immediately."
+              "text": "Open Settings from Magic Git ▸ Settings… (⌘,) or the command palette. Changes apply after Save. Keyboard Mappings, Forget Host and Open files with save immediately."
             },
             {
               "type": "items",
               "items": [
-                "Command timeouts — network (fetch/pull/push) defaults to 3 minutes; commit defaults to 5 minutes; the floor is 5 seconds.",
-                "Committer identity — applied to every commit. Leave blank to use the host git config. Magic Git always records unsigned commits (--no-gpg-sign).",
-                "Default sync — Pull / Sync uses Fast-forward only, Rebase, or Merge (default Fast-forward only). Push tags by default is off.",
-                "Auto-fetch — Off, or every 5, 10, 15, or 30 minutes. Default is every 5 minutes.",
-                "Workspace appearance — Density Compact or Comfortable (default Comfortable), High contrast, Reduce Motion follows macOS.",
-                "Known Hosts — Forget a recorded SSH key immediately.",
-                "Keyboard Mappings — Customize remaps; they save immediately. The live cheat sheet is ⌘/.",
-                "External tools — override binary paths and Scan the host."
+                "Command timeouts — Network (fetch/pull/push) is a stall budget of 3 minutes by default: a fetch, pull, or push that prints no output for that long is stopped, while a slow transfer that keeps printing may run up to 30 minutes. Commit is a wall-clock limit of 5 minutes by default — raise it if a slow hook is cut off. The minimum for either is 5 seconds.",
+                "Committer identity — applied to every commit. Leave blank to use the repository's own git config. Magic Git always records unsigned commits (--no-gpg-sign).",
+                "Default sync behavior — Pull / Sync uses Fast-forward only, Rebase, or Merge (default Fast-forward only). Push tags by default is off.",
+                "Opening files — Open files with chooses the application Open file uses (Choose… or Reset). Left as System default, a file opens in whatever macOS opens that kind of file with. Open in Terminal always uses Terminal.app.",
+                "Background auto-fetch — Auto-fetch is Off, or every 5, 10, 15, or 30 minutes. Default is every 5 minutes.",
+                "Workspace appearance — Density Compact or Comfortable (default Comfortable), High contrast, and Reduce Motion, which follows macOS.",
+                "Known Hosts — Forget a recorded SSH host key.",
+                "Keyboard Mappings — Customize remaps. The live cheat sheet is ⌘/.",
+                "External tools — override binary paths and Scan the host (see Tool Health)."
               ]
             }
           ]
