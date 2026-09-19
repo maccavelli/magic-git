@@ -191,7 +191,7 @@ void main() {
     // a property of the source, and it fails on a twelfth site added later.
     //
     // Read as bytes with a lenient decode — this is the file tools treat as
-    // binary (AGENTS.md), where a plain read can come back empty.
+    // binary (CLAUDE.md), where a plain read can come back empty.
     final source = const Utf8Decoder(
       allowMalformed: true,
     ).convert(File('lib/core/providers/app_providers.dart').readAsBytesSync());

@@ -1,5 +1,6 @@
 ---
 status: "complete"
+verified: 2026-09-19  # checked against the code at d67953c: shipped deliverables located, supersessions traced (0054 follow-up)
 date: 2026-09-08
 associated-madr: "0037-MADR-namespace-recency-from-repositories-you-open.md"
 ---

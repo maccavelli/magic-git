@@ -19,7 +19,7 @@
 //
 // **No real namespace, group or project name is ever printed or asserted on.**
 // Counts and shapes carry the whole argument; naming the group adds nothing
-// but exposure (AGENTS.md). Assertions are therefore about cardinality,
+// but exposure (CLAUDE.md). Assertions are therefore about cardinality,
 // subset relationships and structure.
 @Tags(['integration', 'live-forge'])
 library;

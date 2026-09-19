@@ -135,10 +135,10 @@
     ]
   },
   {
-    "label": "p1: R5 accepts a missing status:",
+    "label": "p1: R5 accepts a missing required key",
     "file": "tool/records.dart",
-    "find": "    if (!_statusLine.hasMatch(frontmatter)) {",
-    "replace": "    if (false) {",
+    "find": "      if (!pattern.hasMatch(frontmatter)) {",
+    "replace": "      if (false) {",
     "tests": [
       "test/docs_records_test.dart"
     ]
@@ -157,6 +157,15 @@
     "file": "tool/records.dart",
     "find": "    if (!links.contains(r.path)) {",
     "replace": "    if (false) {",
+    "tests": [
+      "test/docs_records_test.dart"
+    ]
+  },
+  {
+    "label": "follow-up: R5 requires only status:",
+    "file": "tool/records.dart",
+    "find": "  for (final key in ['status', 'verified'])",
+    "replace": "  for (final key in ['status'])",
     "tests": [
       "test/docs_records_test.dart"
     ]

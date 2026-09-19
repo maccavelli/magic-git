@@ -169,7 +169,7 @@ void main() {
     // all of them, plus the drop recorder, and fails on a fourth added later.
     //
     // Read as bytes: `app_providers.dart` carries bytes that make tools treat it
-    // as binary (see AGENTS.md), and a lenient decode is the honest way to scan
+    // as binary (see CLAUDE.md), and a lenient decode is the honest way to scan
     // it — the same trap that hid three of these call sites from an earlier
     // `grep -rn` (MADR 0039 amendment 0039.2).
     final source = const Utf8Decoder(

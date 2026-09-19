@@ -37,6 +37,7 @@ Map<String, String> cleanTree() => {
   'docs/decisions/0001-MADR-first.md': [
     '---',
     'status: "accepted"',
+    'verified: 2026-01-01',
     'former-path: "docs/gone.md"',
     '---',
     '',
@@ -55,10 +56,10 @@ Map<String, String> cleanTree() => {
     '',
   ].join('\n'),
   'docs/decisions/0001-PLAN-first.md':
-      '---\nstatus: "complete"\n---\n\n# Plan\n\n'
+      '---\nstatus: "complete"\nverified: 2026-01-01\n---\n\n# Plan\n\n'
       '[MADR](0001-MADR-first.md)\n',
   'docs/reports/0002-REPORT-second.md':
-      '---\nstatus: "partial"\n---\n\n# Report\n',
+      '---\nstatus: "partial"\nverified: 2026-01-01\n---\n\n# Report\n',
   'lib/a.dart':
       "// Described in docs/architecture.md.\nconst p = 'docs/not-a-comment.md';\n",
 };
@@ -99,9 +100,9 @@ Map<String, String> appended(String path, String text) {
 
 const _madr = 'docs/decisions/0001-MADR-first.md';
 
-/// The MADR fixture is 17 lines, newline-terminated, so appended text starts
-/// on line 18.
-const _firstAppendedLine = 18;
+/// The MADR fixture is 18 lines, newline-terminated, so appended text starts
+/// on line 19.
+const _firstAppendedLine = 19;
 
 void main() {
   setUp(() => _tmp = Directory.systemTemp.createTempSync('docs_records_'));
@@ -230,7 +231,7 @@ void main() {
           '> Quoted: docs/quoted-gone.md',
           'Unquoted: docs/quoted-gone.md',
         );
-        expect(run(tree, rules: ['paths']), ['paths $_madr:15']);
+        expect(run(tree, rules: ['paths']), ['paths $_madr:16']);
       },
     );
 
@@ -296,12 +297,17 @@ void main() {
       expect(nextNumber(root, checkedFiles(root)), '0043');
     });
 
-    test('F19 a record without frontmatter, or without status:', () {
+    test('F19 a record without frontmatter, status: or verified:', () {
       final tree = cleanTree()
         ..['docs/decisions/0001-PLAN-first.md'] = '# Plan\n'
         ..['docs/reports/0002-REPORT-second.md'] =
-            '---\ndate: 2026-01-01\n---\n# Report\n';
+            '---\nverified: 2026-01-01\n---\n# Report\n'
+        ..[_madr] = cleanTree()[_madr]!.replaceFirst(
+          'verified: 2026-01-01\n',
+          '',
+        );
       expect(run(tree, rules: ['frontmatter']), [
+        'frontmatter $_madr:1',
         'frontmatter docs/decisions/0001-PLAN-first.md:1',
         'frontmatter docs/reports/0002-REPORT-second.md:1',
       ]);

@@ -26,7 +26,7 @@ void main() {
   tearDown(() => messenger.setMockMethodCallHandler(channel, null));
 
   /// Bytes a lossy String round trip would destroy: a NUL (which the native
-  /// codec truncates at, per AGENTS.md) and invalid UTF-8.
+  /// codec truncates at, per CLAUDE.md) and invalid UTF-8.
   final hostile = Uint8List.fromList([
     0x68,
     0x69,

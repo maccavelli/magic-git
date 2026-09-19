@@ -114,5 +114,5 @@ If your `flutter` differs, use `./.flutter-sdk/bin/flutter`, which
 - [docs/architecture.md](docs/architecture.md) — how the app is built, as it is now:
   the executors, the SSH transport, scheduling, watching and state.
 - [docs/guides/build-macos.md](docs/guides/build-macos.md) — building, signing, installing.
-- [AGENTS.md](AGENTS.md) — instructions for coding agents working in this
+- [CLAUDE.md](CLAUDE.md) — instructions for coding agents working in this
   repository.

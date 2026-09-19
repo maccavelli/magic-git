@@ -49,7 +49,7 @@ bool _grants(String plist, String key) {
 /// Every entitlement key name present in [plist], in document order.
 ///
 /// String matching, not an XML parser: this suite runs on every platform
-/// (AGENTS.md), and `PlistBuddy` is macOS-only. `<key>` is never itself an
+/// (CLAUDE.md), and `PlistBuddy` is macOS-only. `<key>` is never itself an
 /// entitlement's value in any file this test reads, so a plain regex is exact
 /// here without needing a real plist parser.
 List<String> _keyNames(String plist) =>

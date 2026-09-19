@@ -5,7 +5,7 @@
 // with no error to notice. Nothing about that failure suggests the tool simply
 // refused to look.
 //
-// It has already cost this project three times. `AGENTS.md` carried a standing
+// It has already cost this project three times. `CLAUDE.md` carried a standing
 // gotcha for `app_providers.dart`; an investigation on 2026-09-12 searched
 // `git_porcelain_parser.dart` for a class it plainly contains and was told it
 // was absent; and `recent_repos_store.dart` was carrying the same hazard with

@@ -1,5 +1,6 @@
 ---
 status: "complete"
+verified: 2026-09-19  # checked against the code at d67953c: shipped deliverables located, supersessions traced (0054 follow-up)
 date: 2026-09-05
 associated-madr: "0030-MADR-test-coverage-gaps-are-shaped-not-sized.md"
 ---

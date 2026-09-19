@@ -141,7 +141,7 @@ void main() {
       'provider', (tester) async {
     // The decision's whole claim, asserted directly. Deliberately NOT
     // appProviderScope: the point is that a scope built by someone who never
-    // read AGENTS.md behaves like the app anyway, because the policy rides
+    // read CLAUDE.md behaves like the app anyway, because the policy rides
     // the provider and survives overrideWith.
     await tester.pumpWidget(
       ProviderScope(

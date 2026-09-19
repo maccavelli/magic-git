@@ -403,3 +403,18 @@ Accepted by the maintainer as proposed, with these answers to the four review po
 3. **Bare names, blockquotes and fenced blocks are not rewritten** — accepted.
 4. **The R3 writing convention** (a file that does not exist yet is named without the `docs/` prefix)
    — accepted.
+
+## Amendment 0054.1 (2026-09-19): the `verified:` backfill is done, and R5 requires it
+
+The maintainer reversed the deferral recorded in *More Information*. Each of the 27
+PLANs that had no `verified:` date was checked against the code at `d67953c`, with its
+shipped deliverables located to `file:line` and later supersessions traced to the
+records that made them. **All 27 were confirmed.** None was contradicted, so no status
+value changed. Each carries `verified: 2026-09-19`, as does
+`0054-PLAN-docs-link-checker-and-standard-layout-migration.md`, which also lacked one.
+R5 now requires `verified:` as well as `status:`: the one-line change this record
+anticipated.
+
+At the same time, the repository's canonical agent-instructions file became `CLAUDE.md`,
+with `AGENTS.md` and `.goosehints` as symlinks to it. The citations of `AGENTS.md` in this
+record are left as written: they were true when written, and the symlink still resolves.

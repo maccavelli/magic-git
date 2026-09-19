@@ -1,5 +1,6 @@
 ---
 status: "complete"
+verified: 2026-09-19
 date: 2026-09-19
 associated-madr: "0054-MADR-docs-link-checker-and-standard-layout-migration.md"
 ---
@@ -685,3 +686,46 @@ note under its title and an annotation under §0.1.
 * Whether to mark the dotfiles repository's 0007-PLAN Phase 6 done for this repository.
   That is outside this repository, and the maintainer's call.
 
+### Follow-up — executed 2026-09-19 (maintainer's request after the push)
+
+**1. The `verified:` backfill** (MADR amendment 0054.1).
+* **How it was checked.** Four read-only agents each took a quarter of the 27 PLANs.
+  For every plan they read its status and execution record, and located the 3–6 most
+  load-bearing shipped deliverables at `file:line` in the tree at `d67953c`. A
+  deliverable later replaced was traced to the record that replaced it.
+* **Result: 27 confirmed, 0 contradicted.** 16 were confirmed as they stand; 11 via
+  supersession (mostly MADR 0045's rewrite of the watcher stack).
+* **Stamped.** Each carries `verified: 2026-09-19`, with a YAML comment naming the
+  basis. This PLAN, which also lacked the field, is stamped too.
+* **Findings reported, not changed** (the status values were out of scope):
+  * 26 PLANs use `complete` or `complete (amended)`. `CLAUDE.md`'s plan vocabulary is
+    `executed` · `partial`, and the `madr-and-plan-writing` skill uses `complete`.
+  * 0049 says `complete` while its body says the maintainer's manual check (criterion
+    12) is still owed.
+  * 0030's body records its Phase 7 as partial.
+  * 0040's body does not mention that 0041 re-landed its Phase 2 goal.
+  * 0024 still has an "Empty until the plan is approved" placeholder under its
+    execution-record heading.
+
+**2. R5 requires `verified:`.**
+* `tool/records.dart` checks both keys through one table.
+* Fixture F19 gained the missing-`verified:` case, and the clean fixture's records
+  carry the key (the line constants moved by one).
+* The catalogue's R5 entry was retargeted, and a new one added ("R5 requires only
+  status:"). **19 killed, 0 survived.**
+* Seen to fail on real input: against a clone of the pushed `HEAD` (before the
+  backfill), `check --rules frontmatter` → `RC=1`, **28 findings**, all "no verified:".
+
+**3. `CLAUDE.md` is the canonical instructions file.**
+* `git mv AGENTS.md CLAUDE.md`, with `AGENTS.md` and `.goosehints` recreated as
+  symlinks to it. Both old symlinks were committed and unchanged before they were
+  replaced.
+* The header now says to edit only `CLAUDE.md`.
+* The live references were updated: `README.md`, the `docs/README.md` matrix and twin
+  note, `tool/records.dart`'s comments, `.agents/pre_add_test_hook.py`, and 9 test
+  comments. Historical records keep their `AGENTS.md` citations.
+* The checker skips symlinks, so it now checks `CLAUDE.md` and skips `AGENTS.md`.
+
+**4. The dotfiles 0007-PLAN.** Its Phase 6b (this repository's migration) is recorded
+done there, with the ways it differed from that plan as written. It stays `in-progress`
+for its own Phase 5 and remaining flat records, by the maintainer's choice.

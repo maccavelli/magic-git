@@ -3,7 +3,7 @@
 
 Paths are derived from this file so the hook works in any clone. The full
 unit suite is too slow for a PreToolUse hook (and the previous 60s timeout
-could not finish it); AGENTS.md still requires `flutter test` before staging.
+could not finish it); CLAUDE.md still requires `flutter test` before staging.
 """
 import json
 import os

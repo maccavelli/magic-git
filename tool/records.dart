@@ -43,7 +43,7 @@ const allRules = [
 ];
 
 /// Records whose number deliberately carries two unrelated MADRs. They predate
-/// the numbering rule and may not be renumbered (AGENTS.md); `docs/README.md`
+/// the numbering rule and may not be renumbered (CLAUDE.md); `docs/README.md`
 /// names each twin. A third MADR on either number is still a finding.
 const twinMadrNumbers = {'0011', '0012'};
 
@@ -52,8 +52,8 @@ const twinMadrNumbers = {'0011', '0012'};
 
 /// The files the checker looks at: tracked plus untracked-but-not-ignored, so
 /// a record is checked before it is staged, and ignored trees (a vendored SDK,
-/// `node_modules`) are not. Symlinks are skipped: `CLAUDE.md` and
-/// `.goosehints` point at `AGENTS.md`, which is checked once, as itself.
+/// `node_modules`) are not. Symlinks are skipped: `AGENTS.md` and
+/// `.goosehints` point at `CLAUDE.md`, which is checked once, as itself.
 List<String> checkedFiles(Directory root) {
   final result = Process.runSync('git', [
     'ls-files',
@@ -502,9 +502,15 @@ String nextNumber(Directory root, List<String> files) {
   return (max + 1).toString().padLeft(4, '0');
 }
 
-final _statusLine = RegExp(r'^status:\s*\S', multiLine: true);
+/// The keys every record's frontmatter carries: its state, and when that
+/// state was last checked against the code (CLAUDE.md).
+final _requiredKeys = {
+  for (final key in ['status', 'verified'])
+    key: RegExp('^$key:\\s*\\S', multiLine: true),
+};
 
-/// R5 — every record opens with YAML frontmatter carrying a `status:`.
+/// R5 — every record opens with YAML frontmatter carrying `status:` and
+/// `verified:`.
 List<Finding> checkFrontmatter(Directory root, List<String> files) {
   final findings = <Finding>[];
   for (final r in recordsIn(files)) {
@@ -518,10 +524,12 @@ List<Finding> checkFrontmatter(Directory root, List<String> files) {
     final frontmatter = lines
         .sublist(1, end < 0 ? lines.length : end)
         .join('\n');
-    if (!_statusLine.hasMatch(frontmatter)) {
-      findings.add(
-        Finding('frontmatter', r.path, 1, 'frontmatter has no status:'),
-      );
+    for (final MapEntry(key: key, value: pattern) in _requiredKeys.entries) {
+      if (!pattern.hasMatch(frontmatter)) {
+        findings.add(
+          Finding('frontmatter', r.path, 1, 'frontmatter has no $key:'),
+        );
+      }
     }
   }
   return findings;

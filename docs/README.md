@@ -13,7 +13,7 @@ contents, and the one place to see what is actually live.
 | understand how the app fits together | [architecture.md](architecture.md) |
 | build, install or sign the app | [the build guide](guides/build-macos.md) |
 | run the Xcode unit tests without a certificate | [the build guide](guides/build-macos.md#running-the-xcode-unit-tests-without-a-certificate) |
-| write a new decision record, plan or report | [AGENTS.md](../AGENTS.md#decision-records-madr-and-plans), and `dart run tool/records.dart next` for its number |
+| write a new decision record, plan or report | [CLAUDE.md](../CLAUDE.md#decision-records-madr-and-plans), and `dart run tool/records.dart next` for its number |
 | know why there is no libgit2 | [0001-MADR](decisions/0001-MADR-native-git-libgit2.md) |
 | know why the SSH transport works as it does | [0011](decisions/0011-MADR-ssh-transport-stability-hardening.md), [0012](decisions/0012-MADR-adopt-dartssh2-v3.md), [0014](decisions/0014-MADR-ssh-engine-next-wave-hardening.md), [0024](decisions/0024-MADR-ssh-and-remote-repo-engine-debug-audit.md) |
 | understand the file watcher | [0045-MADR](decisions/0045-MADR-one-owner-per-watcher-concern.md), and the watch section of [architecture.md](architecture.md#watching-for-changes) |
@@ -116,7 +116,7 @@ Every MADR and every PLAN, by number.
 | 0056 | Architecture and feature-parity plan — no MADR of its own; formerly `ARCHITECTURE_PLAN.md` | — | [plan](decisions/0056-PLAN-architecture-and-feature-parity.md) | `partial` — historical; superseded as a description by [architecture.md](architecture.md), with three stale §0.1 statements annotated in place |
 | 0061 | Remaining test coverage — no MADR of its own; formerly `TEST_COVERAGE_PLAN.md` | — | [plan](decisions/0061-PLAN-remaining-test-coverage.md) | `partial` — 12 of the 14 test files it names exist (checked by existence only) |
 
-⚠ **0011 and 0012 each carry two unrelated records.** `AGENTS.md` forbids
+⚠ **0011 and 0012 each carry two unrelated records.** `CLAUDE.md` forbids
 renumbering an existing file, so both keep the number and each carries a note
 naming its twin. **Cite records by full filename, never by number alone.**
 
@@ -141,6 +141,12 @@ Audits and investigations that record what was found and decide nothing.
 | 0060 | [Drag-and-drop engine feasibility](reports/0060-REPORT-drag-and-drop-engine-feasibility.md) — formerly `DRAG_AND_DROP_ENGINE.md` | `executed` — A–E shipped |
 
 ## What "verified" means here
+
+**2026-09-19 (0054 follow-up):** the 27 plans that had no `verified:` date at all
+(0022–0045, 0049, 0052, 0053) were each checked against the code at `d67953c`. Every
+one was confirmed, with shipped deliverables located and later supersessions traced,
+and each now carries `verified: 2026-09-19`. `tool/records.dart` now fails a record
+with no `verified:`, so the gap cannot reopen.
 
 Statuses were last audited on **2026-09-03** against the tree, in the manner
 0007 established: each claim checked against code rather than taken from the

@@ -1,7 +1,7 @@
 // MADR 0030 T1.1. One test body, run against every `CommandExecutor`
 // implementation that can be constructed in-process.
 //
-// `AGENTS.md` calls this seam the load-bearing abstraction. It has five
+// `CLAUDE.md` calls this seam the load-bearing abstraction. It has five
 // implementations, and the tests naming them ranged from 126 files
 // (`SSHCommandExecutor`) to 1 (`ProxyCommandExecutor`, which every pop-out
 // window uses). Shape C — parity — produced a real defect in the watch
@@ -284,7 +284,7 @@ void main() {
     test(
       'R7 — argv is never a shell string, so metacharacters are inert',
       () async {
-        // `AGENTS.md`: ShellEscaper is the injection defense on the SSH path.
+        // `CLAUDE.md`: ShellEscaper is the injection defense on the SSH path.
         // On this path the defense is that NO SHELL EXISTS — `Process.start`
         // takes argv natively. If anything ever joins argv into a string, this
         // argument stops being data and starts being code.

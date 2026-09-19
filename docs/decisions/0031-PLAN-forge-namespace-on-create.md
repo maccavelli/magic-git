@@ -1,5 +1,6 @@
 ---
 status: "executed"
+verified: 2026-09-19  # checked against the code at d67953c: shipped deliverables located, supersessions traced (0054 follow-up)
 date: 2026-09-05
 associated-madr: "0031-MADR-forge-namespace-on-create.md"
 ---
