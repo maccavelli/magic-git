@@ -1660,14 +1660,18 @@
         {
           "id": "viewer_and_remote_edit",
           "title": "File Viewer and Remote Edit",
-          "summary": "Floating Code and Preview windows, find, wrap, and Open in Default App.",
+          "summary": "Floating viewer windows with Source and Preview, find, wrap, and editing files on an SSH host.",
           "keywords": [
             "viewer",
+            "file viewer",
             "preview",
+            "markdown",
+            "source",
+            "find",
+            "word wrap",
+            "open file",
             "remote edit",
-            "open",
-            "wrap",
-            "find"
+            "editor"
           ],
           "shortcuts": [
             {
@@ -1694,41 +1698,92 @@
           "sections": [
             {
               "type": "paragraph",
-              "text": "File viewer windows are floating overlays, not the docked File View pane. Switch Code and Preview in the title bar. Markdown preview links open in the browser. Escape or ⌘W closes the front viewer."
+              "text": "View file opens a floating viewer window over the workspace, not the docked File View pane. Viewer windows can be dragged and resized, cascade when you open several, and reopen at the last size. Escape or ⌘W closes the front viewer."
+            },
+            {
+              "type": "items",
+              "items": [
+                "Markdown, HTML, and SVG files open in Preview; switch to Source with the title-bar toggle. Links in a Markdown preview open in the browser.",
+                "The title bar also has Copy file contents, Word wrap, and Maximize (or double-click the title bar).",
+                "⌘F opens the find bar.",
+                "Binary files and files too large to display offer Open in Default App instead."
+              ]
             },
             {
               "type": "heading",
-              "text": "Open in Default App"
+              "text": "Open file"
             },
             {
               "type": "paragraph",
-              "text": "On a local repo, Open uses the macOS opener. On SSH, Open in Default App copies the file to a temp path, watches the parent directory, and uploads on save. A conflicting remote change offers overwrite."
+              "text": "Open file (on the change list and the file tree) opens the file in the application chosen in Settings ▸ Open files with — System default unless you pick one."
+            },
+            {
+              "type": "heading",
+              "text": "Editing a file on an SSH host"
+            },
+            {
+              "type": "paragraph",
+              "text": "On an SSH session, Open file copies the file to a temporary folder on this Mac, opens it in that application, and uploads it back each time you save. If the file changed on the host in the meantime, Remote Edit Conflict asks before replacing it (Overwrite Remote)."
             }
           ]
         },
         {
           "id": "diffs_blame_history",
           "title": "Diffs, Blame, and File History",
-          "summary": "Line staging rules, blame, follow-renames history, image diffs, and LFS pointers.",
+          "summary": "Diff controls, multi-file review, blame, follow-renames history, image diffs, and LFS pointers.",
           "keywords": [
             "diff",
+            "split",
+            "unified",
+            "whitespace",
+            "context",
             "blame",
             "file history",
+            "image diff",
             "lfs",
-            "image",
-            "gitignore"
+            "review"
           ],
           "sections": [
             {
-              "type": "paragraph",
-              "text": "The blame gutter is off by default. Show blame on the diff or open the Blame sheet. File history (git log --follow) is on the file tree, not the Changes list."
+              "type": "heading",
+              "text": "Diff controls"
             },
             {
               "type": "items",
               "items": [
-                "Image diffs show before and after.",
-                "Git LFS pointers are named as pointers — run git lfs pull. They are not shown as a binary image.",
-                "The file tree can View file, Open, Mark Resolved, act on staged or unstaged halves, Add to .gitignore, or Delete (undoable)."
+                "The diff header has Previous changed file and Next changed file, and Use split diff / Use unified diff. Its menu has Ignore whitespace (or Show whitespace changes), Expand context (or Use normal context), Show blame (or Hide blame), and Open diff in larger window.",
+                "Hunk and line actions need the unified, whitespace-exact diff. The diff mode is remembered per repository."
+              ]
+            },
+            {
+              "type": "heading",
+              "text": "Multi-file review"
+            },
+            {
+              "type": "paragraph",
+              "text": "Review selected and Review all visible (Repository panel) step through files with Previous, Next, and Mark Reviewed. Bulk buttons act on every file in the review: Stage, Unstage, Discard, Delete, Ignore, and for conflicts Use Ours (HEAD), Use Theirs (incoming), and Mark Resolved."
+            },
+            {
+              "type": "heading",
+              "text": "Blame and file history"
+            },
+            {
+              "type": "items",
+              "items": [
+                "The blame gutter is off by default. Show blame on the diff, or open the Blame sheet (\"Blame · path\") from the change list or the file tree.",
+                "File history (git log --follow) is on the file tree, not the Changes list.",
+                "The file tree can View file, Open file, Mark Resolved, act on the staged or unstaged halves, Add to .gitignore, Blame, or Delete File (undoable)."
+              ]
+            },
+            {
+              "type": "heading",
+              "text": "Images and LFS"
+            },
+            {
+              "type": "items",
+              "items": [
+                "Image diffs have three modes: Side by Side, Overlay (the new image at 50% over the old), and Slider (drag a divider). Each side shows its size in pixels and bytes. If the images cannot be compared, the diff falls back to a binary notice with Open in Default App.",
+                "Git LFS pointers are named as pointers — run git lfs pull on the host. They are not shown as a binary image."
               ]
             }
           ]
@@ -1736,23 +1791,31 @@
         {
           "id": "drag_and_drop",
           "title": "Drag and Drop",
-          "summary": "Stage, stash, cherry-pick, merge, rebase, and create worktrees by dragging.",
+          "summary": "Stage, stash, cherry-pick, merge, rebase, branch, and create worktrees by dragging.",
           "keywords": [
             "drag",
             "drop",
+            "dnd",
+            "stage",
+            "stash",
             "cherry-pick",
             "merge",
-            "stash",
-            "esc"
+            "rebase",
+            "worktree",
+            "branch"
           ],
           "sections": [
             {
               "type": "items",
               "items": [
                 "Unstaged files onto the staging banner = Stage; staged files = Unstage.",
-                "Files onto Stashes = a path-scoped stash (include-untracked).",
+                "Dragging a selected row carries the whole selection.",
+                "Files onto Stashes = a stash of just those paths (include-untracked).",
+                "A stash card onto Repository = Apply (keep in list) or Pop (apply & remove).",
                 "A commit onto Repository = cherry-pick (confirm).",
-                "A local branch onto Forge = create a pull or merge request.",
+                "A commit onto Branches = New branch from that commit, checked out.",
+                "A commit onto History = Show it in History. A branch onto History = Show history of that branch.",
+                "A local branch onto Forge = create a pull or merge request (opens the form with the branch filled in).",
                 "A commit or branch onto Worktrees = the Add Worktree sheet.",
                 "A branch onto a History commit = merge, rebase, or move that branch here.",
                 "A commit onto a branch row = cherry-pick onto that branch; a branch onto HEAD = merge or rebase.",
@@ -1764,13 +1827,15 @@
         {
           "id": "secondary_windows",
           "title": "Secondary Windows",
-          "summary": "Native History, detached Status, and the in-window diff pop-out.",
+          "summary": "The native History window, detached Status windows, and the in-window diff pop-out.",
           "keywords": [
             "window",
-            "pop-out",
-            "history",
+            "windows",
+            "history window",
             "detached",
-            "key equivalent"
+            "pop-out",
+            "status window",
+            "worktree"
           ],
           "shortcuts": [
             {
@@ -1783,10 +1848,10 @@
             {
               "type": "items",
               "items": [
-                "The native History window is a singleton (⇧⌘H, View menu, or the palette).",
-                "A detached repo window is full Status for that path.",
-                "The diff pop-out is an in-window float, not a native window.",
-                "While a pop-out is key, native menu key equivalents are stripped so they do not steal from the detached session."
+                "The native History window is a singleton (⇧⌘H, View ▸ Open History in New Window, the History filter bar, or the palette).",
+                "A detached Status window shows the full Repository view for one path. Open one from Worktrees ▸ Open in Window; it is titled \"Status — <repository> (<connection>)\" and works for linked worktrees too. It shows Waiting for session… until the main window's session is ready, and a reconnecting banner if the connection drops.",
+                "The diff pop-out (Open diff in larger window) is an in-window float, not a native window.",
+                "While one of the native secondary windows is key, its View and repository menu key equivalents are stripped so they do not steal keys from that window. Menu clicks still act on the main session."
               ]
             }
           ]
@@ -1805,8 +1870,10 @@
           "keywords": [
             "palette",
             "command palette",
-            "prefix",
-            "search"
+            "search",
+            "commands",
+            "go to",
+            "prefix"
           ],
           "shortcuts": [
             {
@@ -1826,8 +1893,17 @@
               "text": "Press ⌘K to open the command palette. Prefix with go:, git:, forge:, app:, branch:, commit:, file:, stash:, or worktree:. file: lists changed paths only, not the whole tree. Open Settings is a command — the palette does not search Settings keys."
             },
             {
+              "type": "items",
+              "items": [
+                "go: switches panels, and lists Switch to tab <name> for each File tab and Open workspace <name> for each saved workspace.",
+                "git: includes Recovery: Browse Reflog & Snapshots.",
+                "forge: lists commands for the detected host only, plus Create Pull or Merge Request and Open CI.",
+                "app: holds Clone Repository, Create Repository, Manage Saved Workspaces, and Manage Connections."
+              ]
+            },
+            {
               "type": "paragraph",
-              "text": "Clone, Create, Saved Workspaces, and Manage Connections live under app:. Commit-message and viewer actions are intentionally absent from the palette catalog."
+              "text": "Commit-message and viewer actions are intentionally absent from the palette catalog."
             }
           ]
         },
@@ -1917,7 +1993,20 @@
             },
             {
               "type": "paragraph",
-              "text": "File, Repository, Branch, Stash, Forge, and Worktree hold every toolbar verb. Some chords are shared across scopes (⇧⌘M, ⌥⌘A, ⌘N, ⇧⌘↩, ⌘⌫) — only the active panel's handler runs."
+              "text": "File, Repository, Branch, Stash, Forge, and Worktree hold every toolbar verb. Some chords are shared across scopes (⇧⌘M, ⌥⌘A, ⌘N, ⇧⌘↩, ⌘⌫) — only the active panel's handler runs. Forge items act on the detected host: GitHub items for a GitHub repository, GitLab items for a GitLab one."
+            },
+            {
+              "type": "items",
+              "items": [
+                "File — New Tab, Close Tab.",
+                "Repository — Fetch; Pull ▸ Pull, Pull with Rebase, Pull with Merge; Push ▸ Push, Push and Set Upstream, Push Tags, Force Push with Lease, Force Push; Sync; Stage All; Unstage All; Commit…; Amend Last Commit…; Stash Changes; Abort Pending Operation….",
+                "Branch — New Branch…, New Tag…, Publish Branch, Create Pull or Merge Request, Compare with Base, Open CI, Merge into Current Branch, Delete Branch….",
+                "Stash — Stash with Message…, Apply Stash, Pop Stash, Drop Stash…, Apply Latest Stash, Pop Latest Stash, Clear All Stashes….",
+                "Forge — New Issue…, New Pull Request…, New Merge Request…, Approve, Approve Merge Request, Merge Pull Request…, Merge Merge Request…, Cancel Auto-merge, Re-run Failed Jobs, Retry Pipeline.",
+                "Worktree — Add Worktree…, Open Worktree, Lock Worktree, Unlock Worktree, Move Worktree…, Repair Worktree, Repair All Worktree Links, Prune Stale Worktrees, Remove Worktree….",
+                "View — Show Output View, Toggle Sidebar, Show File View, Show Dashboard View, Show Recovery View, Open History in New Window, Refresh, Command Palette, Focus Navigator, Focus Canvas, Focus Inspector (unused), Focus Task Dock, Focus Activity.",
+                "Help — Support & Help."
+              ]
             },
             {
               "type": "heading",
@@ -1970,9 +2059,12 @@
           "keywords": [
             "undo",
             "redo",
+            "journal",
             "recovery",
+            "reflog",
+            "snapshot",
             "toast",
-            "reflog"
+            "revert mistake"
           ],
           "shortcuts": [
             {
@@ -1994,13 +2086,15 @@
           "sections": [
             {
               "type": "paragraph",
-              "text": "⌘Z undoes the last git operation. A toast lasts about five seconds and pauses while you hover. The journal covers commit, amend, reset, checkout, create or delete branch or tag, stash drop/pop/clear/branch, discard, remove files, and hard-reset-shaped merge, rebase, cherry-pick, or revert. Unlike discard, staging is not undoable."
+              "text": "⌘Z undoes the last git operation. A toast lasts about five seconds and pauses while you hover; click it to undo. The journal covers commit, amend, reset, checkout, create or delete branch or tag, stash drop/pop/clear/branch, discard, remove files, and hard-reset-shaped merge, rebase, cherry-pick, or revert. Unlike discard, staging is not undoable, and neither is a pull."
             },
             {
               "type": "items",
               "items": [
                 "⇧⌘Z redo applies only to atomic tag create or delete.",
                 "An empty journal toasts Nothing to undo or Nothing to redo.",
+                "If files changed after the operation, undo asks first (Files Changed Since → Overwrite).",
+                "If the repository moved on in a way the undo cannot safely reverse, the entry is discarded with an explanation.",
                 "Edit ▸ Undo is still text undo in a field.",
                 "Recovery (⇧⌘U) reaches reflog and snapshots that ⌘Z cannot."
               ]
@@ -2010,20 +2104,40 @@
         {
           "id": "tool_health",
           "title": "Tool Health",
-          "summary": "Host probe on a live connection: essential versus feature binaries, Scan, and sideload.",
+          "summary": "Check git, gh, glab, and file watchers on the host, and install what is missing.",
           "keywords": [
-            "tool health",
-            "git",
+            "tools",
+            "doctor",
+            "environment",
+            "health",
+            "install",
+            "git version",
             "gh",
             "glab",
-            "scan",
-            "sideload",
-            "essential"
+            "fswatch",
+            "inotifywait",
+            "sideload"
           ],
           "sections": [
             {
               "type": "paragraph",
-              "text": "Tool health runs on a live connection, not the landing page. Missing essential binaries are errors; missing feature binaries and outdated versions are warnings. Linux hosts are not blamed for a missing fswatch. A banner offers Scan environment; Settings ▸ External tools opens the doctor for one-click install when safe, copy-paste commands, and a sideload drop zone for binaries."
+              "text": "Tool health runs on a live connection, not the landing page. A banner appears when something is wrong: missing essential binaries are errors, and missing feature binaries or outdated versions are warnings. It offers Scan environment and Dismiss. Settings ▸ External tools has Scan and opens the same doctor."
+            },
+            {
+              "type": "items",
+              "items": [
+                "Required — git 2.24 or newer, for every repository operation.",
+                "Feature — gh 2.0 or newer for GitHub, and glab for GitLab.",
+                "Optional — fswatch on macOS hosts and inotifywait on Linux hosts give live refresh; without them Magic Git polls. Linux hosts are not blamed for a missing fswatch."
+              ]
+            },
+            {
+              "type": "heading",
+              "text": "Environment health"
+            },
+            {
+              "type": "paragraph",
+              "text": "The doctor sheet, Environment health, lists each tool as OK, Update, Not installed, or Override, with Re-check. Install with … runs a one-click install when it is safe (its output appears in Output); Copy command gives you the command to run yourself. With no network on the host, Install from file… — or drag a binary or .tar.gz onto the sheet — uploads and installs it (sideload)."
             }
           ]
         },

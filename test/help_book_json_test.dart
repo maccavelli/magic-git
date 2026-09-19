@@ -219,6 +219,19 @@ const _labelAnchors = <String, List<String>>{
     'Retry pipeline',
     'Logs are available once it completes.',
   ],
+  'viewer_and_remote_edit': ['Remote Edit Conflict', 'Overwrite Remote'],
+  // `Overlay` is not anchored: the word names Flutter's Overlay widget 80+
+  // times in lib/, so its presence proves nothing. A required fact covers it.
+  'diffs_blame_history': ['Side by Side', 'Slider', 'Previous changed file'],
+  'secondary_windows': ['Waiting for session…'],
+  'feature_palette': [
+    'Manage Saved Workspaces',
+    'Recovery: Browse Reflog & Snapshots',
+    'Switch to tab',
+    'Open workspace',
+  ],
+  'undo_recovery': ['Files Changed Since'],
+  'tool_health': ['Environment health', 'Install from file…'],
   'tab_branches': [
     'Fetch & Prune',
     'Unhide',
@@ -251,6 +264,9 @@ const _falsehoods0053 = <String>[
   'merged and closed work is not a status chip', // W19
   'sit on the detail More menu', // W20
   'New Issue is Forge-menu only', // W21
+  'Switch Code and Preview', // W12
+  'On a local repo, Open uses the macOS opener', // W12
+  'While a pop-out is key', // W13
 ];
 
 /// Facts 0053 requires, by topic, alongside 0010's list.
@@ -390,6 +406,42 @@ const _requiredFacts0053 = <String, List<String>>{
     'Publish',
     'Advanced',
     'in progress',
+  ],
+  'viewer_and_remote_edit': [
+    'Source',
+    'Preview',
+    'Open file',
+    'Open files with',
+    'Remote Edit Conflict',
+  ],
+  'diffs_blame_history': [
+    'Side by Side',
+    'Overlay',
+    'Slider',
+    'Previous changed file',
+  ],
+  'drag_and_drop': ['stash', 'New branch from', 'Show history of', 'selection'],
+  'secondary_windows': [
+    'Open in Window',
+    'Waiting for session…',
+    'native secondary windows',
+  ],
+  'feature_palette': [
+    'Switch to tab',
+    'Open workspace',
+    'Manage Saved Workspaces',
+    'Recovery: Browse Reflog & Snapshots',
+  ],
+  'menus_and_keymap': ['Re-run Failed Jobs', 'Merge Merge Request…'],
+  'undo_recovery': ['Files Changed Since'],
+  'tool_health': [
+    'Environment health',
+    'Required',
+    'Feature',
+    'Optional',
+    '2.24',
+    'fswatch',
+    'inotifywait',
   ],
   'tab_forge': [
     'No blockers',
@@ -550,6 +602,25 @@ void main() {
       for (final phrase in _falsehoods0053) {
         expect(book, isNot(contains(phrase)), reason: phrase);
       }
+    });
+
+    test('every menu item title appears in the book', () {
+      final book = File('macos/Runner/help_book.json').readAsStringSync();
+      final titles = {
+        for (final menu in kMenuBarMenus) ..._menuTitles(menu.items),
+        ..._nativeMenuTitles(),
+      };
+      final missing = [
+        for (final title in titles)
+          if (!book.contains(title)) title,
+      ];
+      expect(
+        missing,
+        isEmpty,
+        reason:
+            'menu items Help never mentions — add them to menus_and_keymap: '
+            '$missing',
+      );
     });
 
     test('non-menu title exclusions still exist in the native source', () {
@@ -932,7 +1003,9 @@ void main() {
           'security-scoped',
         ],
         'viewer_and_remote_edit': [
-          'Code',
+          // 0053 W12 / Deviation D2: the toggle is Source | Preview; "Code"
+          // was never on screen.
+          'Source',
           'Preview',
           'Open in Default App',
           'temp',
