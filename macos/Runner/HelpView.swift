@@ -16,17 +16,7 @@ public struct HelpView: View {
     }
 
     private var filteredTopics: [HelpTopic] {
-        if searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return allTopics
-        }
-        let query = searchText.lowercased()
-        return allTopics.filter { topic in
-            topic.title.lowercased().contains(query) ||
-            topic.summary.lowercased().contains(query) ||
-            topic.keywords.contains(where: { $0.lowercased().contains(query) }) ||
-            (topic.shortcuts?.contains(where: { $0.label.lowercased().contains(query) || $0.keys.lowercased().contains(query) }) ?? false) ||
-            topic.sections.contains(where: { ($0.text?.lowercased().contains(query) ?? false) || ($0.title?.lowercased().contains(query) ?? false) })
-        }
+        allTopics.filter { HelpSearch.matches($0, query: searchText) }
     }
 
     private var selectedTopic: HelpTopic? {
@@ -75,6 +65,7 @@ public struct HelpView: View {
 public struct HelpViewLegacy: View {
     public let book: HelpBook
     @State private var selectedTopicID: String?
+    @State private var searchText: String = ""
 
     public init(book: HelpBook) {
         self.book = book
@@ -89,23 +80,37 @@ public struct HelpViewLegacy: View {
         allTopics.first(where: { $0.id == selectedTopicID }) ?? book.categories.first?.topics.first
     }
 
+    /// Same predicate as the macOS 13+ view (0053 S1).
+    private var filteredTopics: [HelpTopic] {
+        allTopics.filter { HelpSearch.matches($0, query: searchText) }
+    }
+
+    private func topicButton(_ topic: HelpTopic) -> some View {
+        Button(action: {
+            selectedTopicID = topic.id
+        }) {
+            HStack {
+                Text(topic.title)
+            }
+        }
+    }
+
     public var body: some View {
         NavigationView {
             List {
-                ForEach(book.categories) { category in
-                    Section(header: Text(category.title)) {
-                        ForEach(category.topics) { topic in
-                            Button(action: {
-                                selectedTopicID = topic.id
-                            }) {
-                                HStack {
-                                    Text(topic.title)
-                                }
-                            }
+                if !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Section(header: Text("Search Results (\(filteredTopics.count))")) {
+                        ForEach(filteredTopics) { topic in topicButton(topic) }
+                    }
+                } else {
+                    ForEach(book.categories) { category in
+                        Section(header: Text(category.title)) {
+                            ForEach(category.topics) { topic in topicButton(topic) }
                         }
                     }
                 }
             }
+            .searchable(text: $searchText, prompt: "Search Help Topics & Shortcuts...")
             .listStyle(SidebarListStyle())
             .frame(minWidth: 240, idealWidth: 280)
 

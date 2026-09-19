@@ -20,6 +20,9 @@ import 'package:flutter_test/flutter_test.dart';
 const _release = 'macos/Runner/Release.entitlements';
 const _unsigned = 'macos/Runner/Release-unsigned.entitlements';
 const _debug = 'macos/Runner/DebugProfile.entitlements';
+const _debugUnsigned = 'macos/Runner/DebugProfile-unsigned.entitlements';
+const _appInfo = 'macos/Runner/Configs/AppInfo.xcconfig';
+const _pbxproj = 'macos/Runner.xcodeproj/project.pbxproj';
 
 /// The two keys `Release-unsigned.entitlements` must omit and
 /// `Release.entitlements` must grant. `keychain-access-groups` needs a signing
@@ -68,6 +71,13 @@ String _valueOf(String plist, String key) {
   final end = after.indexOf('</$tag>');
   return end < 0 ? '' : after.substring(0, end + '</$tag>'.length);
 }
+
+/// The one key `DebugProfile-unsigned.entitlements` omits (MADR 0053
+/// Amendment 0053.2). Unlike the Release pair it KEEPS the sandbox: a debug
+/// build outside the sandbox hides sandbox bugs, and the unsigned debug file
+/// exists only so `xcodebuild test` can sign ad hoc on a machine with no
+/// development team.
+const _debugSignedOnlyKeys = {'keychain-access-groups'};
 
 void main() {
   test('Release.entitlements keeps the sandbox and keychain keys', () {
@@ -137,6 +147,58 @@ void main() {
         reason: '$key must carry the same value in both files',
       );
     }
+  });
+
+  test('DebugProfile-unsigned.entitlements is DebugProfile.entitlements minus '
+      'exactly the keychain key', () {
+    final signed = File(_debug).readAsStringSync();
+    final unsigned = File(_debugUnsigned).readAsStringSync();
+    final signedKeys = _keyNames(signed).toSet();
+    final unsignedKeys = _keyNames(unsigned).toSet();
+
+    expect(signedKeys.difference(unsignedKeys), _debugSignedOnlyKeys);
+    expect(
+      unsignedKeys.difference(signedKeys),
+      isEmpty,
+      reason: 'the unsigned debug file is a subset, never a superset',
+    );
+    for (final key in unsignedKeys) {
+      expect(
+        _valueOf(unsigned, key),
+        _valueOf(signed, key),
+        reason: '$key must carry the same value in both debug files',
+      );
+    }
+    expect(
+      _grants(unsigned, 'com.apple.security.app-sandbox'),
+      isTrue,
+      reason: 'the unsigned debug build stays sandboxed',
+    );
+  });
+
+  test('Debug and Profile sign with MG_DEBUG_ENTITLEMENTS, defaulting to '
+      'DebugProfile.entitlements', () {
+    // A default build must sign exactly as before 0053.2; only a caller that
+    // passes MG_DEBUG_ENTITLEMENTS explicitly (the unsigned test run) differs.
+    expect(
+      File(_appInfo).readAsStringSync(),
+      contains('MG_DEBUG_ENTITLEMENTS = Runner/DebugProfile.entitlements'),
+    );
+    final pbx = File(_pbxproj).readAsStringSync();
+    expect(
+      RegExp(
+        r'CODE_SIGN_ENTITLEMENTS = "\$\(MG_DEBUG_ENTITLEMENTS\)";',
+      ).allMatches(pbx).length,
+      2,
+      reason: 'the Runner Debug and Profile configurations',
+    );
+    expect(
+      pbx,
+      isNot(
+        contains('CODE_SIGN_ENTITLEMENTS = Runner/DebugProfile.entitlements'),
+      ),
+      reason: 'no configuration may bypass the selection',
+    );
   });
 
   test('DebugProfile.entitlements keeps the sandbox', () {

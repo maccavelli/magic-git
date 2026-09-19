@@ -57,6 +57,27 @@ public struct HelpSection: Codable, Identifiable {
     }
 }
 
+/// Whether a topic matches a Help search query. Shared by both Help views so
+/// the macOS 12 window searches exactly what the macOS 13+ one does (0053 S1).
+public enum HelpSearch {
+    /// A blank query matches everything; otherwise a case-insensitive
+    /// substring of the title, summary, a keyword, a shortcut chip, or any
+    /// section's title, text, bullet items, or code.
+    public static func matches(_ topic: HelpTopic, query: String) -> Bool {
+        let needle = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if needle.isEmpty { return true }
+        func has(_ text: String?) -> Bool { text?.lowercased().contains(needle) ?? false }
+        return has(topic.title) ||
+            has(topic.summary) ||
+            topic.keywords.contains(where: { has($0) }) ||
+            (topic.shortcuts?.contains(where: { has($0.label) || has($0.keys) }) ?? false) ||
+            topic.sections.contains(where: { section in
+                has(section.title) || has(section.text) || has(section.code) ||
+                    (section.items?.contains(where: { has($0) }) ?? false)
+            })
+    }
+}
+
 public class HelpDataLoader {
     public static func loadBook() -> HelpBook {
         // Look up help_book.json in the main app bundle

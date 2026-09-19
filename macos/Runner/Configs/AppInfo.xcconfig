@@ -25,4 +25,13 @@ PRODUCT_COPYRIGHT = Copyright © 2026 Why Not? All rights reserved.
 // itself. It used to be stripped in place while Xcode was signing from it
 // (MADR 0042).
 MG_RELEASE_ENTITLEMENTS = Runner/Release.entitlements
+
+// Which entitlements the Debug and Profile configurations sign with (MADR 0053
+// Amendment 0053.2). The default is the committed DebugProfile.entitlements, so
+// every ordinary debug build is unchanged. `xcodebuild test` on a machine with
+// no development team passes
+//   MG_DEBUG_ENTITLEMENTS=Runner/DebugProfile-unsigned.entitlements
+// on its command line: the same file minus keychain-access-groups, which needs a
+// certificate. Nothing edits either entitlements file in place.
+MG_DEBUG_ENTITLEMENTS = Runner/DebugProfile.entitlements
 #include? "Local.xcconfig"
