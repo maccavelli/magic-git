@@ -1097,3 +1097,33 @@ Plan approved by the maintainer on 2026-09-18.
   * Row 7 alters `Clean up stale branches?`: 1 occurrence in the book; a required fact of
     `branch_sync_recovery`.
   * Same mechanisms, same expected failing tests, no files added, no MADR change.
+
+### Phase 10, executed
+
+* **Deviation D4** was raised and resolved before the catalogue was written (records commit `0de56ae`).
+* **Catalogue.** `tool/mutations/0053-help-book.json` has 8 entries, each targeting
+  `test/help_book_json_test.dart`. It was written by a script that asserted every `find` occurs exactly once
+  in its file.
+* **`python3 tool/mutate.py --check tool/mutations/0053-help-book.json`:** `CK=0`. "baseline clean",
+  "analyzer canary recognised", "8 entries in 1 catalogue(s): 8 sound, 0 did not apply, 0 do not compile".
+* **`python3 tool/mutate.py tool/mutations/0053-help-book.json`:** `MU=0`. "baseline green", "compile canary
+  recognised", then the verdicts, read in full (each named test is the plan's expected test; extra failures
+  in the same run are listed after it):
+
+  | Entry | Verdict | Expected test failed | Other tests that also failed |
+  |---|---|---|---|
+  | anchor: label renamed in code (D4) | KILLED | `quoted UI labels exist in their topic and in source` | — |
+  | anchor: label dropped from Help | KILLED | same | `required facts appear in their topics` |
+  | menu: new Dart menu item undocumented | KILLED | `every menu item title appears in the book` | — |
+  | menu: native View item undocumented | KILLED | same | the anchor test, and `non-menu title exclusions still exist in the native source` |
+  | forbidden: W1 falsehood returns | KILLED | `Help does not teach the 0053 falsehoods` | the required-facts test |
+  | schema: heading words moved to an unrendered title | KILLED | `sections carry only fields the renderer shows` | — |
+  | required fact removed (D4) | KILLED | `required facts appear in their topics` | the anchor test |
+  | IA: locked topic id renamed | KILLED | `every locked topic id exists in its category, in order` | the anchor and required-facts tests |
+
+  Summary line: "8 killed, 0 survived, 0 did not apply, 0 did not compile, 0 observed by no test".
+* **Gate:**
+  * `flutter analyze`: clean.
+  * `flutter test`: `03:37 +4196 ~3: All tests passed!`.
+  * JSON valid.
+* Commit `a9cc194`.
