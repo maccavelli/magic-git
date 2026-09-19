@@ -905,3 +905,16 @@ Plan approved by the maintainer on 2026-09-18.
   * `flutter test`: `03:41 +4193 ~3: All tests passed!`.
   * JSON valid.
 * Commit `bb830f7`.
+
+### Deviation D2 (2026-09-18): 0010's contract requires the false word "Code" in the viewer topic
+
+* **Found.** During Phase 7, when the corrected content ran against the contract. 0010's `required` map
+  requires `'Code'` in `viewer_and_remote_edit`, but the viewer's toggle tooltips are **Source** and
+  **Preview** (`lib/features/viewer/viewer_window.dart:429, 436`). "Code" appears in the UI nowhere, only in
+  the internal enum `_ViewerMode.code`. It is the same falsehood as W12. The plan fixed W12's sentence and
+  required `Source`, but did not list 0010's `'Code'` fact as needing to change. Checked by reading the tree.
+  Every other 0010 fact for Phase 7's topics still holds.
+* **Decision (maintainer).** In 0010's list, replace `'Code'` with `'Source'`, with a comment citing 0053 W12.
+  The assertion is not loosened: it requires the toggle's real name, and `_falsehoods0053` separately bans
+  "Switch Code and Preview". No MADR amendment, because W12 already decides this. No file is added:
+  `test/help_book_json_test.dart` is already in Phase 7's scope.
