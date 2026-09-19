@@ -1127,3 +1127,49 @@ Plan approved by the maintainer on 2026-09-18.
   * `flutter test`: `03:37 +4196 ~3: All tests passed!`.
   * JSON valid.
 * Commit `a9cc194`.
+
+### Phase 11, executed
+
+* **B8, both ways, on scratch copies only.**
+  * Before: `bash b8_before/build_copy.sh --bogus` → exit **127**, `line 66: die: command not found`.
+  * A Python edit then moved `log()` and `die()` above the option loop. It asserted the block occurred
+    exactly once, and that it now precedes `for arg in "$@"`.
+  * After: `bash b8_after/build_copy.sh --bogus` → exit **1**, `Error: Unknown option: --bogus (supported:
+    --unsigned, --install)`.
+  * `bash -n build_macos.sh` passes. The tracked script was never run, and no build ran in this phase.
+* **`docs/BUILD_MACOS.md` rewritten** in the MADR's order: prerequisites and the Flutter pin; build and
+  entitlement selection; credential storage; install; output and targets; signing and notarizing;
+  troubleshooting; clean up.
+  * It also gained a section on running the Xcode unit tests without a certificate
+    (`MG_DEBUG_ENTITLEMENTS`), which D3 made possible.
+* **`README.md` rewritten** in the MADR's seven sections. One unverifiable sentence in my draft ("There are
+  no prebuilt releases") was removed before committing.
+* **Checks** (`scratchpad/p11_checks.py`, exit 0):
+  * links: ok;
+  * identifiers: none;
+  * untraced build-guide tokens: `macos/Runner.xcworkspace` only, which is the workspace itself (`ls -d`
+    confirms it exists) and so is not named in the scanned sources.
+  * **Seen to fail:** a scratch doc with a missing file, a missing heading anchor and a `/Users/<name>` path
+    produced all three link problems and the identifier hit.
+* **R/B checklist:**
+
+  | Finding | Resolved in the new text |
+  |---|---|
+  | R1 | README opening: "Over SSH … no local clone" vs "On this Mac, for repositories in a local folder" |
+  | R2 | README "Features", grouped by area |
+  | R3 | README "Requirements" (tool table with minimums, forge CLI sign-in), "Install", and "Getting help" (⌘?, ⌘/, ⌘K) |
+  | R4 | README "Development" (pin, `--enforce-lockfile`, `live-forge` warning) and "Documentation" (links `docs/README.md`) |
+  | R5 | README now links a corrected build guide (B1–B9) |
+  | B1, B2 | BUILD "How the entitlements are chosen": two tracked files, `Local.xcconfig` rewritten every run, nothing edited |
+  | B3 | BUILD "Credential storage": unsigned builds persist to the `0600` file |
+  | B4 | BUILD "The Flutter pin": 3.47.2, PATH-if-exact-else-vendored, and why |
+  | B5 | BUILD "Signing for real and notarizing": always the script, and why plain `flutter build macos` ships without sandbox and Keychain |
+  | B6 | BUILD, same section: hardened runtime on for notarization only |
+  | B7 | BUILD "Install": `--install` for both modes; the manual recipe removes the build-dir copy |
+  | B8 | `build_macos.sh` fix; BUILD "Build" quotes the usage error |
+  | B9 | BUILD "Output and targets" (paths, zip, macOS 12.0) and the `Local.xcconfig` never-commit note. The file stays in `docs/` (location deferred to the layout migration, per the MADR). |
+
+* **Gate:**
+  * `flutter analyze`: clean.
+  * `flutter test`: `03:34 +4196 ~3: All tests passed!`.
+* Commit `2c99b3e`.
