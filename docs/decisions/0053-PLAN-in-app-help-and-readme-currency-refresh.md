@@ -871,3 +871,37 @@ Plan approved by the maintainer on 2026-09-18.
   * `flutter test`: `03:37 +4193 ~3: All tests passed!`.
   * JSON valid.
 * Commit `b4bd008`.
+
+### Phase 6, executed
+
+* **Contract.**
+  * `forge_requests_and_issues` and `forge_ci` inserted after `tab_forge`.
+  * W19, W20 and W21 added to `_falsehoods0053`.
+  * Required facts for the three topics.
+  * 18 anchors, all confirmed in `lib/`. `Logs are available once it completes.` is anchored as the
+    sentence after the literal's `\n` (`run_jobs_view.dart:101`), as the plan allowed.
+* **Red run:** exit 1, with 4 named failures:
+  * the label-anchor test ("topic tab_forge must quote the UI label 'No blockers'");
+  * the falsehoods test ("not contains 'merged and closed work is not a status chip'");
+  * the topic-order test ("at location [8] is 'tab_worktrees' instead of 'forge_requests_and_issues'");
+  * the required-facts test.
+* **Content.**
+  * Revised `tab_forge`: panel, Inbox and Browse, open/closed/merged, and the detail pane.
+  * New `forge_requests_and_issues`: create forms, rows and menus, merging, review and editing, issues.
+  * New `forge_ci`: jobs, logs, and the difference between GitHub and GitLab logs.
+  * Chips moved with their verbs: request chips to `forge_requests_and_issues`, re-run/retry chips to
+    `forge_ci`.
+  * Facts were re-read from `merge_readiness.dart`, `create_pr_form.dart`, `github_panel.dart`
+    (auto-merge 836-915) and `run_jobs_view.dart`. The rest come from the Forge audit's cited lines, and
+    every quoted label is pinned by an anchor.
+* **Guards caught two of my drafts:**
+  * 0010's `New Issue` fact was missing from `tab_forge`;
+  * 0010's OUT-seam guard caught "New issue: the …", which contains the banned palette prefix `issue:`.
+    I reworded it; `issue:`, `request:` and `ci:` each now occur 0 times in the new text.
+* **Gate:**
+  * `dart format`: 0 changed.
+  * `flutter analyze`: `No issues found!`.
+  * Help test: `+15`.
+  * `flutter test`: `03:41 +4193 ~3: All tests passed!`.
+  * JSON valid.
+* Commit `bb830f7`.
