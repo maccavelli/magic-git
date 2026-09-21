@@ -1,4 +1,5 @@
 import 'dart:convert';
+import '../forge/ci_log_text.dart';
 import '../forge/forge.dart';
 import '../forge/forge_dashboard.dart';
 import '../forge/forge_json.dart';
@@ -739,7 +740,8 @@ class GhService {
     return true;
   }
 
-  /// A completed job's log via `gh run view --job <id> --log`. GitHub only
+  /// A completed job's log via `gh run view --job <id> --log`, cleaned by
+  /// [sanitizeGhJobLog] so every consumer gets plain text. GitHub only
   /// serves logs once the job finishes; for an in-progress job `gh` exits
   /// non-zero and this throws [GhException] (the view shows a "logs available
   /// when the job completes" placeholder rather than calling this).
@@ -753,7 +755,7 @@ class GhService {
     if (!result.isSuccess) {
       throw GhException('gh run view --log failed', result);
     }
-    return result.stdout;
+    return sanitizeGhJobLog(result.stdout);
   }
 
   // ---- Mutations (outward-facing) ------------------------------------------

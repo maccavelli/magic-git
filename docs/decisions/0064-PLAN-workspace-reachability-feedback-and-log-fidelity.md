@@ -340,6 +340,13 @@ All of these runs used scratch clones of `21d32bc`, never this tree.
   * 2.3: `+6: All tests passed!`.
   * 2.4: format `exit=0`; analyze clean; `flutter test` `02:48 +4230 ~3: All tests passed!` =
     `N0 + 1`, with no failure.
+* **Phase 3 (2026-09-21, execution).**
+  * 3.1: exit 1, `Error when reading 'lib/core/forge/ci_log_text.dart': No such file or directory`
+    and `Method not found: 'sanitizeGhJobLog'`.
+  * 3.2: apply `exit=0`.
+  * 3.3: `+112: All tests passed!`.
+  * 3.4: format and analyze clean; `flutter test` `02:50 +4255 ~3: All tests passed!` =
+    `N0 + 26`. The test hashes match A.7 (`1b790c14…`) and A.8 (`4a548f81…`).
 * **P-1 (2026-09-21, planning).** The first four patches (F4, F3, F1, F2), stacked in a fresh clone
   of `21d32bc`:
   * each `git apply --index` exited 0;
