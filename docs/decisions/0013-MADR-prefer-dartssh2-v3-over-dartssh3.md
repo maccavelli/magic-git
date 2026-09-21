@@ -372,3 +372,11 @@ That plan is the execution vehicle: it absorbs 0012's mechanical bump and
 adds this record's extra gates (no `dartssh3` package, `SSHPacketError`
 copy, `handshakeTimeout`, drop-reason surfacing that does not wait on
 MADR 0011). Do not execute 0012-PLAN in parallel.
+
+## Amendment 0013.1 (2026-09-21): cipher order superseded by 0064
+
+The row "Leave algorithm defaults alone" is superseded **for the cipher order only** by
+[0064-MADR](0064-MADR-workspace-reachability-feedback-and-log-fidelity.md) §F5: the client now
+prefers `chacha20-poly1305@openssh.com`, because dartssh2's default AES-GCM runs a bit-serial
+pure-Dart GHASH at about 1.2 MiB/s. The rest of that row stands. The decision above is not
+rewritten.

@@ -1,5 +1,5 @@
 ---
-status: "proposed"
+status: "in-progress"
 date: 2026-09-21
 associated-madr: "0064-MADR-workspace-reachability-feedback-and-log-fidelity.md"
 verified: 2026-09-21  # every "proven at planning time" row below was run on this date
@@ -314,7 +314,24 @@ All of these runs used scratch clones of `21d32bc`, never this tree.
 
 ## Execution record
 
-*Empty until execution starts.*
+* **Phase 0 (2026-09-21, execution).**
+  * 0.1: `S=/var/folders/…/T/mg-0064.d1byV5Njmi`.
+  * The records were not yet committed, so they were committed first as their own `--no-edit`
+    commit. That is what 0.4's "records committed" precondition requires.
+  * 0.2: extractor `exit=0`, 19 of 19 `ok`.
+  * 0.3: `Flutter 3.47.2 • channel stable`; `pub get --enforce-lockfile` `exit=0`.
+  * 0.4: hooks path `…/.global-git-hooks`; tree clean.
+  * 0.5: `flutter analyze` `No issues found!`. `flutter test` `03:37 +4229 ~3: All tests passed!`,
+    so `N0` = 4229 with no flake this run.
+* **Phase 1 (2026-09-21, execution).**
+  * 1.1: exit 1, `Expected: every element('chacha20-poly1305@openssh.com')` against six
+    `'aes256-gcm@openssh.com'` entries.
+  * 1.2: apply `exit=0`.
+  * 1.3: new test `+1: All tests passed!`; bulk test `00:03 +1: All tests passed!`.
+  * 1.4: Amendment 0013.1 appended verbatim (8 insertions, 0 deletions); records check 0 findings.
+  * 1.5: format `exit=0`; analyze `No issues found!`; `flutter test` `02:53 +4230 ~3: All tests
+    passed!` = `N0 + 1`, so the scoped exception was not needed. The test hash matches A.3
+    (`683af364…`).
 
 * **P-1 (2026-09-21, planning).** The first four patches (F4, F3, F1, F2), stacked in a fresh clone
   of `21d32bc`:

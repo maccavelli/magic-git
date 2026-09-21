@@ -154,6 +154,31 @@ class SSHClientManager {
   /// client (today's dual-client behaviour).
   static const Duration _syncAuthTimeout = _streamAuthTimeout;
 
+  /// Algorithm preferences for every client this manager opens.
+  ///
+  /// dartssh2's own defaults except for the cipher order, which puts
+  /// `chacha20-poly1305@openssh.com` ahead of AES-GCM. Both are AEAD and both
+  /// are covered by strict kex; the difference is speed in pure Dart. dartssh2
+  /// runs AES-GCM on pointycastle's GCM, whose GHASH is bit-serial, and that
+  /// measured ~1.2 MiB/s against ~30 MiB/s for ChaCha20-Poly1305 on the same
+  /// machine. Decryption happens on the isolate that owns the socket, so the
+  /// slow cipher does not merely cap throughput: it keeps that isolate busy
+  /// for the whole transfer, and dart:io re-reads a socket with bytes still
+  /// available in one microtask chain, so no timer fires until it drains.
+  /// AES-GCM stays in the list for servers that do not offer ChaCha20
+  /// (FIPS-mode hosts); the rest of the order is the library's.
+  static const SSHAlgorithms _algorithms = SSHAlgorithms(
+    cipher: [
+      SSHCipherType.chacha20poly1305,
+      SSHCipherType.aes256gcm,
+      SSHCipherType.aes128gcm,
+      SSHCipherType.aes256ctr,
+      SSHCipherType.aes128ctr,
+      SSHCipherType.aes256cbc,
+      SSHCipherType.aes128cbc,
+    ],
+  );
+
   /// Command / SFTP / health-monitor client (primary).
   SSHClient? _client;
 
@@ -889,6 +914,7 @@ class SSHClientManager {
         // Only when a password exists — see comment above.
         onPasswordRequest: hasPassword ? () => password : null,
         identities: resolvedIdentities,
+        algorithms: _algorithms,
         // Dead-peer detection is owned by [ConnectionHealthMonitor]
         // (which checks whether pings are *answered*). The library's own
         // keepAliveInterval fires-and-forgets without a reply counter, and
