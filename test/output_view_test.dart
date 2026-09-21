@@ -9,7 +9,7 @@ import 'package:macos_ui/macos_ui.dart';
 
 import 'package:remote_magic_git/core/output/output_log.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
-import 'package:remote_magic_git/features/repository/output_view.dart';
+import 'package:remote_magic_git/features/common/output_view.dart';
 
 void main() {
   testWidgets('OutputView renders lines appended to the notifier', (

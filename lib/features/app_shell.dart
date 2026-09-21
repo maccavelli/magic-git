@@ -23,6 +23,7 @@ import 'common/command_palette.dart';
 import 'common/diff_view.dart' show kDiffMono;
 import 'common/escape_dismissible.dart';
 import 'common/menu_bar_bridge.dart';
+import 'common/output_view.dart';
 import 'common/palette_intents.dart';
 import 'common/palette_models.dart';
 import 'common/panel_actions.dart';
@@ -1132,11 +1133,17 @@ class _AppShellState extends ConsumerState<AppShell> {
           // trigger their panel's provider fetches — until first opened.
           // A missing-tool banner sits above every page (zero-height when the
           // host is healthy) so a gap in the environment is visible wherever
-          // the user is, not just in Settings.
+          // the user is, not just in Settings. The Output view sits below
+          // every page for the same reason (MADR 0064 F3): its toggle is
+          // global, so the view it toggles must be too.
           return Column(
             children: [
               const ToolHealthBanner(),
-              Expanded(child: _pages(repoPath, pageIndex, visitedPages)),
+              Expanded(
+                child: OutputViewHost(
+                  child: _pages(repoPath, pageIndex, visitedPages),
+                ),
+              ),
             ],
           );
         },

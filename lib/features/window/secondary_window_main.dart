@@ -46,6 +46,7 @@ import '../../core/window/window_channels.dart';
 import '../../core/window/window_kind.dart';
 import '../common/actions.dart';
 import '../common/escape_dismissible.dart';
+import '../common/output_view.dart';
 import '../common/undo_toast.dart';
 import '../history/history_view.dart';
 import '../recovery/recovery_sheet.dart';
@@ -1098,10 +1099,14 @@ class _SecondaryWindowShellState extends ConsumerState<SecondaryWindowShell>
       repoPath: repoPath,
       isActive: true,
     ),
-    WindowKind.detachedRepo => RepoStatusView(
-      key: ValueKey(repoPath),
-      repoPath: repoPath,
-      isActive: true,
+    // This window has no AppShell, so it hosts its own Output view — the
+    // status view no longer mounts one (MADR 0064 F3).
+    WindowKind.detachedRepo => OutputViewHost(
+      child: RepoStatusView(
+        key: ValueKey(repoPath),
+        repoPath: repoPath,
+        isActive: true,
+      ),
     ),
   };
 }

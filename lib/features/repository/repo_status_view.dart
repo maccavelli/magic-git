@@ -55,7 +55,6 @@ import 'diff_view_controls.dart';
 import 'file_view.dart';
 import 'hunk_diff_view.dart';
 import 'multi_file_review.dart';
-import 'output_view.dart';
 import 'repo_change_filter.dart';
 import 'repo_change_model.dart';
 import 'repo_change_navigator.dart';
@@ -1575,7 +1574,6 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
     final sessionWarning = ref.watch(
       connectionProvider.select((c) => c.warning),
     );
-    final outputVisible = ref.watch(outputLogProvider.select((s) => s.visible));
     final fileVisible = ref.watch(fileViewVisibleProvider);
 
     final status = statusAsync.value;
@@ -1872,10 +1870,12 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
             ),
           );
           // Pane priority: a right pane (the file view) is the full-height "3rd
-          // panel" and takes precedence over any horizontal pane. Horizontal
-          // panes — including the output view — live inside the center "main"
-          // column, so they're clamped to its width and never extend under (or
-          // clip) the right pane.
+          // panel" of this page and takes precedence over this page's
+          // horizontal panes, which live inside the center "main" column, so
+          // they're clamped to its width and never extend under (or clip) the
+          // right pane. The Output view is not one of them: it belongs to the
+          // shell, below every page (MADR 0064 F3), so it spans the full width
+          // beneath this whole page, File view included.
           final centerColumn = Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
@@ -1895,7 +1895,6 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
                   composerController,
                   policyAdvisory: commitPolicyAdvisory,
                 ),
-              if (outputVisible) OutputView(maxHeight: constraints.maxHeight),
             ],
           );
           final canvas = LayoutBuilder(
@@ -1949,10 +1948,6 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
               showLinkStatus: !connection.isLocal,
               onToggleSidebar: () =>
                   MacosWindowScope.maybeOf(context)?.toggleSidebar(),
-              onRevealOutput: (id) {
-                ref.read(outputLogProvider.notifier).setVisible(true);
-                ref.read(outputRevealProvider.notifier).request(id);
-              },
               onPrimaryAction: (kind) => _invokePrimaryRepositoryAction(
                 kind,
                 status: status,

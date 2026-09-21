@@ -9,6 +9,7 @@ import '../../core/settings/repository_workspace_prefs.dart';
 import 'activity_center.dart';
 import 'buttons.dart';
 import 'link_status_chip.dart';
+import 'output_view.dart';
 import 'repository_context.dart';
 import 'repository_workspace_models.dart';
 import 'repository_workspace_scaffold.dart';
@@ -46,6 +47,11 @@ class RepositoryContextBar extends StatelessWidget {
   /// toolbar band — so it moves here rather than disappearing.
   final bool showLinkStatus;
   final VoidCallback? onToggleSidebar;
+
+  /// Reveals an operation's lines in the Output view. Defaults to the
+  /// enclosing [OutputViewHost]'s reveal, so every page's Activity Center
+  /// offers the "Output" link wherever an Output view is actually hosted —
+  /// and nowhere it would show nothing.
   final ValueChanged<OperationId>? onRevealOutput;
 
   const RepositoryContextBar({
@@ -63,6 +69,7 @@ class RepositoryContextBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final revealOutput = onRevealOutput ?? OutputViewHost.revealerOf(context);
     return LayoutBuilder(
       builder: (context, constraints) {
         final appearance = WorkspaceAppearanceScope.maybeOf(context);
@@ -177,7 +184,7 @@ class RepositoryContextBar extends StatelessWidget {
                       // the second copy the Repository toolbar used to render:
                       // the reveal-in-Output affordance lived only on that
                       // copy.
-                      onRevealOutput: onRevealOutput,
+                      onRevealOutput: revealOutput,
                     ),
                   ),
                   const SizedBox(width: 6),

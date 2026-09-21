@@ -347,6 +347,13 @@ All of these runs used scratch clones of `21d32bc`, never this tree.
   * 3.3: `+112: All tests passed!`.
   * 3.4: format and analyze clean; `flutter test` `02:50 +4255 ~3: All tests passed!` =
     `N0 + 26`. The test hashes match A.7 (`1b790c14…`) and A.8 (`4a548f81…`).
+* **Phase 4 (2026-09-21, execution).**
+  * 4.1: the temporary copy changed exactly 1 line; exit 1, `+2 -6: Some tests failed.`, with 6 ×
+    `Found 0 widgets with type "OutputView"`. The copy was deleted.
+  * 4.2: apply `exit=0`; the rename is staged as `R`.
+  * 4.3: `+9: All tests passed!`.
+  * 4.4: format and analyze clean; `flutter test` `02:46 +4263 ~3: All tests passed!` =
+    `N0 + 34`. The hash matches A.10 (`25aabc85…`).
 * **P-1 (2026-09-21, planning).** The first four patches (F4, F3, F1, F2), stacked in a fresh clone
   of `21d32bc`:
   * each `git apply --index` exited 0;

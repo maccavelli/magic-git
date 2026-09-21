@@ -1,17 +1,76 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart';
+import '../../core/exec/operation_activity.dart';
 import '../../core/output/output_log.dart';
 import '../../core/theme/app_theme.dart';
-import '../common/tool_icon_button.dart';
+import 'tool_icon_button.dart';
 
-/// The user-resizable output view docked across the bottom of the repository
-/// panel. Renders the [outputLogProvider] buffer (push/pull/sync output for
-/// now) in a horizontally-scrolling, monospace, dark log. Its top edge is a
-/// drag handle that grows/shrinks the panel. Shown only when the output view is
-/// enabled (View → Show Output View).
+/// Owns a window's one Output view (MADR 0064 F3): [child] fills the space
+/// above, and the docked log sits below it while `outputLogProvider.visible`
+/// is set.
+///
+/// The Output toggle is a global command — the keymap, the native View menu
+/// and the palette all flip the same flag from any page — so the view must
+/// live where every page can see it. `AppShell` wraps its page stack in one,
+/// and the detached repository window, which has no `AppShell`, wraps its
+/// status view in another.
+///
+/// It also publishes the reveal action ([revealerOf]), so a context bar
+/// offers the Activity Center's "Output" link exactly when an Output view is
+/// hosted above it, and never as a link that would show nothing.
+class OutputViewHost extends ConsumerWidget {
+  final Widget child;
+
+  const OutputViewHost({super.key, required this.child});
+
+  /// Shows the Output view and scrolls it to [OperationId]'s first line, or
+  /// null when no [OutputViewHost] is above [context].
+  static ValueChanged<OperationId>? revealerOf(BuildContext context) => context
+      .dependOnInheritedWidgetOfExactType<_OutputViewHostScope>()
+      ?.reveal;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final visible = ref.watch(outputLogProvider.select((s) => s.visible));
+    return _OutputViewHostScope(
+      reveal: (id) {
+        ref.read(outputLogProvider.notifier).setVisible(true);
+        ref.read(outputRevealProvider.notifier).request(id);
+      },
+      child: LayoutBuilder(
+        builder: (context, constraints) => Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // Index 0 is always the child, so toggling the log never
+            // remounts the pages above it.
+            Expanded(child: child),
+            if (visible) OutputView(maxHeight: constraints.maxHeight),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _OutputViewHostScope extends InheritedWidget {
+  final ValueChanged<OperationId> reveal;
+
+  const _OutputViewHostScope({required this.reveal, required super.child});
+
+  // The closure only ever reads the same two notifiers, so a new instance
+  // on rebuild is not a change dependants need to hear about.
+  @override
+  bool updateShouldNotify(_OutputViewHostScope oldWidget) => false;
+}
+
+/// The user-resizable output view docked across the bottom of a window, below
+/// every page (see [OutputViewHost]). Renders the [outputLogProvider] buffer in
+/// a horizontally-scrolling, monospace, dark log. Its top edge is a drag handle
+/// that grows/shrinks the panel. Shown only when the output view is enabled
+/// (View → Show Output View).
 class OutputView extends ConsumerStatefulWidget {
-  /// Height of the surrounding repository panel, used for the default (1/6) and
+  /// Height of the area the view is docked in, used for the default (1/6) and
   /// the resize clamp.
   final double maxHeight;
 

@@ -482,7 +482,7 @@
             },
             {
               "type": "paragraph",
-              "text": "Output (View ▸ Show Output View, ⇧⌘O) is a docked command log under the Repository canvas, visible by default. It shows git and SSH invocations, stdout, stderr, and exit codes, including doctor install output."
+              "text": "Output (View ▸ Show Output View, ⇧⌘O) is a docked command log below every page, visible by default. It shows git and SSH invocations, stdout, stderr, and exit codes, including doctor install output."
             },
             {
               "type": "items",
