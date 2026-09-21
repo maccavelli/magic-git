@@ -36,6 +36,16 @@
 	<string>MainMenu</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
+	<!-- Renderer: Impeller, declared deliberately
+	     (docs/decisions/0063-MADR-adopt-impeller-renderer-on-macos.md).
+	     Flutter 3.47 made Impeller the macOS default; this key states the
+	     choice so a future default change cannot move the renderer
+	     silently. test/macos_renderer_canon_test.dart pins it. Rolling
+	     back to Skia means false here AND an edit to that test, per the
+	     MADR's rollback clause; upstream will remove the opt-out in a
+	     future release. -->
+	<key>FLTEnableImpeller</key>
+	<true/>
 	<!-- The experimental merged UI/platform thread mode (default since Flutter
 	     3.35) freezes animation ticking in this app's SECOND FlutterEngine (the
 	     native History window): routes push but sit at their entrance

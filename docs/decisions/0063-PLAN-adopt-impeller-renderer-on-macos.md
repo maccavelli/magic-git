@@ -1,5 +1,5 @@
 ---
-status: "proposed"
+status: "in-progress"
 date: 2026-09-21
 associated-madr: "0063-MADR-adopt-impeller-renderer-on-macos.md"
 verified: 2026-09-21  # every "proven at planning time" row below was run on this date
@@ -147,8 +147,10 @@ Expected: both `exit=0`. The first line of `fv.log` is exactly
 `git -C "$REPO" rev-parse --path-format=absolute --git-path hooks` prints the path ending
 `/.global-git-hooks`.
 
-**0.5 The working tree holds only the records.** `git -C "$REPO" status --porcelain` prints exactly
-these four lines, in any order:
+**0.5 The working tree holds only the records.** ~~`git -C "$REPO" status --porcelain` prints exactly
+these four lines, in any order:~~ *(Deviation D1: the maintainer committed the four records as
+`9d8ed8a` before execution began. The expected output is now an empty `git status --porcelain`
+with `9d8ed8a` at HEAD.)*
 
 ```
  M docs/README.md
@@ -167,7 +169,8 @@ cd "$REPO" && flutter test > "$S/test0.log" 2>&1; echo "exit=$?"
 Expected: both `exit=0`, `analyze0.log` ends `No issues found!`, and the last line of `test0.log`
 contains `All tests passed!`.
 
-**0.7 Commit the records.**
+**0.7 Commit the records.** ~~(as below)~~ *(Deviation D1: already satisfied by `9d8ed8a`, which
+contains exactly these four files. There is nothing to commit, so this step was not run.)*
 
 ```sh
 cd "$REPO" && git add docs/README.md docs/decisions/0063-MADR-adopt-impeller-renderer-on-macos.md \
@@ -241,7 +244,9 @@ Expected: all three `exit=0`, and the last line of `test1.log` contains `All tes
 count is `test0`'s plus 6.
 
 **1.6 Commit.** `git status --porcelain` lists exactly `M macos/Runner/Info.plist` and
-`?? test/macos_renderer_canon_test.dart`. Stage those two, then
+`?? test/macos_renderer_canon_test.dart`~~. Stage those two, then~~ *(Deviation D1: plus
+` M docs/decisions/0063-PLAN-adopt-impeller-renderer-on-macos.md`, which carries D1 and the
+Phase 0–1 execution record. Stage those three, then)*
 `git commit --no-edit > "$S/commit1.log" 2>&1; echo "exit=$?"`, which must print `exit=0`. The
 Dart precommit hook may run on the staged test file; its failure blocks the commit and is a
 deviation.
@@ -440,10 +445,43 @@ maintainer's decision, made after acceptance.
 
 ## Execution record
 
-*Empty until execution starts.* Record per step: date, command, exit code, the decisive output lines
-verbatim, and every deviation as a dated entry (what was found, the decision, and any file added to
-scope), per the global *Plan deviations* rule.
+Record per step: date, command, exit code, the decisive output lines verbatim, and every deviation
+as a dated entry (what was found, the decision, and any file added to scope), per the global *Plan
+deviations* rule.
 
+* **D1 (2026-09-21, deviation, step 0.5).**
+  * **Found:** `git status --porcelain` printed nothing, where four uncommitted records were
+    expected. `git log` showed `9d8ed8a` "docs(decisions): propose Impeller renderer adoption on
+    macOS (MADR 0063)", committed by the maintainer at 08:57. It contains exactly
+    `docs/README.md`, this MADR, this PLAN and `0062-REPORT-flutter-sdk-pin-currency.md`
+    (1752 insertions). `git diff HEAD` was empty, and step 0.2's hash check passed against the
+    committed plan.
+  * **Decision (maintainer):** "Amend plan, fold in". Steps 0.5 and 0.7 are annotated above; 0.7
+    was not run. Step 1.6 also stages this PLAN, so the deviation and the Phase 0–1 execution
+    record land in Phase 1's commit.
+  * **Scope:** no file added. This PLAN was already in scope for phases 0–5.
+  * **MADR:** unchanged, since no decision, fact or assumption moved.
+
+* **Phase 0 (2026-09-21).**
+  * 0.1: `S=/var/folders/…/T/mg-0063.0sOswmLcD9` (a `mktemp -d` path).
+  * 0.2: extractor `exit=0`; 8 of 8 `ok`, with hashes identical to the Appendix A table.
+  * 0.3: `exit=0`. `Flutter 3.47.2 • channel stable • https://github.com/flutter/flutter.git`.
+    `pub get --enforce-lockfile` `exit=0`, `Got dependencies!`.
+  * 0.4: `/Users/<user>/.global-git-hooks`.
+  * 0.5: see D1.
+  * 0.6: `flutter analyze` `exit=0`, `No issues found!`. `flutter test` `exit=0`,
+    `03:40 +4223 ~3: All tests passed!`.
+  * 0.7: not run (D1).
+* **Phase 1 (2026-09-21).**
+  * 1.1: `exit=1`. The only failure was `Info.plist declares FLTEnableImpeller = true exactly once [E]`,
+    with `Actual: 'FLTEnableImpeller is not declared'`, then `+5 -1: Some tests failed.`
+  * 1.2: `exit=0`; `…/macos/Runner/Info.plist: OK`; `true`; `1 file changed, 10 insertions(+)`.
+  * 1.3: `exit=0`, `+6: All tests passed!`.
+  * 1.4: `pub get --offline` `exit=0`. `mutate.py` `exit=0`, with output
+    `skia opt-out: exit=1 expected-message=yes` / `duplicate: exit=1 expected-message=yes` /
+    `commented out: exit=1 expected-message=yes` / `restored green: exit=0`.
+  * 1.5: `dart format` `exit=0`, `0 changed`. `flutter analyze` `exit=0`, `No issues found!`.
+    `flutter test` `exit=0`, `03:39 +4229 ~3: All tests passed!`, which is 4223 + 6.
 * **P-1 (2026-09-21, planning).** F14 was proven in two attempts:
   * **First attempt:** an `rsync` copy that excluded `.git`. `flutter analyze` was clean, but
     `flutter test` exited 1 with `+4225 ~3 -4`. All 4 failures were `docs_records_test.dart`, each
