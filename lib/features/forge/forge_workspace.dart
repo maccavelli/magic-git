@@ -30,6 +30,12 @@ class ForgeRepositoryWorkspace extends ConsumerWidget {
   final Object? error;
   final VoidCallback? onRetry;
 
+  /// Compact navigation (MADR 0064 F1-A): whether the page asked for the
+  /// detail, and how it closes it again. Without [onCompactShowNavigator] the
+  /// compact pane still follows [selection] alone.
+  final bool showCanvas;
+  final VoidCallback? onCompactShowNavigator;
+
   const ForgeRepositoryWorkspace({
     super.key,
     required this.repoPath,
@@ -42,6 +48,8 @@ class ForgeRepositoryWorkspace extends ConsumerWidget {
     this.loading = false,
     this.error,
     this.onRetry,
+    this.showCanvas = false,
+    this.onCompactShowNavigator,
   });
 
   @override
@@ -120,6 +128,14 @@ class ForgeRepositoryWorkspace extends ConsumerWidget {
       activePage: selection is ForgeNothingSel
           ? CompactWorkspacePage.navigator
           : CompactWorkspacePage.canvas,
+      compactNavigation: onCompactShowNavigator == null
+          ? null
+          : CompactWorkspaceNavigation(
+              navigatorLabel: 'Items',
+              hasSelection: selection is! ForgeNothingSel,
+              showCanvas: showCanvas,
+              onShowNavigator: onCompactShowNavigator!,
+            ),
       preferences: workspace.preferences,
       onPreferencesChanged: workspace.onChanged,
       workspaceOptionsEnabled: true,

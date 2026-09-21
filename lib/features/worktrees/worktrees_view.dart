@@ -14,6 +14,7 @@ import '../../core/utils/display_error.dart';
 import '../../core/utils/file_actions.dart';
 import '../branches/branches_view.dart';
 import '../common/actions.dart';
+import '../common/adaptive_workspace_layout.dart';
 import '../common/async_views.dart';
 import '../common/busy_action.dart';
 import '../common/buttons.dart';
@@ -112,6 +113,10 @@ class _WorktreesViewState extends ConsumerState<WorktreesView>
   final Map<String, GlobalKey> _overviewRowKeys = {};
   String? _selectedOverviewPath;
 
+  // Compact width shows the overview list OR the selected worktree (MADR 0064
+  // F1-A): a tap or Enter opens it, Back closes it and keeps the selection.
+  bool _compactShowCanvas = false;
+
   String get repoPath => widget.repoPath;
 
   GlobalKey _overviewRowKeyFor(String path) =>
@@ -155,6 +160,19 @@ class _WorktreesViewState extends ConsumerState<WorktreesView>
           hasSelection: _selectedOverviewPath != null,
           clear: () => setState(() => _selectedOverviewPath = null),
         );
+      case LogicalKeyboardKey.enter:
+      case LogicalKeyboardKey.numpadEnter:
+        // Plain Enter opens the selected worktree (the compact canvas).
+        final keys = HardwareKeyboard.instance;
+        if (_selectedOverviewPath == null ||
+            keys.isMetaPressed ||
+            keys.isShiftPressed ||
+            keys.isAltPressed ||
+            keys.isControlPressed) {
+          return KeyEventResult.ignored;
+        }
+        setState(() => _compactShowCanvas = true);
+        return KeyEventResult.handled;
     }
     return KeyEventResult.ignored;
   }
@@ -685,7 +703,10 @@ class _WorktreesViewState extends ConsumerState<WorktreesView>
           ref.read(worktreeTabsProvider.notifier).select(match.path);
         } else {
           ref.read(worktreeTabsProvider.notifier).select(null);
-          setState(() => _selectedOverviewPath = match.path);
+          setState(() {
+            _selectedOverviewPath = match.path;
+            _compactShowCanvas = true;
+          });
         }
       });
     }
@@ -787,6 +808,8 @@ class _WorktreesViewState extends ConsumerState<WorktreesView>
     final selectedWorktree = worktrees
         .where((item) => item.path == _selectedOverviewPath)
         .firstOrNull;
+    // A cleared selection closes the compact detail with it.
+    if (selectedWorktree == null) _compactShowCanvas = false;
     final snapshot = RepositoryContextSnapshot(
       repositoryPath: repoPath,
       repositoryName:
@@ -840,6 +863,13 @@ class _WorktreesViewState extends ConsumerState<WorktreesView>
         canvas: selectedWorktree == null
             ? _overviewPlaceholder(context, worktrees)
             : _worktreeDetail(context, selectedWorktree),
+        compactNavigation: CompactWorkspaceNavigation(
+          navigatorLabel: 'Worktrees',
+          hasSelection: selectedWorktree != null,
+          showCanvas: _compactShowCanvas,
+          onShowNavigator: () => setState(() => _compactShowCanvas = false),
+          navigatorFocusNode: _overviewFocus,
+        ),
         preferences: workspace.preferences,
         onPreferencesChanged: workspace.onChanged,
         workspaceOptionsEnabled: true,
@@ -1041,7 +1071,10 @@ class _WorktreesViewState extends ConsumerState<WorktreesView>
       key: _overviewRowKeyFor(wt.path),
       onTap: () {
         _overviewFocus.requestFocus();
-        setState(() => _selectedOverviewPath = wt.path);
+        setState(() {
+          _selectedOverviewPath = wt.path;
+          _compactShowCanvas = true;
+        });
       },
       onDoubleTap: () => _openWorktree(wt),
       // Selecting first mirrors the tap path (and Stash's card menu): the menu

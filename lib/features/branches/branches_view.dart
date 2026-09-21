@@ -15,6 +15,7 @@ import '../../core/git/git_service.dart';
 import '../../core/output/output_log.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/settings/app_settings.dart';
+import '../../core/settings/keymap.dart';
 import '../../core/settings/repository_workspace_prefs.dart';
 import '../../core/ssh/ssh_command_executor.dart';
 import '../../core/utils/display_error.dart';
@@ -23,6 +24,7 @@ import '../common/adaptive_workspace_layout.dart';
 import '../common/branch_switch.dart';
 import '../common/busy_action.dart';
 import '../common/inline_action_button.dart';
+import '../common/panel_shortcuts.dart';
 import '../common/pending_op_banner.dart';
 import '../common/prompt_form_sheet.dart';
 import '../common/prompt_text_sheet.dart';
@@ -43,7 +45,12 @@ import '../worktrees/worktree_tabs.dart';
 import 'branch_bulk_delete_sheet.dart';
 import 'branch_detail.dart' show BranchDetail, TagRemoteStatus;
 import 'branch_navigator.dart'
-    show BranchNavigator, DropOp, TagDeleteScope, remoteLocalName;
+    show
+        BranchNavigator,
+        DropOp,
+        TagDeleteScope,
+        branchPanelHandlers,
+        remoteLocalName;
 import 'branch_view_model.dart';
 import 'branch_workspace_prefs.dart';
 import 'create_tag_sheet.dart';
@@ -129,6 +136,12 @@ class _BranchesViewState extends ConsumerState<BranchesView>
 
   final _filterCtl = TextEditingController();
   final FocusNode _branchFocus = FocusNode(debugLabel: 'branch-list');
+
+  // Compact width shows the list OR the detail (MADR 0064 F1-A): a row click
+  // opens the detail, Back closes it and keeps the selection, and ↑/↓ move
+  // the selection without flipping panes. (Enter keeps checking out the
+  // selected branch, as it always has.)
+  bool _compactShowCanvas = false;
   final ScrollController _branchScroll = ScrollController();
 
   String get repoPath => widget.repoPath;
@@ -291,7 +304,10 @@ class _BranchesViewState extends ConsumerState<BranchesView>
           markWorkspaceLocationUnavailable(ref, location);
           return;
         }
-        setState(() => _selectedRef = match.name);
+        setState(() {
+          _selectedRef = match.name;
+          _compactShowCanvas = true;
+        });
       });
     }
 
@@ -447,6 +463,15 @@ class _BranchesViewState extends ConsumerState<BranchesView>
       });
     }
 
+    // A cleared selection closes the compact detail with it.
+    if (selectedRef == null) _compactShowCanvas = false;
+    void onCompare() {
+      // Surface the base-relative comparison: Review mode + keep selection.
+      if (mode != BranchWorkspaceMode.review) {
+        _setMode(BranchWorkspaceMode.review);
+      }
+    }
+
     final navigator = BranchNavigator(
       repoPath: repoPath,
       vm: vm,
@@ -528,15 +553,7 @@ class _BranchesViewState extends ConsumerState<BranchesView>
       onPushAllLocalOnly: _pushAllLocalOnly,
       onDropOnCurrent: _dropOnCurrent,
       onDropCommitOnBranch: _dropCommitOnBranch,
-      onPublish: _publishBranch,
-      onCreateRequest: _createRequest,
-      onOpenUrl: _open,
-      onCompare: () {
-        // Surface the base-relative comparison: Review mode + keep selection.
-        if (mode != BranchWorkspaceMode.review) {
-          _setMode(BranchWorkspaceMode.review);
-        }
-      },
+      onOpen: () => setState(() => _compactShowCanvas = true),
       onFilterChanged: (_) => setState(() {}),
       onModeChanged: _setMode,
       onBaseChanged: _setBase,
@@ -629,28 +646,58 @@ class _BranchesViewState extends ConsumerState<BranchesView>
       ),
       navigator: navigator,
       canvas: detail,
-      activePage: selectedRef == null
-          ? CompactWorkspacePage.navigator
-          : CompactWorkspacePage.canvas,
+      compactNavigation: CompactWorkspaceNavigation(
+        navigatorLabel: 'Branches',
+        hasSelection: selectedRef != null,
+        showCanvas: _compactShowCanvas,
+        onShowNavigator: () => setState(() => _compactShowCanvas = false),
+        navigatorFocusNode: _branchFocus,
+      ),
       preferences: workspace.preferences,
       onPreferencesChanged: workspace.onChanged,
       workspaceOptionsEnabled: true,
+    );
+    // The panel's handlers live here, above the scaffold, where the other
+    // panels keep theirs: inside the navigator they unmounted with the list
+    // at the compact size class, taking every Branch shortcut and menu item
+    // with them (MADR 0064 F1-A).
+    final handlers = branchPanelHandlers(
+      git: git,
+      vm: vm,
+      selectedRef: _selectedRef,
+      remotes: remotesList ?? const <String>[],
+      busy: busy,
+      onCreateBranch: _createBranchPrompt,
+      onOpenCreateTagSheet: _openCreateTagSheet,
+      onMerge: (g, b, mode) => _mergeBranch(g, b.shortName, mode),
+      onDeleteBranch: (g, branch) => _deleteBranch(vm, g, branch),
+      onPublish: _publishBranch,
+      onCreateRequest: _createRequest,
+      onOpenUrl: _open,
+      onCompare: onCompare,
     );
     // Repo-wide, not per row: mid-rebase HEAD is detached and no branch row
     // is current. Above the scaffold rather than in its context slot, which
     // a worktree tab (where a rebase is as likely) does not render.
     final pending = ref.watch(pendingOpProvider(repoPath)).value;
-    if (pending == null || pending == PendingOp.none) return scaffold;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        PendingOpBanner(
-          op: pending,
-          onContinue: () => _continuePending(pending),
-          onAbort: () => _abortPending(pending),
-        ),
-        Expanded(child: scaffold),
-      ],
+    return PanelShortcuts(
+      bindings: widget.isActive
+          ? resolveShortcuts(ref.watch(keymapProvider), handlers)
+          : const <ShortcutActivator, VoidCallback>{},
+      handlers: widget.isActive ? handlers : const {},
+      child: pending == null || pending == PendingOp.none
+          ? scaffold
+          : Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                PendingOpBanner(
+                  op: pending,
+                  onContinue: () => _continuePending(pending),
+                  onAbort: () => _abortPending(pending),
+                ),
+                Expanded(child: scaffold),
+              ],
+            ),
     );
   }
 

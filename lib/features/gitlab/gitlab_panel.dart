@@ -88,6 +88,10 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
 
   ForgeSel _sel = const ForgeNothingSel();
 
+  // Compact width shows the list OR the detail (MADR 0064 F1-A): selecting
+  // an item opens the detail, Back closes it and keeps the selection.
+  bool _compactShowCanvas = false;
+
   /// Whether an inline create form holds unsaved content (reported via
   /// onDirtyChanged). Guards row clicks and tab-away from silently
   /// destroying a draft.
@@ -224,6 +228,7 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
     setState(() {
       _sel = next;
       _draftDirty = false;
+      _compactShowCanvas = true;
     });
     publishLandedForgeSelection(
       ref,
@@ -331,6 +336,9 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
         navigator: _leftPane(mrs, pipelines, pipeByRef),
         canvas: _mainPane(mrs, pipelines, pipeByRef),
         selection: _sel,
+        showCanvas: _sel is! ForgeNothingSel && _compactShowCanvas,
+        onCompactShowNavigator: () =>
+            setState(() => _compactShowCanvas = false),
         primaryActionLabel: 'New Merge Request',
         onPrimaryAction: _createMr,
       ),

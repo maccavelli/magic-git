@@ -354,6 +354,14 @@ All of these runs used scratch clones of `21d32bc`, never this tree.
   * 4.3: `+9: All tests passed!`.
   * 4.4: format and analyze clean; `flutter test` `02:46 +4263 ~3: All tests passed!` =
     `N0 + 34`. The hash matches A.10 (`25aabc85…`).
+* **Phase 5 (2026-09-21, execution).**
+  * 5.1: exit 1, `+7 -24: Some tests failed.` All 7 `control (1000 px …)` tests passed and 0
+    failed, so the instrument is sound.
+  * 5.2: apply `exit=0`.
+  * 5.3: `+41: All tests passed!`.
+  * 5.4: format and analyze clean; `flutter test` `02:47 +4294 ~3: All tests passed!` =
+    `N0 + 65`. The `onBack:` grep matched nothing (exit 1), and the hash matches A.12
+    (`91124677…`).
 * **P-1 (2026-09-21, planning).** The first four patches (F4, F3, F1, F2), stacked in a fresh clone
   of `21d32bc`:
   * each `git apply --index` exited 0;

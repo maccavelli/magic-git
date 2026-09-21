@@ -67,6 +67,10 @@ class _StashViewState extends ConsumerState<StashView> with BusyActionState {
   // Keyboard navigation of the stash list: the list takes focus on a card tap,
   // then ↑/↓ walk _selected through the stashes (⌥⌘A/⌥⌘P/⌘⌫ then act on it).
   final FocusNode _stashFocus = FocusNode(debugLabel: 'stash-list');
+
+  // Compact width shows the list OR the preview (MADR 0064 F1-A): a tap or
+  // Enter opens the preview, Back closes it and keeps the selection.
+  bool _compactShowCanvas = false;
   final ScrollController _stashScroll = ScrollController();
   final TextEditingController _filterController = TextEditingController();
   final Map<String, GlobalKey> _stashRowKeys = {};
@@ -146,6 +150,19 @@ class _StashViewState extends ConsumerState<StashView> with BusyActionState {
           hasSelection: _selected != null,
           clear: () => setState(() => _selected = null),
         );
+      case LogicalKeyboardKey.enter:
+      case LogicalKeyboardKey.numpadEnter:
+        // Plain Enter opens the selected stash's preview (compact canvas).
+        final keys = HardwareKeyboard.instance;
+        if (_selected == null ||
+            keys.isMetaPressed ||
+            keys.isShiftPressed ||
+            keys.isAltPressed ||
+            keys.isControlPressed) {
+          return KeyEventResult.ignored;
+        }
+        setState(() => _compactShowCanvas = true);
+        return KeyEventResult.handled;
     }
     return KeyEventResult.ignored;
   }
@@ -262,7 +279,10 @@ class _StashViewState extends ConsumerState<StashView> with BusyActionState {
           markWorkspaceLocationUnavailable(ref, location);
           return;
         }
-        setState(() => _selected = location.identity);
+        setState(() {
+          _selected = location.identity;
+          _compactShowCanvas = true;
+        });
       });
     }
     final git = ref.read(gitServiceProvider);
@@ -420,6 +440,8 @@ class _StashViewState extends ConsumerState<StashView> with BusyActionState {
           final selected = stashes.any((stash) => stash.oid == _selected)
               ? _selected
               : null;
+          // A cleared selection closes the compact preview with it.
+          if (selected == null) _compactShowCanvas = false;
           return RepositoryWorkspaceScaffold(
             repositoryContext: _contextBar(snapshot, git),
             navigator: Column(
@@ -456,9 +478,13 @@ class _StashViewState extends ConsumerState<StashView> with BusyActionState {
             canvas: stashes.isEmpty
                 ? _empty(context)
                 : _preview(context, selected),
-            activePage: selected == null
-                ? CompactWorkspacePage.navigator
-                : CompactWorkspacePage.canvas,
+            compactNavigation: CompactWorkspaceNavigation(
+              navigatorLabel: 'Stashes',
+              hasSelection: selected != null,
+              showCanvas: _compactShowCanvas,
+              onShowNavigator: () => setState(() => _compactShowCanvas = false),
+              navigatorFocusNode: _stashFocus,
+            ),
             preferences: workspace.preferences,
             onPreferencesChanged: workspace.onChanged,
             workspaceOptionsEnabled: true,
@@ -681,7 +707,10 @@ class _StashViewState extends ConsumerState<StashView> with BusyActionState {
         key: _stashRowKeyFor(stash.oid),
         onTap: () {
           _stashFocus.requestFocus();
-          setState(() => _selected = stash.oid);
+          setState(() {
+            _selected = stash.oid;
+            _compactShowCanvas = true;
+          });
         },
         onSecondaryTapUp: (d) =>
             _showCardMenu(context, git, stash, d.globalPosition),

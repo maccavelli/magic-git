@@ -61,6 +61,11 @@ class RepositoryWorkspaceScaffold extends StatelessWidget {
   final Object? error;
   final VoidCallback? onRetry;
   final CompactWorkspacePage activePage;
+
+  /// Scaffold-owned compact navigation (MADR 0064 F1-A). When set it decides
+  /// the compact pane, adds the back bar and Esc/⌘[, and hands focus between
+  /// the panes; [activePage] then applies only to callers without it.
+  final CompactWorkspaceNavigation? compactNavigation;
   final bool inspectorVisible;
   final bool taskDockFocused;
   final RepositoryWorkspacePrefs preferences;
@@ -78,6 +83,7 @@ class RepositoryWorkspaceScaffold extends StatelessWidget {
     this.error,
     this.onRetry,
     this.activePage = CompactWorkspacePage.canvas,
+    this.compactNavigation,
     this.inspectorVisible = false,
     this.taskDockFocused = false,
     this.preferences = const RepositoryWorkspacePrefs(),
@@ -119,6 +125,7 @@ class RepositoryWorkspaceScaffold extends StatelessWidget {
         inspector: inspector,
         taskDock: taskDock,
         compactPage: activePage,
+        compactNavigation: compactNavigation,
         inspectorVisible: inspectorVisible,
         taskDockFocused: taskDockFocused,
         preferences: preferences,

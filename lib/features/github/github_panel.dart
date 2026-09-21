@@ -69,6 +69,10 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
 
   ForgeSel _sel = const ForgeNothingSel();
 
+  // Compact width shows the list OR the detail (MADR 0064 F1-A): selecting
+  // an item opens the detail, Back closes it and keeps the selection.
+  bool _compactShowCanvas = false;
+
   /// Whether an inline create form holds unsaved content (reported via
   /// onDirtyChanged). Guards row clicks and tab-away from silently
   /// destroying a draft.
@@ -191,6 +195,7 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
     setState(() {
       _sel = next;
       _draftDirty = false;
+      _compactShowCanvas = true;
     });
     publishLandedForgeSelection(
       ref,
@@ -293,6 +298,9 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
         navigator: _leftPane(prs, runs, runByBranch),
         canvas: _mainPane(prs, runs, runByBranch),
         selection: _sel,
+        showCanvas: _sel is! ForgeNothingSel && _compactShowCanvas,
+        onCompactShowNavigator: () =>
+            setState(() => _compactShowCanvas = false),
         primaryActionLabel: 'New Pull Request',
         onPrimaryAction: _createPr,
       ),

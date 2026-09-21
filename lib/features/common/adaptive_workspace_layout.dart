@@ -1,11 +1,54 @@
-import 'package:flutter/widgets.dart';
+import 'package:flutter/cupertino.dart';
+import 'package:flutter/services.dart';
+import 'package:macos_ui/macos_ui.dart';
 
 import '../../core/settings/repository_workspace_prefs.dart';
+import 'inline_action_button.dart';
 import 'repository_workspace_models.dart';
 import 'resizable_master_detail.dart';
 import 'workspace_focus_order.dart';
 
 enum CompactWorkspacePage { navigator, canvas }
+
+/// A page's side of compact navigation (MADR 0064 F1-A).
+///
+/// At the compact size class the layout shows one pane at a time. The page
+/// owns [showCanvas] — a row tap sets it, as does plain Enter where the list
+/// has no other use for Enter (Branches keeps Enter = check out); Back (the
+/// back bar, Esc or ⌘[) clears it through [onShowNavigator] — and the
+/// selection itself survives Back, as a collapsed split view does. The canvas
+/// is shown only when [hasSelection] && [showCanvas]; arrow keys that move the
+/// selection inside the list must leave [showCanvas] alone, so browsing the
+/// list never flips the pane.
+@immutable
+class CompactWorkspaceNavigation {
+  /// Names the list on the back bar: "‹ [navigatorLabel]".
+  final String navigatorLabel;
+  final bool hasSelection;
+  final bool showCanvas;
+
+  /// Back: clears the page's [showCanvas] so the list shows again. Named
+  /// apart from the context bar's Back/Forward, which navigate the session's
+  /// history and stay owned by the bar. The selection must be kept.
+  final VoidCallback onShowNavigator;
+
+  /// The list's own focus node, which receives focus on Back. When null the
+  /// layout focuses a non-text node of its own inside the navigator region.
+  final FocusNode? navigatorFocusNode;
+
+  const CompactWorkspaceNavigation({
+    required this.navigatorLabel,
+    required this.hasSelection,
+    required this.showCanvas,
+    required this.onShowNavigator,
+    this.navigatorFocusNode,
+  });
+
+  bool get wantsCanvas => hasSelection && showCanvas;
+}
+
+/// The back bar's button, for tests and for the pane-reachability contract.
+const Key kWorkspaceCompactBackKey = Key('workspace-compact-back');
 
 enum WorkspaceTaskDockPresentation { hidden, compact, full }
 
@@ -76,6 +119,10 @@ class AdaptiveWorkspaceLayout extends StatefulWidget {
   final Widget? inspector;
   final Widget? taskDock;
   final CompactWorkspacePage compactPage;
+
+  /// When set, compact navigation is scaffold-owned (F1-A) and [compactPage]
+  /// is ignored. Callers without it keep the legacy [compactPage] behaviour.
+  final CompactWorkspaceNavigation? compactNavigation;
   final bool inspectorVisible;
   final bool taskDockFocused;
   final RepositoryWorkspacePrefs preferences;
@@ -88,6 +135,7 @@ class AdaptiveWorkspaceLayout extends StatefulWidget {
     this.inspector,
     this.taskDock,
     this.compactPage = CompactWorkspacePage.canvas,
+    this.compactNavigation,
     this.inspectorVisible = false,
     this.taskDockFocused = false,
     this.preferences = const RepositoryWorkspacePrefs(),
@@ -103,6 +151,34 @@ class _AdaptiveWorkspaceLayoutState extends State<AdaptiveWorkspaceLayout> {
   late double _navigatorWidth = widget.preferences.navigatorWidth;
   late double _inspectorWidth = widget.preferences.inspectorWidth;
   late double _taskDockHeight = widget.preferences.taskDockHeight;
+
+  /// Holds focus for the canvas at the compact size class. It sits below the
+  /// page's PanelShortcuts, so panel shortcuts keep working once the list —
+  /// and the list's own focus node — has been unmounted.
+  final FocusNode _compactCanvasFocus = FocusNode(
+    debugLabel: 'workspace-compact-canvas',
+    skipTraversal: true,
+  );
+
+  /// Receives focus on Back when the page supplies no list focus node.
+  final FocusNode _compactNavigatorFocus = FocusNode(
+    debugLabel: 'workspace-compact-navigator',
+    skipTraversal: true,
+  );
+
+  /// The compact pane shown by the previous build; null outside compact.
+  CompactWorkspacePage? _lastCompactPage;
+
+  /// With the navigator collapsed (the Minimal preset) compact opens on the
+  /// canvas; the back bar still reaches the list, and this remembers it did.
+  bool _collapsedNavigatorRevealed = false;
+
+  @override
+  void dispose() {
+    _compactCanvasFocus.dispose();
+    _compactNavigatorFocus.dispose();
+    super.dispose();
+  }
 
   @override
   void didUpdateWidget(AdaptiveWorkspaceLayout oldWidget) {
@@ -125,6 +201,75 @@ class _AdaptiveWorkspaceLayoutState extends State<AdaptiveWorkspaceLayout> {
     widget.onPreferencesChanged?.call(next.normalized);
   }
 
+  CompactWorkspacePage _compactPageFor(CompactWorkspaceNavigation? nav) {
+    if (nav == null) {
+      return widget.preferences.navigatorCollapsed
+          ? CompactWorkspacePage.canvas
+          : widget.compactPage;
+    }
+    if (nav.wantsCanvas) return CompactWorkspacePage.canvas;
+    if (widget.preferences.navigatorCollapsed && !_collapsedNavigatorRevealed) {
+      return CompactWorkspacePage.canvas;
+    }
+    return CompactWorkspacePage.navigator;
+  }
+
+  /// Moves focus onto the canvas once it replaces the list — only on that
+  /// transition, only for the visible page (IndexedStack disables TickerMode
+  /// for hidden ones), and never away from something inside the canvas.
+  void _noteCompactPage(CompactWorkspacePage? page) {
+    final previous = _lastCompactPage;
+    _lastCompactPage = page;
+    if (previous != CompactWorkspacePage.navigator ||
+        page != CompactWorkspacePage.canvas) {
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !TickerMode.valuesOf(context).enabled) return;
+      if (_compactCanvasFocus.context == null || _compactCanvasFocus.hasFocus) {
+        return;
+      }
+      _compactCanvasFocus.requestFocus();
+    });
+  }
+
+  void _compactBack() {
+    final nav = widget.compactNavigation;
+    if (nav == null) return;
+    setState(() => _collapsedNavigatorRevealed = true);
+    nav.onShowNavigator();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final node =
+          widget.compactNavigation?.navigatorFocusNode ??
+          _compactNavigatorFocus;
+      if (node.context != null && node.canRequestFocus) node.requestFocus();
+    });
+  }
+
+  /// Esc and ⌘[ go Back — reached only when no descendant handled the key
+  /// first, so an open popover, a live drag or a field keeps its own Esc.
+  KeyEventResult _onCompactCanvasKey(FocusNode node, KeyEvent event) {
+    if (event is! KeyDownEvent) return KeyEventResult.ignored;
+    final keyboard = HardwareKeyboard.instance;
+    final back = switch (event.logicalKey) {
+      LogicalKeyboardKey.escape =>
+        !keyboard.isMetaPressed &&
+            !keyboard.isAltPressed &&
+            !keyboard.isControlPressed &&
+            !keyboard.isShiftPressed,
+      LogicalKeyboardKey.bracketLeft =>
+        keyboard.isMetaPressed &&
+            !keyboard.isAltPressed &&
+            !keyboard.isControlPressed &&
+            !keyboard.isShiftPressed,
+      _ => false,
+    };
+    if (!back) return KeyEventResult.ignored;
+    _compactBack();
+    return KeyEventResult.handled;
+  }
+
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(
@@ -135,6 +280,14 @@ class _AdaptiveWorkspaceLayoutState extends State<AdaptiveWorkspaceLayout> {
           hasInspector: widget.inspector != null,
           inspectorVisible: widget.inspectorVisible,
           taskDockFocused: widget.taskDockFocused,
+        );
+        final nav = widget.compactNavigation;
+        _noteCompactPage(
+          nav != null &&
+                  widget.navigator != null &&
+                  !arrangement.navigatorAndCanvas
+              ? _compactPageFor(nav)
+              : null,
         );
         Widget main = _mainFor(arrangement);
         final dock = widget.taskDock;
@@ -210,10 +363,38 @@ class _AdaptiveWorkspaceLayoutState extends State<AdaptiveWorkspaceLayout> {
       child: navigator,
     );
     if (!arrangement.navigatorAndCanvas) {
-      if (widget.preferences.navigatorCollapsed) return canvas;
-      return widget.compactPage == CompactWorkspacePage.navigator
-          ? navigatorRegion
-          : canvas;
+      final nav = widget.compactNavigation;
+      if (nav == null) {
+        if (widget.preferences.navigatorCollapsed) return canvas;
+        return widget.compactPage == CompactWorkspacePage.navigator
+            ? navigatorRegion
+            : canvas;
+      }
+      if (_compactPageFor(nav) == CompactWorkspacePage.navigator) {
+        return WorkspaceFocusRegion(
+          role: WorkspacePaneRole.navigator,
+          child: nav.navigatorFocusNode == null
+              ? Focus(focusNode: _compactNavigatorFocus, child: navigator)
+              : navigator,
+        );
+      }
+      return WorkspaceFocusRegion(
+        role: WorkspacePaneRole.canvas,
+        child: Focus(
+          focusNode: _compactCanvasFocus,
+          onKeyEvent: _onCompactCanvasKey,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _CompactBackBar(
+                label: nav.navigatorLabel,
+                onPressed: _compactBack,
+              ),
+              Expanded(child: widget.canvas),
+            ],
+          ),
+        ),
+      );
     }
 
     Widget body = ResizablePanePair(
@@ -261,5 +442,31 @@ class _AdaptiveWorkspaceLayoutState extends State<AdaptiveWorkspaceLayout> {
       );
     }
     return body;
+  }
+}
+
+/// "‹ Commits": the one way back to the list that needs no keyboard.
+class _CompactBackBar extends StatelessWidget {
+  final String label;
+  final VoidCallback onPressed;
+
+  const _CompactBackBar({required this.label, required this.onPressed});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: const BoxDecoration(
+        border: Border(bottom: BorderSide(color: MacosColors.separatorColor)),
+      ),
+      alignment: Alignment.centerLeft,
+      child: InlineActionButton(
+        key: kWorkspaceCompactBackKey,
+        label: '‹ $label',
+        icon: CupertinoIcons.list_bullet,
+        tooltip: 'Back to $label (Esc or ⌘[)',
+        onPressed: onPressed,
+      ),
+    );
   }
 }

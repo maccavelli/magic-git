@@ -114,6 +114,11 @@ class _HistoryViewState extends ConsumerState<HistoryView>
   // then ↑/↓ walk the selection through the commits (⇧↑/⇧↓ extend a range),
   // scrolling each into view.
   final FocusNode _commitFocus = FocusNode(debugLabel: 'commit-list');
+
+  // Compact width shows the list OR the detail (MADR 0064 F1-A). A row tap or
+  // Enter opens the detail; Back closes it and keeps the selection; ↑/↓ move
+  // the selection without flipping panes.
+  bool _compactShowCanvas = false;
   final ScrollController _commitScroll = ScrollController();
   final Map<String, GlobalKey> _commitRowKeys = {};
 
@@ -330,6 +335,7 @@ class _HistoryViewState extends ConsumerState<HistoryView>
     final commits = _lastCommits ?? const <GitCommit>[];
     final keys = HardwareKeyboard.instance;
     setState(() {
+      _compactShowCanvas = true;
       if (keys.isMetaPressed) {
         if (_selectedHashes.contains(hash)) {
           // ⌘-click on a selected row removes it. The removed hash must NOT
@@ -435,6 +441,20 @@ class _HistoryViewState extends ConsumerState<HistoryView>
           hasSelection: _selectedHashes.isNotEmpty,
           clear: () => setState(_clearSelection),
         );
+      case LogicalKeyboardKey.enter:
+      case LogicalKeyboardKey.numpadEnter:
+        // Plain Enter opens the selected commit (the compact canvas). Any
+        // modifier belongs to a panel binding such as ⌘⇧↩ Amend.
+        final keys = HardwareKeyboard.instance;
+        if (_soleSelectedHash == null ||
+            keys.isMetaPressed ||
+            keys.isShiftPressed ||
+            keys.isAltPressed ||
+            keys.isControlPressed) {
+          return KeyEventResult.ignored;
+        }
+        setState(() => _compactShowCanvas = true);
+        return KeyEventResult.handled;
     }
     return KeyEventResult.ignored;
   }
@@ -1446,6 +1466,7 @@ class _HistoryViewState extends ConsumerState<HistoryView>
               second,
           };
           _selectionAnchor = location.identity;
+          _compactShowCanvas = true;
         });
       });
     }
@@ -1489,6 +1510,9 @@ class _HistoryViewState extends ConsumerState<HistoryView>
 
     final keymap = ref.watch(keymapProvider);
     final selectedHash = _soleSelectedHash;
+    // A cleared selection closes the compact detail with it, so a later ↑/↓
+    // selects in the list rather than reopening the detail.
+    if (selectedHash == null) _compactShowCanvas = false;
     final selectedCommit = _selectedCommitIn(commits);
     final hasCommits = commits?.isNotEmpty ?? false;
     final connection = ref.watch(connectionProvider);
@@ -1665,9 +1689,13 @@ class _HistoryViewState extends ConsumerState<HistoryView>
           ],
         ),
         canvas: _rightPane(context, commits),
-        activePage: selectedHash == null
-            ? CompactWorkspacePage.navigator
-            : CompactWorkspacePage.canvas,
+        compactNavigation: CompactWorkspaceNavigation(
+          navigatorLabel: 'Commits',
+          hasSelection: selectedHash != null,
+          showCanvas: _compactShowCanvas,
+          onShowNavigator: () => setState(() => _compactShowCanvas = false),
+          navigatorFocusNode: _commitFocus,
+        ),
         preferences: workspace.preferences,
         onPreferencesChanged: workspace.onChanged,
         workspaceOptionsEnabled: true,

@@ -14,7 +14,6 @@ import '../../core/git/branch_review_query.dart';
 import '../../core/git/branch_sync_state.dart';
 import '../../core/git/git_service.dart';
 import '../../core/providers/app_providers.dart';
-import '../../core/settings/keymap.dart';
 import '../../core/theme/app_theme.dart';
 import '../common/chip_strip.dart';
 import '../common/context_menu.dart';
@@ -48,6 +47,76 @@ String remoteLocalName(String remoteShortName) => remoteShortName.contains('/')
 
 /// The three-way outcome of deleting a tag that also exists on the remote.
 enum TagDeleteScope { local, both, cancel }
+
+/// The Branches panel's action-id → handler map: one map for the keyboard
+/// shortcuts, the command palette's dispatched intents and the menu bar (see
+/// `PanelShortcuts.handlers`).
+///
+/// Built by `BranchesView`, above the workspace scaffold, so it survives the
+/// navigator being unmounted at the compact size class (MADR 0064 F1-A). It
+/// used to live inside [BranchNavigator], and went dead with it.
+///
+/// [selectedRef] is the view's selected ref name, which the navigator's
+/// keyboard cursor always mirrors. Preconditions mirror branch_detail's
+/// primary/secondary gates, so a remapped key never does something the UI
+/// would leave disabled; merge/delete need a non-current LOCAL branch (merging
+/// or deleting the branch you're on is nonsensical / rejected by git).
+Map<String, VoidCallback?> branchPanelHandlers({
+  required GitService git,
+  required BranchViewModel vm,
+  required String? selectedRef,
+  required List<String> remotes,
+  required bool busy,
+  required void Function(GitService) onCreateBranch,
+  required void Function() onOpenCreateTagSheet,
+  required void Function(GitService, GitRef, MergeMode) onMerge,
+  required void Function(GitService, String) onDeleteBranch,
+  void Function(GitService, GitRef)? onPublish,
+  void Function(GitRef)? onCreateRequest,
+  void Function(String?)? onOpenUrl,
+  VoidCallback? onCompare,
+}) {
+  final local = selectedRef == null
+      ? null
+      : vm.localsOnScreen.where((b) => b.name == selectedRef).firstOrNull;
+  final canActOnSelection = local != null && !local.isHead;
+  final unpublished = local != null && local.upstream == null;
+  final bf = local == null ? null : vm.forge[local.shortName];
+  final hasRequest = bf != null && bf.hasRequest;
+  final canPublish =
+      local != null &&
+      unpublished &&
+      remotes.isNotEmpty &&
+      onPublish != null &&
+      !busy;
+  final canCreateRequest =
+      local != null &&
+      !unpublished &&
+      !hasRequest &&
+      onCreateRequest != null &&
+      !busy;
+  final ciUrl = bf?.ciUrl;
+  return <String, VoidCallback?>{
+    'branches.newBranch': () => onCreateBranch(git),
+    'branches.createTag': onOpenCreateTagSheet,
+    // Only bound with a non-current branch selected — otherwise they fall
+    // through, matching the rest of the app's precondition gates.
+    'branches.merge': canActOnSelection
+        ? () => onMerge(git, local, MergeMode.normal)
+        : null,
+    'branches.delete': canActOnSelection
+        ? () => onDeleteBranch(git, local.shortName)
+        : null,
+    'branches.publish': canPublish ? () => onPublish(git, local) : null,
+    'branches.createRequest': canCreateRequest
+        ? () => onCreateRequest(local)
+        : null,
+    'branches.openCi': ciUrl != null && onOpenUrl != null
+        ? () => onOpenUrl(ciUrl)
+        : null,
+    'branches.compare': local != null && onCompare != null ? onCompare : null,
+  };
+}
 
 /// The choice offered when a branch is dropped onto the current branch's row.
 enum DropOp { merge, rebase, cancel }
@@ -298,12 +367,9 @@ class BranchNavigator extends ConsumerStatefulWidget {
   })
   onDropCommitOnBranch;
 
-  /// Publish / create-request / open CI / compare — same actions as the detail
-  /// pane, so keymap + palette handlers stay in lockstep with the buttons.
-  final void Function(GitService, GitRef)? onPublish;
-  final void Function(GitRef)? onCreateRequest;
-  final void Function(String?)? onOpenUrl;
-  final VoidCallback? onCompare;
+  /// A row was clicked (not merely selected by ↑/↓): at the compact size
+  /// class this opens the detail pane (MADR 0064 F1-A).
+  final VoidCallback? onOpen;
 
   /// Called when the filter text changes so the coordinator can rebuild the
   /// view model with the new filter.
@@ -374,10 +440,7 @@ class BranchNavigator extends ConsumerStatefulWidget {
     required this.onPushAllLocalOnly,
     required this.onDropOnCurrent,
     required this.onDropCommitOnBranch,
-    this.onPublish,
-    this.onCreateRequest,
-    this.onOpenUrl,
-    this.onCompare,
+    this.onOpen,
     required this.onFilterChanged,
     required this.onModeChanged,
     required this.onBaseChanged,
@@ -438,13 +501,6 @@ class _BranchNavigatorState extends ConsumerState<BranchNavigator> {
       if (b.name == name) return b;
     }
     return null;
-  }
-
-  // A non-current LOCAL branch is selected — merge/delete apply (merging or
-  // deleting the branch you're on is nonsensical / rejected by git).
-  bool get _canActOnSelection {
-    final sel = _selectedLocal;
-    return sel != null && !sel.isHead;
   }
 
   void _select(GitRef refEntry, {bool command = false, bool shift = false}) {
@@ -685,6 +741,7 @@ class _BranchNavigatorState extends ConsumerState<BranchNavigator> {
         HardwareKeyboard.instance.isControlPressed;
     final shift = HardwareKeyboard.instance.isShiftPressed;
     _select(branch, command: command, shift: shift);
+    widget.onOpen?.call();
     if (isDouble &&
         !branch.isHead &&
         branch.elsewhereWorktreePath == null &&
@@ -764,88 +821,34 @@ class _BranchNavigatorState extends ConsumerState<BranchNavigator> {
   @override
   Widget build(BuildContext context) {
     final git = ref.read(gitServiceProvider);
-    final keymap = ref.watch(keymapProvider);
-
-    // One handler map for both consumers: the keyboard shortcuts and the
-    // command palette's dispatched intents (see PanelShortcuts.handlers).
-    // Preconditions mirror branch_detail primary/secondary gates so a
-    // remapped key never does something the UI would leave disabled.
-    final local = _selectedLocal;
-    final remotes =
-        ref.watch(remotesProvider(widget.repoPath)).value ?? const <String>[];
-    final unpublished = local != null && local.upstream == null;
-    final bf = local == null ? null : widget.vm.forge[local.shortName];
-    final hasRequest = bf != null && bf.hasRequest;
-    final canPublish =
-        local != null &&
-        unpublished &&
-        remotes.isNotEmpty &&
-        widget.onPublish != null &&
-        !widget.busy;
-    final canCreateRequest =
-        local != null &&
-        !unpublished &&
-        !hasRequest &&
-        widget.onCreateRequest != null &&
-        !widget.busy;
-    final ciUrl = bf?.ciUrl;
-    final handlers = <String, VoidCallback?>{
-      'branches.newBranch': () => widget.onCreateBranch(git),
-      'branches.createTag': widget.onOpenCreateTagSheet,
-      // Only bound with a non-current branch selected — otherwise they
-      // fall through, matching the rest of the app's precondition gates.
-      'branches.merge': _canActOnSelection
-          ? () => widget.onMerge(git, _selectedLocal!, MergeMode.normal)
-          : null,
-      'branches.delete': _canActOnSelection
-          ? () => widget.onDeleteBranch(git, _selectedLocal!.shortName)
-          : null,
-      'branches.publish': canPublish
-          ? () => widget.onPublish!(git, local)
-          : null,
-      'branches.createRequest': canCreateRequest
-          ? () => widget.onCreateRequest!(local)
-          : null,
-      'branches.openCi': ciUrl != null && widget.onOpenUrl != null
-          ? () => widget.onOpenUrl!(ciUrl)
-          : null,
-      'branches.compare': local != null && widget.onCompare != null
-          ? widget.onCompare
-          : null,
-    };
-
     final rows = _buildRows(widget.vm);
 
-    return PanelShortcuts(
-      bindings: widget.isActive
-          ? resolveShortcuts(keymap, handlers)
-          : const <ShortcutActivator, VoidCallback>{},
-      handlers: widget.isActive ? handlers : const {},
-      child: Focus(
-        focusNode: widget.focusNode,
-        onKeyEvent: _onBranchKey,
-        child: Column(
-          children: [
-            _toolbar(git),
-            Expanded(
-              child: DeselectOnEmptyClick(
-                onDeselect: () => widget.onSelect(null),
-                child: ListView.builder(
-                  controller: widget.scrollController,
-                  itemCount: rows.length,
-                  itemBuilder: (context, i) => _buildRow(
-                    context,
-                    git,
-                    rows[i],
-                    remoteTags: widget.vm.remoteTags,
-                    tagRemote: widget.vm.tagRemote,
-                    localOnly: widget.vm.localOnlyTags,
-                  ),
+    // The panel's shortcut/palette handlers and their PanelShortcuts live in
+    // BranchesView, above the scaffold (branchPanelHandlers, MADR 0064 F1-A).
+    return Focus(
+      focusNode: widget.focusNode,
+      onKeyEvent: _onBranchKey,
+      child: Column(
+        children: [
+          _toolbar(git),
+          Expanded(
+            child: DeselectOnEmptyClick(
+              onDeselect: () => widget.onSelect(null),
+              child: ListView.builder(
+                controller: widget.scrollController,
+                itemCount: rows.length,
+                itemBuilder: (context, i) => _buildRow(
+                  context,
+                  git,
+                  rows[i],
+                  remoteTags: widget.vm.remoteTags,
+                  tagRemote: widget.vm.tagRemote,
+                  localOnly: widget.vm.localOnlyTags,
                 ),
               ),
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
@@ -1912,7 +1915,10 @@ class _BranchNavigatorState extends ConsumerState<BranchNavigator> {
         key: _rowKeyFor(branch.name),
         child: Tappable(
           behavior: HitTestBehavior.opaque,
-          onTap: () => _select(branch),
+          onTap: () {
+            _select(branch);
+            widget.onOpen?.call();
+          },
           onSecondaryTapUp: (d) => _menu.show(
             context,
             d.globalPosition,
@@ -1963,7 +1969,10 @@ class _BranchNavigatorState extends ConsumerState<BranchNavigator> {
       key: _rowKeyFor(tag.name),
       child: Tappable(
         behavior: HitTestBehavior.opaque,
-        onTap: () => _select(tag),
+        onTap: () {
+          _select(tag);
+          widget.onOpen?.call();
+        },
         onSecondaryTapUp: (d) => _menu.show(
           context,
           d.globalPosition,
