@@ -2,6 +2,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:macos_ui/macos_ui.dart' show MacosColors, MacosIcon, MacosTheme;
 
+import 'drag_hover_scope.dart';
 import 'drag_item.dart';
 import 'drag_state.dart';
 
@@ -51,53 +52,62 @@ class StagingDropBanner extends ConsumerWidget {
         ? CupertinoIcons.plus_circle
         : CupertinoIcons.minus_circle;
 
-    return DragTarget<DragItem>(
-      onWillAcceptWithDetails: (details) => details.data is DragFiles,
-      onAcceptWithDetails: (details) {
-        // ESC does unmount this banner (the build watches the drag state), but
-        // the rebuild lands a frame later — a release inside that frame would
-        // still hit the old target. Same runtime guard as every DropZone.
-        if (ref.read(dragStateProvider) is! DragFiles) return;
-        final paths = (details.data as DragFiles).paths;
-        if (toStage) {
-          onStage(paths);
-        } else {
-          onUnstage(paths);
-        }
-      },
-      builder: (context, candidate, rejected) {
-        final hovering = candidate.isNotEmpty;
-        return Container(
-          margin: const EdgeInsets.all(8),
-          height: 40,
-          decoration: BoxDecoration(
-            color: color.withValues(alpha: hovering ? 0.28 : 0.14),
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(
-              color: color.withValues(alpha: hovering ? 0.95 : 0.5),
-              width: hovering ? 2 : 1,
+    return DragHoverScope(
+      builder: (_, hover) => DragTarget<DragItem>(
+        onWillAcceptWithDetails: (details) => details.data is DragFiles,
+        // Hover report for the drag image (MADR 0064 F2), guarded by the same
+        // acceptance test: Flutter calls onMove on rejecting targets too.
+        onMove: (details) {
+          if (details.data is DragFiles) hover.setOverTarget(true);
+        },
+        onLeave: (_) => hover.setOverTarget(false),
+        onAcceptWithDetails: (details) {
+          hover.setOverTarget(false);
+          // ESC does unmount this banner (the build watches the drag state), but
+          // the rebuild lands a frame later — a release inside that frame would
+          // still hit the old target. Same runtime guard as every DropZone.
+          if (ref.read(dragStateProvider) is! DragFiles) return;
+          final paths = (details.data as DragFiles).paths;
+          if (toStage) {
+            onStage(paths);
+          } else {
+            onUnstage(paths);
+          }
+        },
+        builder: (context, candidate, rejected) {
+          final hovering = candidate.isNotEmpty;
+          return Container(
+            margin: const EdgeInsets.all(8),
+            height: 40,
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: hovering ? 0.28 : 0.14),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(
+                color: color.withValues(alpha: hovering ? 0.95 : 0.5),
+                width: hovering ? 2 : 1,
+              ),
             ),
-          ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              MacosIcon(icon, size: 16, color: color),
-              const SizedBox(width: 8),
-              Flexible(
-                child: Text(
-                  label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: MacosTheme.of(context).typography.body.copyWith(
-                    color: color,
-                    fontWeight: FontWeight.w600,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                MacosIcon(icon, size: 16, color: color),
+                const SizedBox(width: 8),
+                Flexible(
+                  child: Text(
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: MacosTheme.of(context).typography.body.copyWith(
+                      color: color,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                 ),
-              ),
-            ],
-          ),
-        );
-      },
+              ],
+            ),
+          );
+        },
+      ),
     );
   }
 }

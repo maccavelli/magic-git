@@ -131,6 +131,9 @@ class _NavRowVisual extends StatefulWidget {
   State<_NavRowVisual> createState() => _NavRowVisualState();
 }
 
+/// Width of the hovered drop row's ring.
+const double _dropRingWidth = 2;
+
 class _NavRowVisualState extends State<_NavRowVisual> {
   bool _hover = false;
 
@@ -168,10 +171,25 @@ class _NavRowVisualState extends State<_NavRowVisual> {
       behavior: HitTestBehavior.opaque,
       child: Container(
         margin: const EdgeInsets.symmetric(vertical: 1),
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+        // The hovered drop row carries a 2 px ring (MADR 0064 F2), so the
+        // cue does not rest on a 16-point alpha difference alone. The ring
+        // takes exactly its width out of the padding: the row never changes
+        // size, so the rows below never shift under the pointer mid-drag.
+        padding: widget.activeDrop
+            ? const EdgeInsets.symmetric(
+                horizontal: 10 - _dropRingWidth,
+                vertical: 7 - _dropRingWidth,
+              )
+            : const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
         decoration: BoxDecoration(
           color: bg,
           borderRadius: BorderRadius.circular(6),
+          border: widget.activeDrop
+              ? Border.all(
+                  color: MacosColors.systemGreenColor,
+                  width: _dropRingWidth,
+                )
+              : null,
         ),
         child: Row(
           children: [

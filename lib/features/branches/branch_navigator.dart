@@ -27,6 +27,7 @@ import '../common/show_more_row.dart';
 import '../common/tappable.dart';
 import '../common/tool_icon_button.dart';
 import '../dnd/deselect.dart';
+import '../dnd/drag_hover_scope.dart';
 import '../dnd/drag_item.dart';
 import '../dnd/drag_state.dart';
 import '../forge/forge_widgets.dart' show CiDot;
@@ -1484,47 +1485,67 @@ class _BranchNavigatorState extends ConsumerState<BranchNavigator> {
       // Local branches accept a dragged commit (E2 cherry-pick onto that
       // branch). HEAD also still accepts another local branch for
       // merge-into / rebase-onto (see [_dropOnCurrent]).
-      child: DragTarget<DragItem>(
-        onWillAcceptWithDetails: (d) {
-          if (d.data is DragCommit) {
-            return branch.isLocalBranch && !branch.isCheckedOutElsewhere;
-          }
-          return branch.isHead &&
-              d.data is DragRef &&
-              (d.data as DragRef).ref.name != branch.name;
-        },
-        onAcceptWithDetails: (d) {
-          // ESC-cancelled drags release as a no-op (see DragStateNotifier).
-          if (ref.read(dragStateProvider) == null) return;
-          final data = d.data;
-          if (data is DragCommit) {
-            widget.onDropCommitOnBranch(
-              git,
-              commit: data.commit,
-              branch: branch,
-            );
-            return;
-          }
-          if (data is DragRef) {
-            widget.onDropOnCurrent(git, source: data.ref, current: branch);
-          }
-        },
-        builder: (context, candidate, rejected) {
-          final hovering = candidate.isNotEmpty;
-          final row = _localRowBody(context, git, branch, depth, label);
-          if (!hovering) return row;
-          return DecoratedBox(
-            decoration: BoxDecoration(
-              color: _accentTint,
-              border: const Border(
-                left: BorderSide(color: MacosColors.systemBlueColor, width: 2),
+      // Per-row hover owner: a row rebuilt away mid-drag gives the hover
+      // back (MADR 0064 F2).
+      child: DragHoverScope(
+        builder: (_, hover) => DragTarget<DragItem>(
+          onWillAcceptWithDetails: (d) => _acceptsDrop(branch, d.data),
+          // Hover report for the drag image (MADR 0064 F2), guarded by the
+          // same acceptance test: Flutter calls onMove on rejecting targets.
+          onMove: (d) {
+            if (_acceptsDrop(branch, d.data)) {
+              hover.setOverTarget(true);
+            }
+          },
+          onLeave: (_) => hover.setOverTarget(false),
+          onAcceptWithDetails: (d) {
+            hover.setOverTarget(false);
+            // ESC-cancelled drags release as a no-op (see DragStateNotifier).
+            if (ref.read(dragStateProvider) == null) return;
+            final data = d.data;
+            if (data is DragCommit) {
+              widget.onDropCommitOnBranch(
+                git,
+                commit: data.commit,
+                branch: branch,
+              );
+              return;
+            }
+            if (data is DragRef) {
+              widget.onDropOnCurrent(git, source: data.ref, current: branch);
+            }
+          },
+          builder: (context, candidate, rejected) {
+            final hovering = candidate.isNotEmpty;
+            final row = _localRowBody(context, git, branch, depth, label);
+            if (!hovering) return row;
+            return DecoratedBox(
+              decoration: BoxDecoration(
+                color: _accentTint,
+                border: const Border(
+                  left: BorderSide(
+                    color: MacosColors.systemBlueColor,
+                    width: 2,
+                  ),
+                ),
               ),
-            ),
-            child: row,
-          );
-        },
+              child: row,
+            );
+          },
+        ),
       ),
     );
+  }
+
+  /// Whether [branch]'s row takes [data]: a dragged commit onto a local
+  /// branch not checked out elsewhere (E2 cherry-pick), or another local
+  /// branch onto HEAD (merge-into / rebase-onto). One predicate for both
+  /// the accept decision and the hover report.
+  static bool _acceptsDrop(GitRef branch, DragItem data) {
+    if (data is DragCommit) {
+      return branch.isLocalBranch && !branch.isCheckedOutElsewhere;
+    }
+    return branch.isHead && data is DragRef && data.ref.name != branch.name;
   }
 
   static final Color _accentTint = MacosColors.systemBlueColor.withValues(

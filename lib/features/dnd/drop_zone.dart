@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/providers/app_providers.dart';
 import '../common/context_menu.dart';
+import 'drag_hover_scope.dart';
 import 'drag_item.dart';
 import 'drag_state.dart';
 import 'drop_registry.dart';
@@ -44,30 +45,39 @@ class _DropZoneState extends ConsumerState<DropZone> {
 
   @override
   Widget build(BuildContext context) {
-    return DragTarget<DragItem>(
-      onWillAcceptWithDetails: (details) => canDrop(details.data, widget.id),
-      onAcceptWithDetails: (details) {
-        // ESC cancelled this drag (the gesture itself can't be aborted, only
-        // its release) — a cancelled drop is a no-op everywhere.
-        if (ref.read(dragStateProvider) == null) return;
-        final repoPath = ref.read(connectionProvider).repoPath;
-        if (repoPath == null) return;
-        runDrop(
-          details.data,
-          widget.id,
-          DropContext(
-            ref: ref,
-            context: context,
-            repoPath: repoPath,
-            selectPage: widget.selectPage,
-            refresh: widget.refresh,
-            menu: _menu,
-          ),
-          details.offset,
-        );
-      },
-      builder: (context, candidate, rejected) =>
-          widget.builder(context, candidate.isNotEmpty),
+    return DragHoverScope(
+      builder: (_, hover) => DragTarget<DragItem>(
+        onWillAcceptWithDetails: (details) => canDrop(details.data, widget.id),
+        // Hover report for the drag image (MADR 0064 F2), guarded by the same
+        // acceptance test: Flutter calls onMove on rejecting targets too.
+        onMove: (details) {
+          if (canDrop(details.data, widget.id)) hover.setOverTarget(true);
+        },
+        onLeave: (_) => hover.setOverTarget(false),
+        onAcceptWithDetails: (details) {
+          hover.setOverTarget(false);
+          // ESC cancelled this drag (the gesture itself can't be aborted, only
+          // its release) — a cancelled drop is a no-op everywhere.
+          if (ref.read(dragStateProvider) == null) return;
+          final repoPath = ref.read(connectionProvider).repoPath;
+          if (repoPath == null) return;
+          runDrop(
+            details.data,
+            widget.id,
+            DropContext(
+              ref: ref,
+              context: context,
+              repoPath: repoPath,
+              selectPage: widget.selectPage,
+              refresh: widget.refresh,
+              menu: _menu,
+            ),
+            details.offset,
+          );
+        },
+        builder: (context, candidate, rejected) =>
+            widget.builder(context, candidate.isNotEmpty),
+      ),
     );
   }
 }

@@ -18,6 +18,16 @@ import 'package:macos_ui/macos_ui.dart';
 /// where the identity lives: icon, hash, name).
 const double kDragCellMaxWidth = 420;
 
+/// Max width of the compact chip the drag image becomes while it is over a
+/// drop target that accepts it (MADR 0064 F2).
+const double kDragChipMaxWidth = 220;
+
+/// Where the compact chip's top-left sits relative to the pointer. Right of
+/// and below it, so the pointer is never covered, and far enough down (more
+/// than half a 32 px nav row) that the hovered row stays clear whenever the
+/// pointer is at or above its vertical centre.
+const Offset kDragChipPointerOffset = Offset(12, 18);
+
 /// Corner radius of the cell (press chrome and lifted ghost must match, so the
 /// press visually *becomes* the lifted cell).
 const double kDragCellRadius = 9;
@@ -36,8 +46,10 @@ class DragCellChrome extends StatelessWidget {
     return DecoratedBox(
       decoration: BoxDecoration(
         // Elevated surface a step above the panel background (dark theme —
-        // the app pins ThemeMode.dark). Slight translucency keeps drop
-        // targets readable through the cell as it passes over them.
+        // the app pins ThemeMode.dark). Together with the lifted cell's
+        // 0.94 opacity this is ~89% opaque: it does NOT keep what is under
+        // it readable. That is why the cell collapses to a compact chip
+        // beside the pointer while it is over a drop target (MADR 0064 F2).
         color: const Color(0xF2323236),
         borderRadius: BorderRadius.circular(kDragCellRadius),
         border: Border.all(
@@ -82,17 +94,22 @@ class DragCellBody extends StatelessWidget {
   final Size sourceSize;
   final String fallbackLabel;
 
+  /// The widest the cell may be: [kDragCellMaxWidth] for the lifted cell,
+  /// [kDragChipMaxWidth] for the compact chip.
+  final double maxWidth;
+
   const DragCellBody({
     super.key,
     required this.image,
     required this.pixelRatio,
     required this.sourceSize,
     required this.fallbackLabel,
+    this.maxWidth = kDragCellMaxWidth,
   });
 
   @override
   Widget build(BuildContext context) {
-    final width = sourceSize.width.clamp(0.0, kDragCellMaxWidth).toDouble();
+    final width = sourceSize.width.clamp(0.0, maxWidth).toDouble();
     final img = image;
 
     final content = img != null
@@ -110,7 +127,7 @@ class DragCellBody extends StatelessWidget {
             ),
           )
         : ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: kDragCellMaxWidth),
+            constraints: BoxConstraints(maxWidth: maxWidth),
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
               child: Text(
@@ -128,8 +145,14 @@ class DragCellBody extends StatelessWidget {
 
 /// The lifted ghost that rides under the pointer, springing from the pressed
 /// scale (0.98) up to a floating one (1.03) as it detaches from the list —
-/// ~140ms ease-out per the microinteraction guidance; slight transparency so
-/// drop targets stay readable underneath.
+/// ~140ms ease-out per the microinteraction guidance. At 0.94 opacity over a
+/// 0xF2 fill it is ~89% opaque, so it hides what it covers.
+///
+/// [compact] is the mode the drag image takes while it is over a drop target
+/// that accepts it (MADR 0064 F2): the item's label in the same chrome, at
+/// most [kDragChipMaxWidth] wide, count badge kept. The caller places it
+/// beside the pointer. It is this same widget in another mode, never a
+/// second one, so exactly one [DragCellChrome] is ever on screen.
 class LiftedDragCell extends StatelessWidget {
   final ui.Image? image;
   final double pixelRatio;
@@ -141,6 +164,9 @@ class LiftedDragCell extends StatelessWidget {
   /// is what says the whole selection is in hand.
   final int? badgeCount;
 
+  /// Render as the compact over-a-target chip instead of the full snapshot.
+  final bool compact;
+
   const LiftedDragCell({
     super.key,
     required this.image,
@@ -148,15 +174,18 @@ class LiftedDragCell extends StatelessWidget {
     required this.sourceSize,
     required this.fallbackLabel,
     this.badgeCount,
+    this.compact = false,
   });
 
   @override
   Widget build(BuildContext context) {
+    // Compact: no snapshot, so the body renders the label fallback.
     Widget cell = DragCellBody(
-      image: image,
+      image: compact ? null : image,
       pixelRatio: pixelRatio,
       sourceSize: sourceSize,
       fallbackLabel: fallbackLabel,
+      maxWidth: compact ? kDragChipMaxWidth : kDragCellMaxWidth,
     );
     final count = badgeCount;
     if (count != null) {
@@ -172,8 +201,13 @@ class LiftedDragCell extends StatelessWidget {
       tween: Tween(begin: 0.98, end: 1.03),
       duration: const Duration(milliseconds: 140),
       curve: Curves.easeOutCubic,
-      builder: (context, scale, child) =>
-          Transform.scale(scale: scale, child: child),
+      // The compact chip scales about its top-left, so that corner stays
+      // exactly where the caller put it (pointer + kDragChipPointerOffset).
+      builder: (context, scale, child) => Transform.scale(
+        scale: scale,
+        alignment: compact ? Alignment.topLeft : Alignment.center,
+        child: child,
+      ),
       child: Opacity(opacity: 0.94, child: cell),
     );
   }

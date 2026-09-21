@@ -42,6 +42,7 @@ import '../common/workspace_focus.dart';
 import '../common/workspace_navigation.dart';
 import '../common/workspace_preferences_binding.dart';
 import '../dnd/deselect.dart';
+import '../dnd/drag_hover_scope.dart';
 import '../dnd/drag_item.dart';
 import '../dnd/drag_state.dart';
 import '../forge/forge_prefs.dart';
@@ -2196,126 +2197,139 @@ class _HistoryViewState extends ConsumerState<HistoryView>
                 final row = graph.rows[index];
                 final commit = row.commit;
                 final selected = _selectedHashes.contains(commit.hash);
-                return DragTarget<DragItem>(
-                  // A branch chip dropped anywhere on a commit row opens the integrate
-                  // menu; the row it lands on is just the drop affordance. Only a
-                  // dragged branch (DragRef) is meaningful here — a dragged commit
-                  // is bound for the nav rail, not another commit.
-                  onWillAcceptWithDetails: (details) {
-                    final data = details.data;
-                    return data is DragRef && _canDropBranch(data.ref);
-                  },
-                  onAcceptWithDetails: (details) {
-                    // ESC-cancelled drags release as a no-op (see DragStateNotifier).
-                    if (ref.read(dragStateProvider) == null) return;
-                    final data = details.data;
-                    if (data is DragRef) {
-                      _onBranchDropped(data.ref, commit, details.offset);
-                    }
-                  },
-                  builder: (context, candidate, rejected) {
-                    final dropHover = candidate.isNotEmpty;
-                    // The row is itself draggable (immediate: mouse-first — see
-                    // DragItemDraggable) — drop a commit on the Branches tab to
-                    // fork a branch, on Worktrees for a worktree, etc.
-                    return DragItemDraggable(
-                      item: DragCommit(commit),
-                      immediate: true,
-                      // Picking a row up selects it — the canonical engine
-                      // contract, so the drag operand is never ambiguous.
-                      onDragSelect: () => _selectForDrag(commit.hash),
-                      child: GestureDetector(
-                        key: _commitRowKeyFor(commit.hash),
-                        onTap: () => _handleRowTap(commit.hash),
-                        onSecondaryTapUp: (d) =>
-                            _handleRowSecondaryTap(commit, d.globalPosition),
-                        child: Container(
-                          color: dropHover
-                              ? MacosColors.systemGreenColor.withValues(
-                                  alpha: 0.20,
-                                )
-                              : selected
-                              ? MacosColors.systemBlueColor.withValues(
-                                  alpha: 0.32,
-                                )
-                              : const Color(0x00000000),
-                          height: rowHeight,
-                          child: Row(
-                            children: [
-                              // Clip to the fixed band so rounding in the compressed-lane
-                              // math can never paint a hair over the ref chips, subject, or
-                              // author text to the right — every lane itself is still drawn
-                              // (compressed via `laneWidth` above once the count exceeds
-                              // the cap), never dropped.
-                              ClipRect(
-                                child: CustomPaint(
-                                  size: Size(graphWidth, rowHeight),
-                                  painter: CommitRowPainter(
-                                    row,
-                                    laneWidth: laneWidth,
-                                    scale: zoom,
+                // Per-row hover owner: a row recycled away mid-drag gives
+                // the hover back (MADR 0064 F2).
+                return DragHoverScope(
+                  builder: (_, hover) => DragTarget<DragItem>(
+                    // A branch chip dropped anywhere on a commit row opens the integrate
+                    // menu; the row it lands on is just the drop affordance. Only a
+                    // dragged branch (DragRef) is meaningful here — a dragged commit
+                    // is bound for the nav rail, not another commit.
+                    onWillAcceptWithDetails: (details) =>
+                        _acceptsBranchDrop(details.data),
+                    // Hover report for the drag image (MADR 0064 F2), guarded
+                    // by the same acceptance test: Flutter calls onMove on
+                    // rejecting targets too (a dragged commit crosses rows).
+                    onMove: (details) {
+                      if (_acceptsBranchDrop(details.data)) {
+                        hover.setOverTarget(true);
+                      }
+                    },
+                    onLeave: (_) => hover.setOverTarget(false),
+                    onAcceptWithDetails: (details) {
+                      hover.setOverTarget(false);
+                      // ESC-cancelled drags release as a no-op (see DragStateNotifier).
+                      if (ref.read(dragStateProvider) == null) return;
+                      final data = details.data;
+                      if (data is DragRef) {
+                        _onBranchDropped(data.ref, commit, details.offset);
+                      }
+                    },
+                    builder: (context, candidate, rejected) {
+                      final dropHover = candidate.isNotEmpty;
+                      // The row is itself draggable (immediate: mouse-first — see
+                      // DragItemDraggable) — drop a commit on the Branches tab to
+                      // fork a branch, on Worktrees for a worktree, etc.
+                      return DragItemDraggable(
+                        item: DragCommit(commit),
+                        immediate: true,
+                        // Picking a row up selects it — the canonical engine
+                        // contract, so the drag operand is never ambiguous.
+                        onDragSelect: () => _selectForDrag(commit.hash),
+                        child: GestureDetector(
+                          key: _commitRowKeyFor(commit.hash),
+                          onTap: () => _handleRowTap(commit.hash),
+                          onSecondaryTapUp: (d) =>
+                              _handleRowSecondaryTap(commit, d.globalPosition),
+                          child: Container(
+                            color: dropHover
+                                ? MacosColors.systemGreenColor.withValues(
+                                    alpha: 0.20,
+                                  )
+                                : selected
+                                ? MacosColors.systemBlueColor.withValues(
+                                    alpha: 0.32,
+                                  )
+                                : const Color(0x00000000),
+                            height: rowHeight,
+                            child: Row(
+                              children: [
+                                // Clip to the fixed band so rounding in the compressed-lane
+                                // math can never paint a hair over the ref chips, subject, or
+                                // author text to the right — every lane itself is still drawn
+                                // (compressed via `laneWidth` above once the count exceeds
+                                // the cap), never dropped.
+                                ClipRect(
+                                  child: CustomPaint(
+                                    size: Size(graphWidth, rowHeight),
+                                    painter: CommitRowPainter(
+                                      row,
+                                      laneWidth: laneWidth,
+                                      scale: zoom,
+                                    ),
                                   ),
                                 ),
-                              ),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: Column(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Row(
-                                      children: [
-                                        if (commit.isMerge) ...[
-                                          MacosIcon(
-                                            CupertinoIcons.arrow_merge,
-                                            size: 13 * zoom,
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Column(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Row(
+                                        children: [
+                                          if (commit.isMerge) ...[
+                                            MacosIcon(
+                                              CupertinoIcons.arrow_merge,
+                                              size: 13 * zoom,
+                                            ),
+                                            const SizedBox(width: 4),
+                                          ],
+                                          // Subject first (Tower / Fork / GitHub Desktop): the
+                                          // message is primary. Chips are intrinsically sized
+                                          // (capped per chip + maxVisible) so they never compete
+                                          // with the subject for flex space and collapse to
+                                          // zero width — the pop-out bug that hid every badge.
+                                          Expanded(
+                                            child: Text(
+                                              commit.subject,
+                                              style: typography.body,
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
                                           ),
-                                          const SizedBox(width: 4),
+                                          if ((decorations[commit.hash] ??
+                                                  const <GitRef>[])
+                                              .isNotEmpty) ...[
+                                            const SizedBox(width: 6),
+                                            RefChipStrip(
+                                              refs: decorations[commit.hash]!,
+                                              enableDrag: true,
+                                            ),
+                                          ],
                                         ],
-                                        // Subject first (Tower / Fork / GitHub Desktop): the
-                                        // message is primary. Chips are intrinsically sized
-                                        // (capped per chip + maxVisible) so they never compete
-                                        // with the subject for flex space and collapse to
-                                        // zero width — the pop-out bug that hid every badge.
-                                        Expanded(
-                                          child: Text(
-                                            commit.subject,
-                                            style: typography.body,
-                                            maxLines: 1,
-                                            overflow: TextOverflow.ellipsis,
-                                          ),
-                                        ),
-                                        if ((decorations[commit.hash] ??
-                                                const <GitRef>[])
-                                            .isNotEmpty) ...[
-                                          const SizedBox(width: 6),
-                                          RefChipStrip(
-                                            refs: decorations[commit.hash]!,
-                                            enableDrag: true,
-                                          ),
-                                        ],
-                                      ],
-                                    ),
-                                    const SizedBox(height: 2),
-                                    Text(
-                                      '${commit.shortHash}  ·  ${commit.authorName}  ·  '
-                                      '${_shortDate(commit.date)}',
-                                      style: typography.caption1.copyWith(
-                                        color: MacosColors.systemGrayColor,
                                       ),
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                  ],
+                                      const SizedBox(height: 2),
+                                      Text(
+                                        '${commit.shortHash}  ·  ${commit.authorName}  ·  '
+                                        '${_shortDate(commit.date)}',
+                                        style: typography.caption1.copyWith(
+                                          color: MacosColors.systemGrayColor,
+                                        ),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ],
+                                  ),
                                 ),
-                              ),
-                              const SizedBox(width: 8),
-                            ],
+                                const SizedBox(width: 8),
+                              ],
+                            ),
                           ),
                         ),
-                      ),
-                    );
-                  },
+                      );
+                    },
+                  ),
                 );
               },
             ),
@@ -2335,6 +2349,12 @@ class _HistoryViewState extends ConsumerState<HistoryView>
     }
     return null;
   }
+
+  /// Whether a commit row takes this drag: only a dragged branch it can
+  /// integrate. One predicate for both the accept decision and the hover
+  /// report, so the two can never disagree.
+  bool _acceptsBranchDrop(DragItem data) =>
+      data is DragRef && _canDropBranch(data.ref);
 
   /// A drop is meaningful only when a branch is dragged and there's a current
   /// branch that differs from it (a branch can't be merged/rebased with itself).

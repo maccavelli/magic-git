@@ -362,6 +362,13 @@ All of these runs used scratch clones of `21d32bc`, never this tree.
   * 5.4: format and analyze clean; `flutter test` `02:47 +4294 ~3: All tests passed!` =
     `N0 + 65`. The `onBack:` grep matched nothing (exit 1), and the hash matches A.12
     (`91124677…`).
+* **Phase 6 (2026-09-21, execution).**
+  * 6.1: exit 1, `Undefined name 'kDragChipMaxWidth'` and `'kDragChipPointerOffset'`;
+    `no setOverTarget(true)` reported for all 4 targets.
+  * 6.2: apply `exit=0`.
+  * 6.3: `+26: All tests passed!`.
+  * 6.4: format and analyze clean; `flutter test` `02:47 +4307 ~3: All tests passed!` =
+    `N0 + 78`. All 8 embedded test hashes match Appendix A.
 * **P-1 (2026-09-21, planning).** The first four patches (F4, F3, F1, F2), stacked in a fresh clone
   of `21d32bc`:
   * each `git apply --index` exited 0;

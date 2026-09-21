@@ -139,6 +139,11 @@ class _DragItemDraggableState extends ConsumerState<DragItemDraggable> {
   double _snapshotPixelRatio = 1;
   Size _sourceSize = Size.zero;
 
+  /// Where the row was grabbed, in its own coordinates ([_anchor]'s result):
+  /// the drag image's origin sits this far up-left of the pointer. The
+  /// compact chip is translated by it to land beside the pointer.
+  Offset _grabAnchor = Offset.zero;
+
   /// Pressed-button state: pointer is down on the row, drag not yet started.
   bool _pressed = false;
 
@@ -194,7 +199,7 @@ class _DragItemDraggableState extends ConsumerState<DragItemDraggable> {
     final local = box.globalToLocal(position);
     final cellWidth = box.size.width.clamp(0.0, kDragCellMaxWidth);
     final inset = cellWidth >= 32 ? 16.0 : cellWidth / 2;
-    return Offset(
+    return _grabAnchor = Offset(
       local.dx.clamp(inset, cellWidth - inset),
       local.dy.clamp(0.0, box.size.height),
     );
@@ -323,20 +328,35 @@ class _DragItemDraggableState extends ConsumerState<DragItemDraggable> {
     // cell swaps to the selected-state pixels mid-flight, seamlessly. A
     // multi-file drag carries the whole selection but snapshots only the
     // grabbed row — the Finder-style count badge says what's really in hand.
+    //
+    // It also subscribes to the drag state's over-a-target flag (MADR 0064
+    // F2): over an accepting target the cell turns compact and moves beside
+    // the pointer, so it no longer covers the target it is over. The
+    // translate is always in the tree (zero when off target) so the cell
+    // keeps its element — and its lift animation — across the switch.
+    // Hit-testing is unaffected (Flutter tests at the pointer), and so is
+    // the snap-back origin (`details.offset`, the uncompacted top-left).
     final item = widget.item;
     final badgeCount = item is DragFiles && item.paths.length > 1
         ? item.paths.length
         : null;
-    final ghost = ValueListenableBuilder<ui.Image?>(
-      valueListenable: _snapshot,
-      builder: (context, image, _) => LiftedDragCell(
-        image: image,
-        pixelRatio: _snapshotPixelRatio,
-        sourceSize: _sourceSize == Size.zero
-            ? const Size(kDragCellMaxWidth / 2, 28)
-            : _sourceSize,
-        fallbackLabel: widget.item.shortLabel,
-        badgeCount: badgeCount,
+    final ghost = ValueListenableBuilder<bool>(
+      valueListenable: drag.overTarget,
+      builder: (context, over, _) => ValueListenableBuilder<ui.Image?>(
+        valueListenable: _snapshot,
+        builder: (context, image, _) => Transform.translate(
+          offset: over ? _grabAnchor + kDragChipPointerOffset : Offset.zero,
+          child: LiftedDragCell(
+            image: image,
+            pixelRatio: _snapshotPixelRatio,
+            sourceSize: _sourceSize == Size.zero
+                ? const Size(kDragCellMaxWidth / 2, 28)
+                : _sourceSize,
+            fallbackLabel: widget.item.shortLabel,
+            badgeCount: badgeCount,
+            compact: over,
+          ),
+        ),
       ),
     );
 
