@@ -121,6 +121,7 @@ Every MADR and every PLAN, by number.
 | 0055 | Post-review action plan — no MADR of its own; formerly `ACTION_PLAN.md` | — | [plan](decisions/0055-PLAN-post-review-action-plan.md) | `partial` — the first review's P0–P3 backlog; [0007-MADR](decisions/0007-MADR-docs-completion-audit.md) verified 46 of ~51 items |
 | 0056 | Architecture and feature-parity plan — no MADR of its own; formerly `ARCHITECTURE_PLAN.md` | — | [plan](decisions/0056-PLAN-architecture-and-feature-parity.md) | `partial` — historical; superseded as a description by [architecture.md](architecture.md), with three stale §0.1 statements annotated in place |
 | 0061 | Remaining test coverage — no MADR of its own; formerly `TEST_COVERAGE_PLAN.md` | — | [plan](decisions/0061-PLAN-remaining-test-coverage.md) | `partial` — 12 of the 14 test files it names exist (checked by existence only) |
+| 0063 | [Adopt Impeller as the macOS renderer](decisions/0063-MADR-adopt-impeller-renderer-on-macos.md) | `proposed` | [plan](decisions/0063-PLAN-adopt-impeller-renderer-on-macos.md) `proposed` | Flutter 3.47 made Impeller the macOS default and the app has run on it, undeclared, since the 3.47.2 pin (2026-09-04). Proposes declaring `FLTEnableImpeller` = `true`, pinning it with a scan test, gating acceptance on an on-device pass (`flutter test` renders with software Skia and cannot see the renderer), and keeping Skia only as a time-boxed rollback while P1 flutter/flutter#185394 is unfixed. The plan proves each assertion at planning time (27 facts), embeds its 8 tools with SHA-256, and gates acceptance on 10 on-device items |
 
 ⚠ **0011 and 0012 each carry two unrelated records.** `CLAUDE.md` forbids
 renumbering an existing file, so both keep the number and each carries a note
@@ -145,6 +146,7 @@ Audits and investigations that record what was found and decide nothing.
 | 0058 | [Window sizing assessment](reports/0058-REPORT-window-sizing-assessment.md) — formerly `window_sizing_proposal.md` | `partial` — largely implemented |
 | 0059 | [Memory and performance audit](reports/0059-REPORT-memory-and-performance-audit.md) — formerly `memory_audit.md` | `partial` — Tier 1–2 fixes done |
 | 0060 | [Drag-and-drop engine feasibility](reports/0060-REPORT-drag-and-drop-engine-feasibility.md) — formerly `DRAG_AND_DROP_ENGINE.md` | `partial` — A–E shipped |
+| 0062 | [Flutter SDK pin currency — 3.47.2 vs. current stable](reports/0062-REPORT-flutter-sdk-pin-currency.md) | `complete` — renderer decision and 3.47.5 bump await the maintainer |
 
 ## What "verified" means here
 
