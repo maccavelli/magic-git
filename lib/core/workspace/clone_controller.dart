@@ -208,9 +208,16 @@ class CloneJobController extends Notifier<CloneJobState> {
       ForgeCloneSource(forge: Forge.gitlab, :final slug) =>
         GlabService.cloneArgv(pathWithNamespace: slug, dirName: request.name),
       ForgeCloneSource() => throw StateError('not a forge source'),
+      // The `-c` overrides are git's options, so they follow `git`: argv[0]
+      // is the program, and a leading `-c` reaches the shell's `exec` builtin
+      // as its own clear-environment flag.
       UrlCloneSource(:final url) => [
-        ...forgeGitAuthConfigArgs(forgeFromRemoteUrl(url)),
         'git',
+        ...forgeGitAuthConfigArgs(
+          forgeFromRemoteUrl(url),
+          ghPath: executor.resolvedBinaryPath('gh'),
+          glabPath: executor.resolvedBinaryPath('glab'),
+        ),
         'clone',
         '--progress',
         '--',

@@ -370,11 +370,19 @@ void main() {
       );
       final fut = job.run(req);
       await pumpEventQueue();
-      expect(exec.streamCalls.single.take(4), [
+      // `git` is argv[0]: the executor runs argv[0] as the program, and
+      // a leading `-c` is swallowed by the shell's `exec` builtin.
+      expect(exec.streamCalls.single, [
+        'git',
         '-c',
         'credential.helper=',
         '-c',
         'credential.helper=!gh auth git-credential',
+        'clone',
+        '--progress',
+        '--',
+        'https://github.com/owner/repo.git',
+        'repo',
       ]);
       exec.results.add(_ok('https://github.com/owner/repo.git\n')); // verify
       await exec.handle.finish(0);
@@ -390,11 +398,19 @@ void main() {
       );
       final fut = job.run(req);
       await pumpEventQueue();
-      expect(exec.streamCalls.single.take(4), [
+      // `git` is argv[0]: the executor runs argv[0] as the program, and
+      // a leading `-c` is swallowed by the shell's `exec` builtin.
+      expect(exec.streamCalls.single, [
+        'git',
         '-c',
         'credential.helper=',
         '-c',
         'credential.helper=!glab auth git-credential',
+        'clone',
+        '--progress',
+        '--',
+        'https://gitlab.com/group/project.git',
+        'project',
       ]);
       exec.results.add(_ok('https://gitlab.com/group/project.git\n')); // verify
       await exec.handle.finish(0);
@@ -410,11 +426,19 @@ void main() {
       );
       final fut = job.run(req);
       await pumpEventQueue();
-      expect(exec.streamCalls.single.take(4), [
+      // `git` is argv[0]: the executor runs argv[0] as the program, and
+      // a leading `-c` is swallowed by the shell's `exec` builtin.
+      expect(exec.streamCalls.single, [
+        'git',
         '-c',
         'credential.helper=',
         '-c',
         'credential.helper=!glab auth git-credential',
+        'clone',
+        '--progress',
+        '--',
+        'https://gitlab.example.com/group/project.git',
+        'project',
       ]);
       exec.results.add(_ok('https://gitlab.example.com/group/project.git\n'));
       await exec.handle.finish(0);
