@@ -1,5 +1,5 @@
 ---
-status: "in-progress"
+status: "complete"
 date: 2026-09-21
 associated-madr: "0063-MADR-adopt-impeller-renderer-on-macos.md"
 verified: 2026-09-21  # every "proven at planning time" row below was run on this date
@@ -462,6 +462,105 @@ deviations* rule.
   * **Scope:** no file added. This PLAN was already in scope for phases 0–5.
   * **MADR:** unchanged, since no decision, fact or assumption moved.
 
+* **D2 (2026-09-21, deviation, Phase 3).** The maintainer reported:
+  * G1 PASS; G2a PASS; G2b PASS; G4 PASS; G9 PASS.
+  * G3 PASS in (a), (c) and (d). In (b), ⇧⌘F did nothing, and the step passed once the window was
+    made full screen with its green button.
+  * G5: ⌘=, ⌘- and ⌘0 did nothing.
+  * G6: Toggle Output View changed nothing, and the diff "did not work" until popped out into a
+    larger window.
+  * G7: the app said the user had no permission to run the job.
+  * G8: the drag works, but the green nav drop targets no longer highlight under the pointer.
+
+  **Evidence gathered:**
+  * The app was alive throughout. No new crash report appeared.
+  * G10 was recorded as `Footprint: 437 MB` (`phys_footprint_peak: 589 MB`).
+  * G3(b): the plan's ⌃⌘F was never proven. No full-screen menu item exists in `lib/`, and ⇧⌘F is
+    bound to another action (`keymap.dart:338`). This is a plan defect.
+  * G5: panel shortcuts fire only while focus is inside the History panel and not in a text or
+    selection region (`panel_shortcuts.dart:131-147`). The palette exposes the same actions:
+    "Zoom commit list in", "Zoom commit list out" and "Reset commit list zoom"
+    (`command_palette.dart:201-203`, `keymap.dart:557-575`). This is a plan gap.
+  * G7: the message is not app text. The same `gh run view --job 104212477125 --log` succeeds from
+    the terminal (exit 0).
+  * G2a opened on the maintainer's restored remote tab, not the fixture; it still exercised the
+    second engine.
+
+  **Decision (maintainer):** investigate G5–G8 in the code from several angles, and build a
+  throwaway **Skia testbed** (`FLTEnableImpeller` = `false`) in a scratch clone of `47745ec`,
+  outside the repository, never committed or installed. It is used solely to classify each finding
+  as pre-existing (it behaves the same on Skia) or Impeller-specific. The renderer decision is
+  unchanged. **Scope:** no repository file is added. Resolutions for any defect found come back to
+  the maintainer as further deviations.
+* **D2 outcome (2026-09-21).**
+  * **Method.** Three read-only code investigations, followed by an on-device A/B run driven
+    through `cliclick` and Accessibility (the maintainer granted the permission), with a screenshot
+    for each step and pixel measurements taken by a stdlib PNG sampler. The builds were:
+    * **Impeller:** the Phase 2 build, PID 63683.
+    * **Skia testbed:** a scratch clone of `47745ec` with the key set to `false`, PID 44501. Its
+      stderr read `FlutterEngine.mm(685)] Using the Skia rendering backend (Metal).`, and it was
+      never committed or installed.
+
+    Both builds were quit through the app's own Quit menu, with the quit confirmed. Neither
+    produced a crash report.
+  * **G5.** Impeller and Skia behave identically:
+    * **Wide layout (window 1659 pt):** the list stays beside the diff, and ⌘= enlarges rows.
+    * **Narrow layout (900 pt):** clicking a commit removes the list, and ⌘F and Esc change
+      nothing. This is the compact-History focus trap, reproduced headless in a widget test
+      (zoom stayed 1.0 at 600 px wide). It was introduced by `e5631c5` on 2026-08-13 and is
+      renderer-independent.
+    * **The G5 rendering criterion:** lanes at 0.6×, 1.0× and 2.0× are continuous with round
+      nodes. PASS.
+  * **G6.**
+    * **Output toggle:** it flips "Show Output View" (✓ ↔ unchecked, read through Accessibility),
+      but the pane exists only on the Repository page (`repo_status_view.dart:1898`). There, the
+      toggle visibly hides and shows it. This is working as coded; the gap is in the UX.
+    * **Diff:** "did not work" is the same compact trap. In the wide layout the diff renders
+      fully.
+    * **Menlo glyphs:** uniform. PASS.
+  * **G7.** The "permissions" text is the job log's own runner banner (`##[group]GITHUB_TOKEN
+    Permissions` / `Contents: read`), rendered verbatim and identical to the CLI output (line 21).
+    It is not an error. The replay of every command the app issues exits 0.
+    * **The check itself:** job 104212484924 (run 34915622630, 1,708 lines). Scrolling to the end
+      and ⌘A both completed within the 2 s wait, and the app sat at 0.1% CPU afterwards. PASS.
+    * **Separately:** ANSI colour codes print raw (`^[[36;1m`). Cosmetic, and renderer-independent.
+  * **G8.**
+    * **Drop:** onto New branch it opens "New branch from commit". It was cancelled, and the
+      fixture still had 33 branches on `main`.
+    * **Hover tint, measured as mean RGB of each rail row's right end:**
+
+      | Build | Hovered row | Eligible rows | Ineligible rows |
+      |---|---|---|---|
+      | Impeller | (58–59, 89–91, 63–66) | (49–50, 65–67, 54–57) | (39, 39–40, 46) |
+      | Skia | (59–60, 90–92, 63–64) | (49–50, 65–68, 54–56) | (39, 39–40, 46–47) |
+
+    * **Left-edge grab:** the drag image covers the hovered row on both builds, measuring
+      (62, 89, 123) on Impeller and (55, 83, 119) on Skia.
+    * **Conclusion:** the highlight renders identically on both renderers, and the 420 pt lift-cell
+      drag image (`f8b4a9d`, 2026-07-16) hides it. Renderer-independent.
+  * **G3(b).** A plan defect: the app has no full-screen shortcut. The green button satisfied the
+    step's intent. PASS.
+  * **Also observed.**
+    * During the maintainer's session the fixture was fetched and pulled from `origin`, so its
+      `main` became a percona commit. This was not a plan action; it has no bearing on renderer
+      results.
+    * Split-thread deprecation warning at every engine start ("Merged threads is disabled…"),
+      from the existing `FLTEnableMergedPlatformUIThread=false`.
+* **D3 (2026-09-21, deviation, Phase 3).**
+  * **Found:** D2's A/B surfaced four defects. All four are pre-existing, and they reproduce
+    identically on Skia, so they are renderer-independent:
+    1. **Compact History trap.** Below the standard width, selecting a commit unmounts the list,
+       and focus falls to the route scope, so no panel shortcut works and there is no way back
+       (`e5631c5`).
+    2. **The lift-cell drag image hides the nav-rail hover tint** (`f8b4a9d`).
+    3. **The Output View toggle has no visible effect** outside the Repository page.
+    4. **Raw ANSI escape codes appear in CI job logs.**
+  * **Decision (maintainer):** record them, finish this plan (Phases 4–5), then write **one** MADR
+    covering all four defects, grounded in codebase and runtime facts, with an actionable,
+    deterministic PLAN to fix them.
+  * **Scope:** this plan's scope is unchanged. The four defects are **not** fixed here, and they do
+    not block G5–G8, whose rendering criteria passed on Impeller.
+  * **MADR:** unchanged, since no decision, fact or assumption moved.
 * **Phase 0 (2026-09-21).**
   * 0.1: `S=/var/folders/…/T/mg-0063.0sOswmLcD9` (a `mktemp -d` path).
   * 0.2: extractor `exit=0`; 8 of 8 `ok`, with hashes identical to the Appendix A table.
@@ -482,6 +581,32 @@ deviations* rule.
     `commented out: exit=1 expected-message=yes` / `restored green: exit=0`.
   * 1.5: `dart format` `exit=0`, `0 changed`. `flutter analyze` `exit=0`, `No issues found!`.
     `flutter test` `exit=0`, `03:39 +4229 ~3: All tests passed!`, which is 4223 + 6.
+* **Phase 2 (2026-09-21).**
+  * 2.1: after the maintainer quit the app, `pgrep` gave `exit=1`.
+  * 2.2: `build_macos.sh --unsigned` `exit=0`. `Local.xcconfig` was
+    `MG_RELEASE_ENTITLEMENTS = Runner/Release-unsigned.entitlements`, and `git status` was clean.
+  * 2.3: `true`.
+  * 2.4: `arm64`.
+  * 2.5: baseline crash reports 0. Launcher `exit=0` with
+    `PASS: [IMPORTANT:flutter/shell/platform/embedder/embedder_surface_metal_impeller.mm(53)] Using the Impeller rendering backend (MetalSDF).`
+    and `pid=63683`.
+* **Phase 3 (2026-09-21).** Fixtures matched 3.0 exactly, and `pick_ci_job.py` exited 0 (job
+  104212477125, 2968 lines). The results for G1–G10 and 3.x are in
+  `docs/reports/0063-GATES-impeller-on-device.md`, after D2 and D3. All of G1–G9 PASS on their
+  rendering criteria, and G10 is recorded.
+* **Phase 4 (2026-09-21).**
+  * 4.1: `Local.xcconfig` was unsigned, and the diagnostics build gave `exit=0`
+    (`✓ Built build/macos/Build/Products/Release/Magic Git.app (36.0MB)`).
+  * 4.2: launcher `exit=0`, Impeller (MetalSDF), `pid=9239`. The first launch attempt's clicks
+    missed because a directly launched binary is not frontmost; an `open` on the bundle activated
+    it. After ⌘⇧H, `read_vsync_probe.py check` gave `exit=0` and ended with `PASS`. Its lines were
+    `frame timings[1]: 1 frames, vsyncStart=1573996685736µs …`,
+    `frame timings[2]: 57 frames, vsyncStart=0µs …` and
+    `vsync probe: completed value=1.0 mouseConnected=true`.
+  * 4.3: `build_macos.sh --unsigned` `exit=0`. The bundle key read `true`, and the tree held only
+    this plan's edits.
+* **Phase 5 (2026-09-21).** The GATES record was written, and AC1–AC10 hold as recorded above.
+  AC11 and AC12 are recorded with the commit.
 * **P-1 (2026-09-21, planning).** F14 was proven in two attempts:
   * **First attempt:** an `rsync` copy that excluded `.git`. `flutter analyze` was clean, but
     `flutter test` exited 1 with `+4225 ~3 -4`. All 4 failures were `docs_records_test.dart`, each

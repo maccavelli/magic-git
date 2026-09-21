@@ -1,5 +1,5 @@
 ---
-status: "proposed"
+status: "accepted"
 date: 2026-09-21
 decision-makers: [Maintainer]
 consulted: [docs.flutter.dev/perf/impeller, "What's new in Flutter 3.47" (flutter.dev blog), Flutter 3.47.0 release notes, flutter/flutter engine Impeller README and FAQ, flutter/flutter engine source at tag 3.47.2, flutter/flutter issues and PRs cited below, pub-cache sources of every macOS plugin in pubspec.lock, 0062-REPORT-flutter-sdk-pin-currency.md]
