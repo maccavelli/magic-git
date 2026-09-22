@@ -294,3 +294,20 @@ shape.
   `flutter analyze`: `No issues found! (ran in 5.6s)`. `dart format --set-exit-if-changed` on the
   four files: `0 changed`. `flutter test test/workspace_navigation_test.dart
   test/app_shell_test.dart test/app_shell_undo_test.dart`: `+19: All tests passed!`, 0 `[E]`.
+* **Phase 2 (2026-09-22).** The four panels mix in `WorkspaceLocationRecorder`; each callback
+  keeps its supplement `publish` and loses its `visit`; each `build` makes one
+  `recordWorkspaceLocation` call with the location expression the callback used to build,
+  gated on `widget.isActive`. Worktrees' call sits after `final connection =
+  ref.watch(connectionProvider)` (the callback read the connection itself) and is null while
+  the list has no data, as the callback's early return was. The eight test cases are as written
+  in steps 2.2–2.8, with three harness facts learned on the way and now in the tests: Branches
+  and Stashes prove their selection through the published supplement (`branchLabel ==
+  'Selected: feature'`, `selectionLabel` starting `Stash: stash@{0}`) since neither panel's
+  shortcuts exist while inactive; Branches keeps `_pump` for its existing callers and adds
+  `_pumpForNavigation` beside it; the Worktrees row waits out the double-click interval, so
+  both cases pump 400 ms after the tap as that file's other tests do. `flutter analyze`: `No
+  issues found! (ran in 4.9s)`. `dart format --set-exit-if-changed` on the eight files: clean
+  after formatting the four test files' new code. The four panel files: `+72` then, with the
+  Worktrees timing fix, `+2` for the two cases that had failed on their precondition. Full
+  suite: `02:49 +4316 ~3: All tests passed!`, `[E]` count 0. `grep -rn _staleEcho lib` prints
+  nothing (AC3).

@@ -30,6 +30,7 @@ import '../common/repository_workspace_scaffold.dart';
 import '../common/tappable.dart';
 import '../common/tool_icon_button.dart';
 import '../common/workspace_focus.dart';
+import '../common/workspace_location_recorder.dart';
 import '../common/workspace_navigation.dart';
 import '../common/workspace_preferences_binding.dart';
 import '../dnd/deselect.dart';
@@ -107,7 +108,7 @@ const List<(String, IconData)> _subPanels = [
 ];
 
 class _WorktreesViewState extends ConsumerState<WorktreesView>
-    with BusyActionState {
+    with BusyActionState, WorkspaceLocationRecorder {
   final ContextMenuOverlay _contextMenu = ContextMenuOverlay();
   final FocusNode _overviewFocus = FocusNode(debugLabel: 'worktree-overview');
   final Map<String, GlobalKey> _overviewRowKeys = {};
@@ -635,24 +636,6 @@ class _WorktreesViewState extends ConsumerState<WorktreesView>
               ),
               RepositoryContextSupplement(worktreeLabel: label),
             );
-        final focusedPath = selected ?? _selectedOverviewPath;
-        if (focusedPath != null) {
-          ref
-              .read(
-                workspaceNavigationProvider(
-                  WorkspaceSessionKey(repoPath, connection.sessionEpoch),
-                ).notifier,
-              )
-              .visit(
-                WorkspaceFocus(
-                  repositoryPath: repoPath,
-                  sessionEpoch: connection.sessionEpoch,
-                  kind: WorkspaceFocusKind.worktree,
-                  identity: focusedPath,
-                  panelIndex: 5,
-                ),
-              );
-        }
       });
       final paths = live.map((w) => w.path).toSet();
       if (_selectedOverviewPath != null &&
@@ -680,6 +663,22 @@ class _WorktreesViewState extends ConsumerState<WorktreesView>
     }
 
     final connection = ref.watch(connectionProvider);
+
+    // Once per change and only while active (0065-MADR). The focused worktree
+    // is the open tab, else the highlighted overview row.
+    final focusedPath = tabs.selected ?? _selectedOverviewPath;
+    recordWorkspaceLocation(
+      live == null || connection.sessionEpoch <= 0 || focusedPath == null
+          ? null
+          : WorkspaceFocus(
+              repositoryPath: repoPath,
+              sessionEpoch: connection.sessionEpoch,
+              kind: WorkspaceFocusKind.worktree,
+              identity: focusedPath,
+              panelIndex: kWorktreesPageIndex,
+            ),
+      active: widget.isActive,
+    );
 
     final all = worktreesAsync.value ?? const <GitWorktree>[];
     // 0009 H3: apply a restored / palette-revealed worktree once the list

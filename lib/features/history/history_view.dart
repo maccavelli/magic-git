@@ -39,6 +39,7 @@ import '../common/repository_workspace_scaffold.dart';
 import '../common/tappable.dart';
 import '../common/tool_icon_button.dart';
 import '../common/workspace_focus.dart';
+import '../common/workspace_location_recorder.dart';
 import '../common/workspace_navigation.dart';
 import '../common/workspace_preferences_binding.dart';
 import '../dnd/deselect.dart';
@@ -82,7 +83,7 @@ class HistoryView extends ConsumerStatefulWidget {
 }
 
 class _HistoryViewState extends ConsumerState<HistoryView>
-    with WidgetsBindingObserver, BusyActionState {
+    with WidgetsBindingObserver, BusyActionState, WorkspaceLocationRecorder {
   // Multi-selection over commit hashes, following the macOS list-selection
   // conventions (same scheme as RepoStatusView's file rows): plain click
   // replaces the selection, ⌘-click toggles a row in/out, ⇧-click extends a
@@ -1553,26 +1554,28 @@ class _HistoryViewState extends ConsumerState<HistoryView>
                 selectionLabel: _effPath == null ? null : 'Path: $_effPath',
               ),
             );
-        ref
-            .read(
-              workspaceNavigationProvider(
-                WorkspaceSessionKey(widget.repoPath, connection.sessionEpoch),
-              ).notifier,
-            )
-            .visit(
-              WorkspaceFocus(
-                repositoryPath: widget.repoPath,
-                sessionEpoch: connection.sessionEpoch,
-                kind: rangeEnd == null
-                    ? WorkspaceFocusKind.revision
-                    : WorkspaceFocusKind.range,
-                identity: selectedHash,
-                secondaryIdentity: rangeEnd ?? _effPath,
-                panelIndex: 1,
-              ),
-            );
       });
     }
+    // Once per change and only while active (0065-MADR): a rebuild is not a
+    // visit, so this panel and another holding a selection cannot alternate
+    // history entries one frame at a time.
+    recordWorkspaceLocation(
+      supplementKey == null || selectedHash == null
+          ? null
+          : WorkspaceFocus(
+              repositoryPath: widget.repoPath,
+              sessionEpoch: connection.sessionEpoch,
+              kind: _selectedHashes.length > 1
+                  ? WorkspaceFocusKind.range
+                  : WorkspaceFocusKind.revision,
+              identity: selectedHash,
+              secondaryIdentity: _selectedHashes.length > 1
+                  ? _selectedHashes.last
+                  : _effPath,
+              panelIndex: 1,
+            ),
+      active: widget.isActive,
+    );
 
     // One handler map for both consumers: the keyboard shortcuts and the
     // command palette's dispatched intents (see PanelShortcuts.handlers).

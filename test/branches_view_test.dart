@@ -6,7 +6,7 @@
 
 import 'dart:async';
 
-import 'package:flutter/cupertino.dart';
+import 'package:flutter/cupertino.dart' hide ConnectionState;
 import 'package:flutter/gestures.dart' show kSecondaryButton;
 import 'package:flutter/services.dart' show LogicalKeyboardKey;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -21,7 +21,11 @@ import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 import 'package:remote_magic_git/core/theme/app_theme.dart';
 import 'package:remote_magic_git/core/utils/git_porcelain_parser.dart';
 import 'package:remote_magic_git/features/branches/branches_view.dart';
+import 'package:remote_magic_git/features/common/repository_context.dart';
+import 'package:remote_magic_git/features/common/workspace_focus.dart';
+import 'package:remote_magic_git/features/common/workspace_navigation.dart';
 import 'package:remote_magic_git/features/dnd/deselect.dart';
+import 'package:riverpod/misc.dart' show Override;
 
 const _repo = '/repo';
 
@@ -78,36 +82,64 @@ class _FakeGit extends GitService {
 Future<void> _rightClick(WidgetTester tester, Finder f) =>
     tester.tap(f, buttons: kSecondaryButton, warnIfMissed: false);
 
+List<Override> _overrides(_FakeGit git) => [
+  gitServiceProvider.overrideWithValue(git),
+  refsProvider(_repo).overrideWith((ref) async => _refs),
+  // The view now watches CONFIGURED remotes to pick the tag-push target
+  // — unoverridden it would fall through to the executor.
+  remotesProvider(_repo).overrideWith((ref) async => const ['origin']),
+  // The real provider keeps a five-minute keepAlive timer that widget
+  // tests would flag as still pending; null = unknown, no badges.
+  remoteTagsProvider(_repo).overrideWith((ref) async => null),
+  branchForgeProvider(_repo).overrideWith((ref) async => const {}),
+  mergedBranchesProvider(_repo).overrideWith((ref) async => const <String>{}),
+];
+
 Future<_FakeGit> _pump(WidgetTester tester) async {
   final git = _FakeGit();
+  final container = ProviderContainer(overrides: _overrides(git));
+  addTearDown(container.dispose);
+  await tester.pumpWidget(_tree(container, isActive: true));
+  await tester.pumpAndSettle();
+  return git;
+}
+
+/// The harness with a live session, so navigation recording applies; returns
+/// the container so a test can read the session's history.
+Future<ProviderContainer> _pumpForNavigation(
+  WidgetTester tester, {
+  required bool isActive,
+}) async {
   final container = ProviderContainer(
     overrides: [
-      gitServiceProvider.overrideWithValue(git),
-      refsProvider(_repo).overrideWith((ref) async => _refs),
-      // The view now watches CONFIGURED remotes to pick the tag-push target
-      // — unoverridden it would fall through to the executor.
-      remotesProvider(_repo).overrideWith((ref) async => const ['origin']),
-      // The real provider keeps a five-minute keepAlive timer that widget
-      // tests would flag as still pending; null = unknown, no badges.
-      remoteTagsProvider(_repo).overrideWith((ref) async => null),
-      branchForgeProvider(_repo).overrideWith((ref) async => const {}),
-      mergedBranchesProvider(
-        _repo,
-      ).overrideWith((ref) async => const <String>{}),
+      ..._overrides(_FakeGit()),
+      connectionProvider.overrideWith(
+        () => _StubConnection(
+          const ConnectionState(
+            phase: ConnectionPhase.connected,
+            repoPath: _repo,
+            sessionEpoch: 1,
+          ),
+        ),
+      ),
     ],
   );
   addTearDown(container.dispose);
-  await tester.pumpWidget(
-    UncontrolledProviderScope(
-      container: container,
-      child: const MacosApp(
-        debugShowCheckedModeBanner: false,
-        home: BranchesView(repoPath: _repo),
-      ),
+  await tester.pumpWidget(_tree(container, isActive: isActive));
+  await tester.pumpAndSettle();
+  return container;
+}
+
+/// The harness tree, so a test can pump it again unchanged — the way the app
+/// shell rebuilds every page when it rebuilds itself (0065-MADR).
+Widget _tree(ProviderContainer container, {required bool isActive}) {
+  return UncontrolledProviderScope(
+    container: container,
+    child: MacosApp(
+      debugShowCheckedModeBanner: false,
+      home: BranchesView(repoPath: _repo, isActive: isActive),
     ),
   );
-  await tester.pumpAndSettle();
-  return git;
 }
 
 Future<void> _openAdvancedMenu(WidgetTester tester) async {
@@ -120,6 +152,68 @@ Future<void> _openAdvancedMenu(WidgetTester tester) async {
 }
 
 void main() {
+  // 0065: a panel records its location once per change, only while active.
+  bool branchSelected(ProviderContainer container) => container
+      .read(repositoryContextSupplementCacheProvider)
+      .values
+      .any((s) => s.branchLabel == 'Selected: feature');
+
+  testWidgets('records a branch once: a rebuild after a foreign visit adds '
+      'nothing (0065)', (tester) async {
+    final container = await _pumpForNavigation(tester, isActive: true);
+    const key = WorkspaceSessionKey(_repo, 1);
+    final history = container.read(workspaceNavigationProvider(key).notifier);
+
+    await tester.tap(find.text('feature'));
+    await tester.pump();
+    await tester.pump();
+    expect(branchSelected(container), isTrue, reason: 'the tap selected it');
+    final recorded = container.read(workspaceNavigationProvider(key)).locations;
+    expect(recorded, hasLength(1), reason: 'selecting a branch records once');
+    expect(recorded.single.kind, WorkspaceFocusKind.branch);
+    expect(recorded.single.identity, 'refs/heads/feature');
+    expect(recorded.single.panelIndex, 2);
+
+    // Another panel records where the user went; the shell then rebuilds
+    // every page, this one included. A rebuild is not a visit.
+    const commit = WorkspaceFocus(
+      repositoryPath: _repo,
+      sessionEpoch: 1,
+      kind: WorkspaceFocusKind.revision,
+      identity: 'abc123',
+      panelIndex: 1,
+    );
+    history.visit(commit);
+    await tester.pumpWidget(_tree(container, isActive: true));
+    for (var i = 0; i < 5; i++) {
+      await tester.pump();
+    }
+    final nav = container.read(workspaceNavigationProvider(key));
+    expect(nav.locations, [
+      recorded.single,
+      commit,
+    ], reason: 'an unchanged selection must not be re-recorded on rebuild');
+    expect(nav.index, 1);
+  });
+
+  testWidgets('records nothing while it is not the active page (0065)', (
+    tester,
+  ) async {
+    final container = await _pumpForNavigation(tester, isActive: false);
+    const key = WorkspaceSessionKey(_repo, 1);
+
+    await tester.tap(find.text('feature'));
+    for (var i = 0; i < 5; i++) {
+      await tester.pump();
+    }
+    expect(branchSelected(container), isTrue, reason: 'the tap selected it');
+    expect(
+      container.read(workspaceNavigationProvider(key)).locations,
+      isEmpty,
+      reason: 'a hidden panel never records where the user is',
+    );
+  });
+
   testWidgets('a branch rejected as "not fully merged" offers a force-delete '
       'confirmation, which retries with force: true', (tester) async {
     final git = await _pump(tester);
@@ -265,6 +359,13 @@ void main() {
     await tester.pumpAndSettle();
     expect(selectedRows(), findsNothing);
   });
+}
+
+class _StubConnection extends ConnectionController {
+  _StubConnection(this._state);
+  final ConnectionState _state;
+  @override
+  ConnectionState build() => _state;
 }
 
 class _GatedCheckoutGit extends GitService {

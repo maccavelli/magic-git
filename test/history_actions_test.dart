@@ -175,6 +175,7 @@ Future<ProviderContainer> _pump(
   bool tagSheetProviders = false,
   // Gives the panel a live session so workspace-navigation restores apply.
   bool connected = false,
+  bool isActive = true,
 }) async {
   // The zoom setter persists through SharedPreferences — back it with the
   // in-memory mock so writes don't hit a missing platform channel.
@@ -200,17 +201,21 @@ Future<ProviderContainer> _pump(
     ],
   );
   addTearDown(container.dispose);
-  await tester.pumpWidget(
-    UncontrolledProviderScope(
-      container: container,
-      child: const MacosApp(
-        debugShowCheckedModeBanner: false,
-        home: HistoryView(repoPath: _repo),
-      ),
-    ),
-  );
+  await tester.pumpWidget(_tree(container, isActive: isActive));
   await tester.pumpAndSettle();
   return container;
+}
+
+/// The harness tree, so a test can pump it again unchanged — the way the app
+/// shell rebuilds every page when it rebuilds itself (0065-MADR).
+Widget _tree(ProviderContainer container, {required bool isActive}) {
+  return UncontrolledProviderScope(
+    container: container,
+    child: MacosApp(
+      debugShowCheckedModeBanner: false,
+      home: HistoryView(repoPath: _repo, isActive: isActive),
+    ),
+  );
 }
 
 /// The History panel's live handler for [id], read off its PanelShortcuts.
@@ -776,6 +781,84 @@ void main() {
     nav = container.read(workspaceNavigationProvider(key));
     expect(nav.pending, isNull);
     expect(nav.unavailable, loc('feedfacedeadbeef'));
+  });
+
+  // A connected session renders the subject a second time outside the list,
+  // so the row is found as the list's own descendant.
+  Finder headRow() => find.descendant(
+    of: find.byType(ListView),
+    matching: find.text('head commit'),
+  );
+
+  testWidgets('records a location once: a rebuild after a foreign visit adds '
+      'nothing (0065)', (tester) async {
+    final container = await _pump(tester, [head, older], connected: true);
+    const key = WorkspaceSessionKey(_repo, 1);
+    final history = container.read(workspaceNavigationProvider(key).notifier);
+    final commit = WorkspaceFocus(
+      repositoryPath: _repo,
+      sessionEpoch: 1,
+      kind: WorkspaceFocusKind.revision,
+      identity: head.hash,
+      panelIndex: 1,
+    );
+    const branch = WorkspaceFocus(
+      repositoryPath: _repo,
+      sessionEpoch: 1,
+      kind: WorkspaceFocusKind.branch,
+      identity: 'main',
+      panelIndex: 2,
+    );
+
+    await tester.tap(headRow());
+    await tester.pump();
+    await tester.pump();
+    expect(container.read(workspaceNavigationProvider(key)).locations, [
+      commit,
+    ], reason: 'selecting a commit records it once');
+
+    // Another panel records where the user went; the shell then rebuilds
+    // every page, this one included. A rebuild is not a visit.
+    history.visit(branch);
+    await tester.pumpWidget(_tree(container, isActive: true));
+    for (var i = 0; i < 5; i++) {
+      await tester.pump();
+    }
+    final nav = container.read(workspaceNavigationProvider(key));
+    expect(nav.locations, [
+      commit,
+      branch,
+    ], reason: 'an unchanged selection must not be re-recorded on rebuild');
+    expect(nav.index, 1);
+  });
+
+  testWidgets('records nothing while it is not the active page (0065)', (
+    tester,
+  ) async {
+    final container = await _pump(
+      tester,
+      [head, older],
+      connected: true,
+      isActive: false,
+    );
+    const key = WorkspaceSessionKey(_repo, 1);
+
+    await tester.tap(headRow());
+    for (var i = 0; i < 5; i++) {
+      await tester.pump();
+    }
+    // The panel's shortcuts are empty while inactive, so selection shows in
+    // the canvas: its placeholder gives way to the commit.
+    expect(
+      find.text('Select a commit'),
+      findsNothing,
+      reason: 'the tap did select the commit',
+    );
+    expect(
+      container.read(workspaceNavigationProvider(key)).locations,
+      isEmpty,
+      reason: 'a hidden panel never records where the user is',
+    );
   });
 
   testWidgets('Checkout prefers a local branch pointing at the commit — '

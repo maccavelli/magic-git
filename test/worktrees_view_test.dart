@@ -28,6 +28,8 @@ import 'package:remote_magic_git/core/utils/file_actions.dart';
 import 'package:remote_magic_git/core/utils/git_porcelain_parser.dart';
 import 'package:remote_magic_git/features/common/panel_shortcuts.dart';
 import 'package:remote_magic_git/features/common/repository_workspace_scaffold.dart';
+import 'package:remote_magic_git/features/common/workspace_focus.dart';
+import 'package:remote_magic_git/features/common/workspace_navigation.dart';
 import 'package:remote_magic_git/features/dnd/deselect.dart';
 import 'package:remote_magic_git/features/worktrees/worktree_access.dart';
 import 'package:remote_magic_git/features/worktrees/worktree_tabs.dart';
@@ -148,10 +150,23 @@ void main() {
 
   tearDown(() => tmp.deleteSync(recursive: true));
 
+  // The harness tree, so a test can pump it again unchanged — the way the app
+  // shell rebuilds every page when it rebuilds itself (0065-MADR).
+  Widget tree(ProviderContainer container, {required bool isActive}) {
+    return UncontrolledProviderScope(
+      container: container,
+      child: MacosApp(
+        debugShowCheckedModeBanner: false,
+        home: WorktreesView(repoPath: repo, isActive: isActive),
+      ),
+    );
+  }
+
   Future<ProviderContainer> pump(
     WidgetTester tester, {
     List<GitWorktree>? data,
     List<Override> extraOverrides = const [],
+    bool isActive = true,
   }) async {
     // A real desktop width. The 800x600 default overflows, and an overflow is a
     // test failure — and a worktree tab mounts the full RepoStatusView, whose
@@ -171,15 +186,7 @@ void main() {
     );
     addTearDown(container.dispose);
 
-    await tester.pumpWidget(
-      UncontrolledProviderScope(
-        container: container,
-        child: MacosApp(
-          debugShowCheckedModeBanner: false,
-          home: WorktreesView(repoPath: repo),
-        ),
-      ),
-    );
+    await tester.pumpWidget(tree(container, isActive: isActive));
     await tester.pumpAndSettle();
     return container;
   }
@@ -535,5 +542,87 @@ void main() {
 
     expect(actions.terminals, hasLength(1));
     expect(actions.terminals.single, endsWith('app-feature'));
+  });
+
+  // 0065: a panel records its location once per change, only while active.
+  Override liveSession() => connectionProvider.overrideWith(
+    () => _StubConnection(
+      ConnectionState(
+        backend: ConnectionBackend.local,
+        phase: ConnectionPhase.connected,
+        repoPath: repo,
+        sessionEpoch: 1,
+      ),
+    ),
+  );
+
+  testWidgets('records a worktree once: a rebuild after a foreign visit adds '
+      'nothing (0065)', (tester) async {
+    final container = await pump(tester, extraOverrides: [liveSession()]);
+    final key = WorkspaceSessionKey(repo, 1);
+    final history = container.read(workspaceNavigationProvider(key).notifier);
+    final feature = worktrees.firstWhere((w) => w.path.endsWith('app-feature'));
+    final worktree = WorkspaceFocus(
+      repositoryPath: repo,
+      sessionEpoch: 1,
+      kind: WorkspaceFocusKind.worktree,
+      identity: feature.path,
+      panelIndex: kWorktreesPageIndex,
+    );
+    final commit = WorkspaceFocus(
+      repositoryPath: repo,
+      sessionEpoch: 1,
+      kind: WorkspaceFocusKind.revision,
+      identity: 'abc123',
+      panelIndex: 1,
+    );
+
+    await tester.tap(find.text('app-feature'));
+    // The row also supports double-click-to-open, so Flutter waits out the
+    // double-click interval before dispatching the single-click selection.
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pump();
+    await tester.pump();
+    expect(find.text('Worktree: app-feature'), findsOneWidget);
+    expect(container.read(workspaceNavigationProvider(key)).locations, [
+      worktree,
+    ], reason: 'selecting a worktree records it once');
+
+    // Another panel records where the user went; the shell then rebuilds
+    // every page, this one included. A rebuild is not a visit.
+    history.visit(commit);
+    await tester.pumpWidget(tree(container, isActive: true));
+    for (var i = 0; i < 5; i++) {
+      await tester.pump();
+    }
+    final nav = container.read(workspaceNavigationProvider(key));
+    expect(nav.locations, [
+      worktree,
+      commit,
+    ], reason: 'an unchanged selection must not be re-recorded on rebuild');
+    expect(nav.index, 1);
+  });
+
+  testWidgets('records nothing while it is not the active page (0065)', (
+    tester,
+  ) async {
+    final container = await pump(
+      tester,
+      extraOverrides: [liveSession()],
+      isActive: false,
+    );
+    final key = WorkspaceSessionKey(repo, 1);
+
+    await tester.tap(find.text('app-feature'));
+    await tester.pump(const Duration(milliseconds: 400));
+    for (var i = 0; i < 5; i++) {
+      await tester.pump();
+    }
+    expect(find.text('Worktree: app-feature'), findsOneWidget);
+    expect(
+      container.read(workspaceNavigationProvider(key)).locations,
+      isEmpty,
+      reason: 'a hidden panel never records where the user is',
+    );
   });
 }

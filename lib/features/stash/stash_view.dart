@@ -26,6 +26,7 @@ import '../common/repository_context_bar.dart';
 import '../common/repository_workspace_scaffold.dart';
 import '../common/tool_icon_button.dart';
 import '../common/workspace_focus.dart';
+import '../common/workspace_location_recorder.dart';
 import '../common/workspace_navigation.dart';
 import '../common/workspace_preferences_binding.dart';
 import '../dnd/deselect.dart';
@@ -54,7 +55,8 @@ class StashView extends ConsumerStatefulWidget {
   ConsumerState<StashView> createState() => _StashViewState();
 }
 
-class _StashViewState extends ConsumerState<StashView> with BusyActionState {
+class _StashViewState extends ConsumerState<StashView>
+    with BusyActionState, WorkspaceLocationRecorder {
   /// The selected stash's OID — its STABLE identity. Selecting by position
   /// (`stash@{n}`) broke whenever the list shifted (a drop, a pop, an
   /// auto-stash from a branch switch): the highlight and preview silently
@@ -369,25 +371,21 @@ class _StashViewState extends ConsumerState<StashView> with BusyActionState {
                     : 'Stash: ${selEntry.ref} · ${selEntry.subject}',
               ),
             );
-        if (selEntry != null) {
-          ref
-              .read(
-                workspaceNavigationProvider(
-                  WorkspaceSessionKey(repoPath, connection.sessionEpoch),
-                ).notifier,
-              )
-              .visit(
-                WorkspaceFocus(
-                  repositoryPath: repoPath,
-                  sessionEpoch: connection.sessionEpoch,
-                  kind: WorkspaceFocusKind.stash,
-                  identity: selEntry.oid,
-                  panelIndex: 3,
-                ),
-              );
-        }
       });
     }
+    // Once per change and only while active (0065-MADR).
+    recordWorkspaceLocation(
+      supplementKey == null || selEntry == null
+          ? null
+          : WorkspaceFocus(
+              repositoryPath: repoPath,
+              sessionEpoch: connection.sessionEpoch,
+              kind: WorkspaceFocusKind.stash,
+              identity: selEntry.oid,
+              panelIndex: 3,
+            ),
+      active: widget.isActive,
+    );
     final snapshot = RepositoryContextSnapshot(
       repositoryPath: repoPath,
       repositoryName:

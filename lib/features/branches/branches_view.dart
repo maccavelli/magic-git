@@ -34,6 +34,7 @@ import '../common/repository_context_bar.dart';
 import '../common/repository_workspace_scaffold.dart';
 import '../common/section_collapse.dart';
 import '../common/workspace_focus.dart';
+import '../common/workspace_location_recorder.dart';
 import '../common/workspace_navigation.dart';
 import '../common/workspace_preferences_binding.dart';
 import '../dnd/drop_registry.dart' show DropZoneId, DropZonePage;
@@ -99,7 +100,7 @@ class BranchesView extends ConsumerStatefulWidget {
 }
 
 class _BranchesViewState extends ConsumerState<BranchesView>
-    with BusyActionState {
+    with BusyActionState, WorkspaceLocationRecorder {
   // The selected ref, by full refname (unique across branches/remotes/tags) —
   // a click selects any row (driving the detail pane); ↑/↓ walk the LOCAL
   // branches, Enter checks the selection out, ⌘⇧M / ⌘⌫ merge / delete it.
@@ -440,28 +441,24 @@ class _BranchesViewState extends ConsumerState<BranchesView>
                       ].join(' · '),
               ),
             );
-        if (selectedRef != null) {
-          ref
-              .read(
-                workspaceNavigationProvider(
-                  WorkspaceSessionKey(repoPath, connection.sessionEpoch),
-                ).notifier,
-              )
-              .visit(
-                WorkspaceFocus(
-                  repositoryPath: repoPath,
-                  sessionEpoch: connection.sessionEpoch,
-                  kind: selectedRef.isTag
-                      ? WorkspaceFocusKind.revision
-                      : WorkspaceFocusKind.branch,
-                  identity: selectedRef.name,
-                  secondaryIdentity: base?.refName,
-                  panelIndex: 2,
-                ),
-              );
-        }
       });
     }
+    // Once per change and only while active (0065-MADR).
+    recordWorkspaceLocation(
+      supplementKey == null || selectedRef == null
+          ? null
+          : WorkspaceFocus(
+              repositoryPath: repoPath,
+              sessionEpoch: connection.sessionEpoch,
+              kind: selectedRef.isTag
+                  ? WorkspaceFocusKind.revision
+                  : WorkspaceFocusKind.branch,
+              identity: selectedRef.name,
+              secondaryIdentity: base?.refName,
+              panelIndex: 2,
+            ),
+      active: widget.isActive,
+    );
 
     // A cleared selection closes the compact detail with it.
     if (selectedRef == null) _compactShowCanvas = false;

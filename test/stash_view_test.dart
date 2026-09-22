@@ -2,7 +2,7 @@
 // selected-stash preview. UI/UX polish is validated on macOS; this pins the
 // data→render wiring and provider overrides.
 
-import 'package:flutter/cupertino.dart';
+import 'package:flutter/cupertino.dart' hide ConnectionState;
 import 'package:flutter/gestures.dart' show PointerDeviceKind, kSecondaryButton;
 import 'package:flutter/services.dart' show LogicalKeyboardKey;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -12,6 +12,9 @@ import 'package:remote_magic_git/core/git/git_service.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
+import 'package:remote_magic_git/features/common/repository_context.dart';
+import 'package:remote_magic_git/features/common/workspace_focus.dart';
+import 'package:remote_magic_git/features/common/workspace_navigation.dart';
 import 'package:remote_magic_git/features/dnd/deselect.dart';
 import 'package:remote_magic_git/features/stash/stash_view.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -143,33 +146,129 @@ Future<ProviderContainer> _pump(
   required List<GitStash> stashes,
   GitService? git,
   String stashDiff = 'diff --git a/x b/x\n@@ -1 +1 @@\n-old\n+new\n',
+  // A live session, so navigation recording applies (0065).
+  bool connected = false,
+  bool isActive = true,
 }) async {
   final container = ProviderContainer(
     overrides: [
       gitServiceProvider.overrideWithValue(git ?? GitService(_FakeExecutor())),
       stashesProvider(_repo).overrideWith((ref) async => stashes),
       stashDiffProvider((_repo, _oidA)).overrideWith((ref) async => stashDiff),
+      if (connected)
+        connectionProvider.overrideWith(
+          () => _StubConnection(
+            const ConnectionState(
+              phase: ConnectionPhase.connected,
+              repoPath: _repo,
+              sessionEpoch: 1,
+            ),
+          ),
+        ),
     ],
   );
   addTearDown(container.dispose);
-  await tester.pumpWidget(
-    UncontrolledProviderScope(
-      container: container,
-      child: const MacosApp(
-        debugShowCheckedModeBanner: false,
-        home: SizedBox(
-          width: 1000,
-          height: 700,
-          child: StashView(repoPath: _repo),
-        ),
-      ),
-    ),
-  );
+  await tester.pumpWidget(_tree(container, isActive: isActive));
   await tester.pumpAndSettle();
   return container;
 }
 
+/// The harness tree, so a test can pump it again unchanged — the way the app
+/// shell rebuilds every page when it rebuilds itself (0065-MADR).
+Widget _tree(ProviderContainer container, {required bool isActive}) {
+  return UncontrolledProviderScope(
+    container: container,
+    child: MacosApp(
+      debugShowCheckedModeBanner: false,
+      home: SizedBox(
+        width: 1000,
+        height: 700,
+        child: StashView(repoPath: _repo, isActive: isActive),
+      ),
+    ),
+  );
+}
+
+class _StubConnection extends ConnectionController {
+  _StubConnection(this._state);
+  final ConnectionState _state;
+  @override
+  ConnectionState build() => _state;
+}
+
 void main() {
+  // 0065: a panel records its location once per change, only while active.
+  bool stashSelected(ProviderContainer container) => container
+      .read(repositoryContextSupplementCacheProvider)
+      .values
+      .any((s) => s.selectionLabel?.startsWith('Stash: stash@{0}') ?? false);
+
+  testWidgets('records a stash once: a rebuild after a foreign visit adds '
+      'nothing (0065)', (tester) async {
+    final container = await _pump(tester, stashes: _stashes, connected: true);
+    const key = WorkspaceSessionKey(_repo, 1);
+    final history = container.read(workspaceNavigationProvider(key).notifier);
+    const stash = WorkspaceFocus(
+      repositoryPath: _repo,
+      sessionEpoch: 1,
+      kind: WorkspaceFocusKind.stash,
+      identity: _oidA,
+      panelIndex: 3,
+    );
+    const commit = WorkspaceFocus(
+      repositoryPath: _repo,
+      sessionEpoch: 1,
+      kind: WorkspaceFocusKind.revision,
+      identity: 'abc123',
+      panelIndex: 1,
+    );
+
+    await tester.tap(find.text('stash@{0}'));
+    await tester.pump();
+    await tester.pump();
+    expect(stashSelected(container), isTrue, reason: 'the tap selected it');
+    expect(container.read(workspaceNavigationProvider(key)).locations, [
+      stash,
+    ], reason: 'selecting a stash records it once');
+
+    // Another panel records where the user went; the shell then rebuilds
+    // every page, this one included. A rebuild is not a visit.
+    history.visit(commit);
+    await tester.pumpWidget(_tree(container, isActive: true));
+    for (var i = 0; i < 5; i++) {
+      await tester.pump();
+    }
+    final nav = container.read(workspaceNavigationProvider(key));
+    expect(nav.locations, [
+      stash,
+      commit,
+    ], reason: 'an unchanged selection must not be re-recorded on rebuild');
+    expect(nav.index, 1);
+  });
+
+  testWidgets('records nothing while it is not the active page (0065)', (
+    tester,
+  ) async {
+    final container = await _pump(
+      tester,
+      stashes: _stashes,
+      connected: true,
+      isActive: false,
+    );
+    const key = WorkspaceSessionKey(_repo, 1);
+
+    await tester.tap(find.text('stash@{0}'));
+    for (var i = 0; i < 5; i++) {
+      await tester.pump();
+    }
+    expect(stashSelected(container), isTrue, reason: 'the tap selected it');
+    expect(
+      container.read(workspaceNavigationProvider(key)).locations,
+      isEmpty,
+      reason: 'a hidden panel never records where the user is',
+    );
+  });
+
   testWidgets('renders a card per stash with subject, ref, branch, and age', (
     tester,
   ) async {
