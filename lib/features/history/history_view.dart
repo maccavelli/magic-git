@@ -1649,6 +1649,7 @@ class _HistoryViewState extends ConsumerState<HistoryView>
           ),
           onPrimaryAction: (_) => _refresh(),
         ),
+        navigatorLabel: 'Commits',
         navigator: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [

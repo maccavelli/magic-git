@@ -442,6 +442,7 @@ class _StashViewState extends ConsumerState<StashView>
           if (selected == null) _compactShowCanvas = false;
           return RepositoryWorkspaceScaffold(
             repositoryContext: _contextBar(snapshot, git),
+            navigatorLabel: 'Stashes',
             navigator: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [

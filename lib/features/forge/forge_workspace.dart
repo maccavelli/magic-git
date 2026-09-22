@@ -120,6 +120,7 @@ class ForgeRepositoryWorkspace extends ConsumerWidget {
         ),
         onPrimaryAction: (_) => onPrimaryAction?.call(),
       ),
+      navigatorLabel: 'Items',
       navigator: navigator,
       canvas: canvas,
       loading: loading,

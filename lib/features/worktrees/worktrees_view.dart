@@ -856,6 +856,7 @@ class _WorktreesViewState extends ConsumerState<WorktreesView>
             Container(height: 1, color: MacosColors.separatorColor),
           ],
         ),
+        navigatorLabel: 'Worktrees',
         navigator: worktrees.length <= 1
             ? null
             : _overview(context, worktreesAsync),

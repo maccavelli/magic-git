@@ -54,6 +54,11 @@ class NestedWorkspaceScope extends InheritedWidget {
 class RepositoryWorkspaceScaffold extends StatelessWidget {
   final Widget repositoryContext;
   final Widget? navigator;
+
+  /// What the [navigator] is called, for the reveal rail that stands in its
+  /// place while it is collapsed (MADR 0066). Required with a [navigator]:
+  /// a hidden pane with no name is one the user cannot get back.
+  final String? navigatorLabel;
   final Widget canvas;
   final Widget? inspector;
   final Widget? taskDock;
@@ -76,6 +81,7 @@ class RepositoryWorkspaceScaffold extends StatelessWidget {
     super.key,
     required this.repositoryContext,
     this.navigator,
+    this.navigatorLabel,
     required this.canvas,
     this.inspector,
     this.taskDock,
@@ -119,8 +125,14 @@ class RepositoryWorkspaceScaffold extends StatelessWidget {
     } else if (loading) {
       content = const WorkspaceLoading(label: 'Loading repository');
     } else {
+      assert(
+        navigator == null || navigatorLabel != null,
+        'a navigator needs a navigatorLabel: the reveal rail names it while '
+        'the pane is collapsed (MADR 0066)',
+      );
       content = AdaptiveWorkspaceLayout(
         navigator: navigator,
+        navigatorLabel: navigatorLabel,
         canvas: canvas,
         inspector: inspector,
         taskDock: taskDock,

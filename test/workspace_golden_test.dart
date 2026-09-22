@@ -122,6 +122,7 @@ class _WorkspaceGoldenFixture extends StatelessWidget {
               ],
             ),
           ),
+          navigatorLabel: 'Changes',
           navigator: _navigator(accent, highContrast),
           canvas: _canvas(accent, highContrast),
           inspector: _inspector(accent, highContrast),

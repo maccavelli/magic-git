@@ -641,6 +641,7 @@ class _BranchesViewState extends ConsumerState<BranchesView>
         ),
         onPrimaryAction: (_) => _fetchPrune(git),
       ),
+      navigatorLabel: 'Branches',
       navigator: navigator,
       canvas: detail,
       compactNavigation: CompactWorkspaceNavigation(

@@ -35,6 +35,7 @@ Widget _workspace({bool disableAnimations = false}) => MacosApp(
           role: WorkspacePaneRole.activity,
           child: _region('context and activity'),
         ),
+        navigatorLabel: 'Changes',
         navigator: _region('navigator content'),
         canvas: _region('canvas content'),
         inspector: _region('inspector content'),

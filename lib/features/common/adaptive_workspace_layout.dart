@@ -6,6 +6,7 @@ import '../../core/settings/repository_workspace_prefs.dart';
 import 'inline_action_button.dart';
 import 'repository_workspace_models.dart';
 import 'resizable_master_detail.dart';
+import 'tappable.dart';
 import 'workspace_focus_order.dart';
 
 enum CompactWorkspacePage { navigator, canvas }
@@ -49,6 +50,13 @@ class CompactWorkspaceNavigation {
 
 /// The back bar's button, for tests and for the pane-reachability contract.
 const Key kWorkspaceCompactBackKey = Key('workspace-compact-back');
+
+/// The rail that stands where a collapsed navigator was (MADR 0066).
+const Key kWorkspaceNavigatorRevealKey = Key('workspace-navigator-reveal');
+
+/// Width of that rail. Wide enough for a chevron and a rotated label, narrow
+/// enough that collapsing still gives the canvas nearly the whole width.
+const double kWorkspaceNavigatorRailWidth = 28;
 
 enum WorkspaceTaskDockPresentation { hidden, compact, full }
 
@@ -123,6 +131,11 @@ class AdaptiveWorkspaceLayout extends StatefulWidget {
   /// When set, compact navigation is scaffold-owned (F1-A) and [compactPage]
   /// is ignored. Callers without it keep the legacy [compactPage] behaviour.
   final CompactWorkspaceNavigation? compactNavigation;
+
+  /// Names the navigator on the reveal rail while it is collapsed ("Show
+  /// Commits"). Required whenever a [navigator] is supplied — an unnamed
+  /// hidden pane is the defect MADR 0066 fixes.
+  final String? navigatorLabel;
   final bool inspectorVisible;
   final bool taskDockFocused;
   final RepositoryWorkspacePrefs preferences;
@@ -136,6 +149,7 @@ class AdaptiveWorkspaceLayout extends StatefulWidget {
     this.taskDock,
     this.compactPage = CompactWorkspacePage.canvas,
     this.compactNavigation,
+    this.navigatorLabel,
     this.inspectorVisible = false,
     this.taskDockFocused = false,
     this.preferences = const RepositoryWorkspacePrefs(),
@@ -397,6 +411,25 @@ class _AdaptiveWorkspaceLayoutState extends State<AdaptiveWorkspaceLayout> {
       );
     }
 
+    // A collapsed navigator is a pane the user cannot see; without this it is
+    // also a pane they cannot get back (MADR 0066). The rail replaces the
+    // zero-width pane, names what is hidden, and restores it on a click —
+    // the same preference write the divider makes.
+    if (widget.preferences.navigatorCollapsed) {
+      return Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _NavigatorRevealRail(
+            label: widget.navigatorLabel,
+            onReveal: () => _updatePrefs(
+              widget.preferences.copyWith(navigatorCollapsed: false),
+            ),
+          ),
+          Expanded(child: canvas),
+        ],
+      );
+    }
+
     Widget body = ResizablePanePair(
       leading: navigatorRegion,
       trailing: canvas,
@@ -446,6 +479,68 @@ class _AdaptiveWorkspaceLayoutState extends State<AdaptiveWorkspaceLayout> {
 }
 
 /// "‹ Commits": the one way back to the list that needs no keyboard.
+/// The reveal rail: what a collapsed navigator leaves behind, so the state is
+/// legible and reversible without knowing a menu exists (MADR 0066).
+class _NavigatorRevealRail extends StatelessWidget {
+  final String? label;
+  final VoidCallback onReveal;
+
+  const _NavigatorRevealRail({required this.label, required this.onReveal});
+
+  @override
+  Widget build(BuildContext context) {
+    final name = label ?? 'navigator';
+    final typography = MacosTheme.of(context).typography;
+    return Semantics(
+      button: true,
+      label: 'Show $name',
+      child: Tappable(
+        key: kWorkspaceNavigatorRevealKey,
+        behavior: HitTestBehavior.opaque,
+        cursor: SystemMouseCursors.click,
+        onTap: onReveal,
+        child: Container(
+          width: kWorkspaceNavigatorRailWidth,
+          decoration: const BoxDecoration(
+            border: Border(
+              right: BorderSide(color: MacosColors.separatorColor),
+            ),
+          ),
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          child: Column(
+            children: [
+              const Icon(
+                CupertinoIcons.chevron_right,
+                size: 12,
+                color: MacosColors.systemGrayColor,
+              ),
+              const SizedBox(height: 8),
+              // The name reads bottom-to-top, the macOS convention for a
+              // vertical rail, and is clipped rather than wrapped on a short
+              // window — the icon alone still says what the rail does.
+              Expanded(
+                child: RotatedBox(
+                  quarterTurns: 3,
+                  child: Text(
+                    name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    softWrap: false,
+                    textAlign: TextAlign.center,
+                    style: typography.caption1.copyWith(
+                      color: MacosColors.systemGrayColor,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _CompactBackBar extends StatelessWidget {
   final String label;
   final VoidCallback onPressed;

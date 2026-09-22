@@ -39,6 +39,7 @@ Widget _host(Size size, double scale, VoidCallback primary) => ProviderScope(
             ),
             onPrimaryAction: (_) => primary(),
           ),
+          navigatorLabel: 'Changes',
           navigator: const Center(child: Text('47 changed files')),
           canvas: const Center(child: Text('Selected diff')),
           inspector: const Center(child: Text('Inspector')),
