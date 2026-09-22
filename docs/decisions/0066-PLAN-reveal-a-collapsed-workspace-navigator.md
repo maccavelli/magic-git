@@ -244,3 +244,21 @@ previous behaviour, and any repository whose navigator was revealed simply stays
     `flutter test test/workspace_navigator_reveal_test.dart`: `00:01 +6: All tests passed!`.
     `flutter test test/help_book_json_test.dart test/chrome_correctness_test.dart
     test/keymap_test.dart test/tabs_host_test.dart`: `00:02 +51: All tests passed!`, 0 `[E]`.
+* **Phase 3, step 3.1 (2026-09-22).** `test/navigator_label_scan_test.dart` walks `lib/` for
+  `RepositoryWorkspaceScaffold(` calls, matching each call's parentheses so nested calls and
+  trailing commas are handled, and requires `navigatorLabel:` wherever `navigator:` is passed.
+  * **The first version was wrong, and its own negative test caught it.** It asked whether the
+    call text *contained* `navigatorLabel:`, which History satisfies through its nested
+    `compactNavigation: CompactWorkspaceNavigation(navigatorLabel: 'Commits')` — so with the
+    scaffold's own label deleted the scan still passed (`exit=0`, "All tests passed"). It now
+    collects the call's **top-level** argument names by tracking bracket depth, and ignores
+    anything a nested call passes.
+  * **Seen to fail:** scratch clone with the fixed files, History's scaffold `navigatorLabel:`
+    removed → `00:00 +0 -1: Some tests failed.`; restored → passes. The test also asserts it
+    scanned at least one call, so a pattern change cannot leave it silently vacuous.
+  * A second scratch script found the ambiguity that made this necessary: History carries two
+    `navigatorLabel:` lines (the scaffold's and `compactNavigation`'s), and an anchored edit
+    asserting a single match refused to run until the anchor named the right one.
+* **Phase 3, step 3.2 (2026-09-22).** `flutter analyze`: `No issues found! (ran in 6.1s)`.
+  Full suite: `02:54 +4326 ~3: All tests passed!`, `[E]` count 0 — `+7` over `82dd552` (six
+  reveal cases and the scan test). The 48 goldens are among them, unchanged (AC6).
