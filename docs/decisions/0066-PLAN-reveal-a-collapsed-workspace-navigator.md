@@ -262,3 +262,17 @@ previous behaviour, and any repository whose navigator was revealed simply stays
 * **Phase 3, step 3.2 (2026-09-22).** `flutter analyze`: `No issues found! (ran in 6.1s)`.
   Full suite: `02:54 +4326 ~3: All tests passed!`, `[E]` count 0 — `+7` over `82dd552` (six
   reveal cases and the scan test). The 48 goldens are among them, unchanged (AC6).
+* **Phase 3, step 3.3 (2026-09-22): built, and the maintainer's to confirm.**
+  `./build_macos.sh --unsigned` exited 0. The built binary carries `showNavigatorItem`, the
+  `toggleNavigator:` selector and `global.toggleNavigator`, and the shipped `help_book.json`
+  carries "Show Navigator" and `global.toggleNavigator`, so the Swift and help changes are in
+  the bundle. (The menu *titles* are absent from the binary's string table because Swift packs
+  literals of ≤ 15 UTF-8 bytes inline — "Show Navigator" and "Show File View" are both 14 bytes,
+  while the 19-byte "Show Dashboard View" does appear. Not evidence of a missing item.)
+  * **Not executor-run.** The checks need the maintainer's own window and keyboard on the
+    `ocp-login` tab, and the 0064 gate's amended procedure already puts keyboard-sequence checks
+    with the maintainer. Until they are recorded here, **AC4 and the device half of AC7 are
+    open** and this plan stays `in-progress`.
+  * What to look for: History on that tab shows a 28 pt rail labelled "Commits"; clicking it
+    restores the commit list; ⌥⌘N hides and shows it; View ▸ Show Navigator carries a checkmark
+    that follows.
