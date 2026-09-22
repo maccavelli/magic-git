@@ -187,3 +187,21 @@ showed: the maintainer could not see *what* was wrong, and had no way to undo it
   preset is unchanged; nothing migrates existing preferences, so the `ocp-login` tab stays
   collapsed until the user reveals it — which is now possible.
 * **Implementation:** [0066-PLAN](0066-PLAN-reveal-a-collapsed-workspace-navigator.md).
+
+## Amendment 0066.1 (2026-09-22): the command binds ⌥⌘N, not ⇧⌘N
+
+The decision above states that ⇧⌘N "is free today in this app". **It is not.**
+`lib/core/settings/keymap.dart` binds it to `history.branchFrom` ("Branch from selected
+commit"), and has since before this record. A sweep of every default binding was run when the
+collision surfaced during execution (0066-PLAN, deviation D1); it also shows ⌥⌘ carrying this
+app's other view toggles — `⌥⌘S` split diff, `⌥⌘W` ignore whitespace, `⌥⌘X` expanded context —
+with ⌥⌘N free.
+
+**Amended decision.** `global.toggleNavigator` binds **⌥⌘N**. Everything else in F-the-command
+stands: the same id, the same View-menu item, the same checkmark. `addToggleItem` in
+`MainFlutterWindow.swift` grows a `modifiers` parameter (defaulting to the ⇧⌘ every other
+toggle uses) so the native item carries ⌥⌘ before the first keymap sync.
+
+The alternatives were considered and rejected at the same time: shipping unbound (the
+"recovery without the mouse" driver would be unmet until a user bound it) and moving
+`history.branchFrom` (retunes an existing shortcut nobody asked to change).

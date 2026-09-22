@@ -254,6 +254,21 @@ final List<KeymapAction> kKeymapActions = [
     category: KeymapCategory.global,
     defaultBindings: [],
   ),
+  // The navigator is the left pane — the commit list, the branch tree, the
+  // stash list. Collapsed, it used to have no way back (MADR 0066).
+  //
+  // ⌥⌘N, not ⇧⌘N: that chord is `history.branchFrom`, and this command is
+  // global, so the two would be live together on History (Amendment 0066.1).
+  // ⌥⌘ is also what the app's other view toggles use — split diff, whitespace,
+  // expanded context.
+  KeymapAction(
+    id: 'global.toggleNavigator',
+    label: 'Toggle Navigator',
+    category: KeymapCategory.global,
+    defaultBindings: [
+      KeyBinding.fromKey(LogicalKeyboardKey.keyN, meta: true, alt: true),
+    ],
+  ),
   KeymapAction(
     id: 'global.toggleFileView',
     label: 'Toggle File View',

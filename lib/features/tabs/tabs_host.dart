@@ -11,6 +11,7 @@ import '../../core/output/output_log.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/providers/window_manager_bridge.dart';
 import '../../core/settings/keymap.dart';
+import '../../core/settings/repository_workspace_prefs.dart';
 import '../../core/settings/settings_bus.dart';
 import '../../core/theme/app_theme.dart';
 import '../app_shell.dart';
@@ -18,6 +19,7 @@ import '../common/actions.dart';
 import '../common/menu_bar_bridge.dart';
 import '../common/menu_bar_spec.dart';
 import '../common/session_exit_guard.dart';
+import '../common/workspace_preferences_binding.dart';
 import 'tab_strip.dart';
 import 'tab_ui_providers.dart';
 import 'tabs_controller.dart';
@@ -96,6 +98,11 @@ class _TabsHostState extends ConsumerState<TabsHost> with WindowListener {
   /// window title). Closed and re-opened against the new container whenever the
   /// active tab changes — see [_wireActive].
   final List<ProviderSubscription> _activeSubs = [];
+
+  /// The active repository's workspace-record subscription, kept apart from
+  /// [_activeSubs] because it is re-pointed when the repository changes, not
+  /// only when the tab does (MADR 0066).
+  ProviderSubscription? _navigatorSub;
   String? _wiredTabId;
 
   /// Handle on the app's root [Navigator]. This host BUILDS [MacosApp], so its
@@ -194,6 +201,8 @@ class _TabsHostState extends ConsumerState<TabsHost> with WindowListener {
       s.close();
     }
     _activeSubs.clear();
+    _navigatorSub?.close();
+    _navigatorSub = null;
     _wiredTabId = _controller.activeId;
     final c = _controller.active?.container;
     if (c == null) return;
@@ -213,6 +222,18 @@ class _TabsHostState extends ConsumerState<TabsHost> with WindowListener {
       c.listen<bool>(fileViewVisibleProvider, (_, v) {
         _syncMenuState('setFileViewChecked', v);
       }),
+    );
+    // The navigator's state is a per-repository workspace preference rather
+    // than a session flag (MADR 0066), so its checkmark follows the active
+    // repository's record: the repo can change under the same tab, and the
+    // record is a family keyed on it, so the inner subscription is rebuilt
+    // whenever the path does.
+    _activeSubs.add(
+      c.listen<String?>(
+        connectionProvider.select((state) => state.repoPath),
+        (_, path) => _watchNavigatorState(c, path),
+        fireImmediately: true,
+      ),
     );
     _activeSubs.add(
       c.listen<bool>(dashboardVisibleProvider, (_, v) {
@@ -252,6 +273,7 @@ class _TabsHostState extends ConsumerState<TabsHost> with WindowListener {
   /// (0009 M2). The pane-focus items ship unbound and stay out.
   static const _viewShortcutIds = [
     'global.toggleOutput',
+    'global.toggleNavigator',
     'global.toggleFileView',
     'global.toggleDashboard',
     'global.toggleRecovery',
@@ -296,6 +318,29 @@ class _TabsHostState extends ConsumerState<TabsHost> with WindowListener {
     _menuChannel.invokeMethod<void>(method, visible).catchError((_) {});
   }
 
+  /// Follows the active repository's workspace record so View ▸ Show Navigator
+  /// carries the live state (MADR 0066). Closed and rebuilt whenever the
+  /// repository path changes, because the record is a family keyed on it.
+  void _watchNavigatorState(ProviderContainer c, String? repoPath) {
+    _navigatorSub?.close();
+    _navigatorSub = null;
+    if (repoPath == null) {
+      // Nothing open: the pane cannot be shown, so the item reads unchecked.
+      _syncMenuState('setNavigatorChecked', false);
+      return;
+    }
+    void push(AsyncValue<RepositoryWorkspacePrefs> prefs) {
+      final collapsed = prefs.value?.navigatorCollapsed ?? false;
+      _syncMenuState('setNavigatorChecked', !collapsed);
+    }
+
+    _navigatorSub = c.listen<AsyncValue<RepositoryWorkspacePrefs>>(
+      repositoryWorkspacePrefsProvider(repoPath),
+      (_, next) => push(next),
+      fireImmediately: true,
+    );
+  }
+
   void _syncEnabledActions(Set<String> ids) {
     _menuChannel
         .invokeMethod<void>('setEnabledActions', ids.toList())
@@ -310,6 +355,11 @@ class _TabsHostState extends ConsumerState<TabsHost> with WindowListener {
         c.read(outputLogProvider.notifier).toggle();
       case 'toggleSidebar':
         c.read(sidebarToggleRequestProvider.notifier).request();
+      case 'toggleNavigator':
+        final repoPath = c.read(connectionProvider).repoPath;
+        if (repoPath != null) {
+          unawaited(toggleNavigatorCollapsed(ref, repoPath));
+        }
       case 'toggleFileView':
         c.read(fileViewVisibleProvider.notifier).toggle();
       case 'toggleDashboard':

@@ -59,3 +59,25 @@ WorkspacePreferencesBinding watchWorkspacePreferences({
         };
   return (preferences: preferences, onChanged: onChanged);
 }
+
+/// Flips the repository's navigator between collapsed and shown, for the
+/// global command and its View-menu item (MADR 0066). The pages read the same
+/// record, so the rail or the pane appears on the next frame.
+///
+/// A session with no repository identity (disconnected, a widget test) has
+/// nowhere to persist, so this is a no-op rather than a write to a key that
+/// would never be read back.
+Future<void> toggleNavigatorCollapsed(WidgetRef ref, String repositoryPath) async {
+  final identity = await ref.read(
+    repositoryUiIdentityProvider(repositoryPath).future,
+  );
+  if (identity == null) return;
+  final current = await ref.read(
+    repositoryWorkspacePrefsProvider(repositoryPath).future,
+  );
+  await saveRepositoryWorkspacePrefs(
+    identity: identity,
+    next: current.copyWith(navigatorCollapsed: !current.navigatorCollapsed),
+  );
+  ref.invalidate(repositoryWorkspacePrefsProvider(repositoryPath));
+}

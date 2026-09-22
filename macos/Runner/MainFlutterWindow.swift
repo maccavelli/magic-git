@@ -17,6 +17,7 @@ class MainFlutterWindow: NSWindow {
   private var willCloseObserver: NSObjectProtocol?
   private var showOutputItem: NSMenuItem?
   private var showFileItem: NSMenuItem?
+  private var showNavigatorItem: NSMenuItem?
   private var dashboardItem: NSMenuItem?
   private var recoveryItem: NSMenuItem?
 
@@ -193,6 +194,11 @@ class MainFlutterWindow: NSWindow {
       case "setFileViewChecked":
         if let checked = call.arguments as? Bool {
           self?.showFileItem?.state = checked ? .on : .off
+        }
+        result(nil)
+      case "setNavigatorChecked":
+        if let checked = call.arguments as? Bool {
+          self?.showNavigatorItem?.state = checked ? .on : .off
         }
         result(nil)
       case "setDashboardChecked":
@@ -428,6 +434,12 @@ class MainFlutterWindow: NSWindow {
     self.showFileItem = addToggleItem(
       to: viewMenu, title: "Show File View", key: "e",
       action: #selector(toggleFileView(_:)), separatorBefore: false)
+    // The workspace's left pane — the commit list, branch tree or stash
+    // list. Collapsed, it used to have no way back (MADR 0066).
+    self.showNavigatorItem = addToggleItem(
+      to: viewMenu, title: "Show Navigator", key: "n",
+      action: #selector(toggleNavigator(_:)), separatorBefore: false,
+      modifiers: [.command, .option])
     self.dashboardItem = addToggleItem(
       to: viewMenu, title: "Show Dashboard View", key: "d",
       action: #selector(toggleDashboard(_:)), separatorBefore: false)
@@ -490,7 +502,8 @@ class MainFlutterWindow: NSWindow {
   // wired to `action`.
   private func addToggleItem(
     to menu: NSMenu, title: String, key: String, action: Selector,
-    separatorBefore: Bool
+    separatorBefore: Bool,
+    modifiers: NSEvent.ModifierFlags = [.command, .shift]
   ) -> NSMenuItem {
     if let existing = menu.items.first(where: { $0.action == action }) {
       return existing
@@ -499,7 +512,7 @@ class MainFlutterWindow: NSWindow {
       menu.addItem(NSMenuItem.separator())
     }
     let item = NSMenuItem(title: title, action: action, keyEquivalent: key)
-    item.keyEquivalentModifierMask = [.command, .shift]
+    item.keyEquivalentModifierMask = modifiers
     item.target = self
     item.state = .off
     menu.addItem(item)
@@ -543,6 +556,7 @@ class MainFlutterWindow: NSWindow {
     }
     apply(showOutputItem, "global.toggleOutput")
     apply(showFileItem, "global.toggleFileView")
+    apply(showNavigatorItem, "global.toggleNavigator")
     apply(dashboardItem, "global.toggleDashboard")
     apply(recoveryItem, "global.toggleRecovery")
     if wasSuppressed { setKeyEquivalentsSuppressed(true) }
@@ -765,6 +779,10 @@ class MainFlutterWindow: NSWindow {
 
   @objc private func toggleFileView(_ sender: Any?) {
     menuChannel?.invokeMethod("toggleFileView", arguments: nil)
+  }
+
+  @objc private func toggleNavigator(_ sender: Any?) {
+    menuChannel?.invokeMethod("toggleNavigator", arguments: nil)
   }
 
   @objc private func toggleDashboard(_ sender: Any?) {

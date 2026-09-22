@@ -100,7 +100,8 @@ Each phase ends with `flutter analyze`, the phase's tests, and one commit
      identity (disconnected, tests) is a no-op.
 2.2. **`keymap.dart`:** `KeymapAction(id: 'global.toggleNavigator', label: 'Toggle Navigator',
      category: KeymapCategory.global, defaultBindings: [KeyBinding.fromKey(LogicalKeyboardKey.keyN,
-     meta: true, shift: true)])`, beside the other view toggles.
+     meta: true, ~~shift~~ **alt**: true)])`, beside the other view toggles. ⌥⌘N, not ⇧⌘N — see
+     deviation D1 and MADR Amendment 0066.1.
 2.3. **`app_shell.dart`:** map `'global.toggleNavigator'` to
      `() => toggleNavigatorCollapsed(ref, repoPath)` when connected, null otherwise.
 2.4. **`tabs_host.dart`:** add `'global.toggleNavigator'` to `_viewShortcutIds`; handle
@@ -203,4 +204,43 @@ previous behaviour, and any repository whose navigator was revealed simply stays
     test/workspace_golden_test.dart test/workspace_accessibility_test.dart`: `00:02 +71: All
     tests passed!`, 0 `[E]` — **the 48 goldens pass unchanged and were not regenerated** (AC6).
   * `flutter test test/workspace_navigator_reveal_test.dart`: `+4 -1` — all four rail cases
-    pass; the remaining failure is the ⇧⌘N case, which is Phase 2.
+    pass; the remaining failure is the command case, which is Phase 2.
+* **D1 (2026-09-22, deviation, Phase 2): ⇧⌘N is already taken, and the MADR said it was free.**
+  * **Evidence.** `lib/core/settings/keymap.dart:527-532` binds ⇧⌘N to `history.branchFrom`
+    ("Branch from selected commit") and predates this work — the file was untouched when the
+    collision was found. A sweep of every default binding (a scratch script parsing
+    `KeymapAction` blocks) printed the whole table: the existing shared chords are `⌘F`, `⌘N`,
+    `⌥⌘A` and `⌥⌘R`, each between panels that are never active together — unlike a **global**
+    command, which would be live on History alongside `history.branchFrom`, with the native
+    menu's key equivalent beating Flutter's handler.
+  * **Resolutions offered:** ⌥⌘N (free, and the modifier the app's other view toggles use);
+    ship unbound; or move `history.branchFrom`.
+  * **Decision (maintainer, 2026-09-22): ⌥⌘N.** Recorded as MADR Amendment 0066.1. Step 2.2
+    above is struck through and corrected; `addToggleItem` gains a `modifiers` parameter
+    (default ⇧⌘, so no other item changes) and the navigator item passes `[.command, .option]`.
+  * **A second, smaller deviation, resolved in passing.** A first attempt at the help-book edit
+    used a script that fell back to rewriting the whole document, which reflowed unrelated
+    `shortcuts` arrays (+317/−64, then +71/−342 when "fixed"). `macos/Runner/help_book.json`
+    was restored with `git show HEAD:… > …` — never `git checkout` — and the three edits
+    re-applied as anchored text splices, leaving a 3-line diff. The lesson is in the record
+    because the first script silently passed its own assertions.
+* **Phase 2 (2026-09-22).** `toggleNavigatorCollapsed` in `workspace_preferences_binding.dart`
+  (identity → record → flipped save → invalidate; a session with no identity is a no-op);
+  `global.toggleNavigator` in `keymap.dart` bound ⌥⌘N; the handler in `app_shell.dart`;
+  `_viewShortcutIds`, the `toggleNavigator` menu case and a repo-keyed `_navigatorSub` that
+  pushes `setNavigatorChecked` in `tabs_host.dart`; five mirrored sites in
+  `MainFlutterWindow.swift` (the stored item, the checkmark case, the installation with
+  `modifiers: [.command, .option]`, the key-equivalent sync, the action); the help book's
+  inventory, workspace sentence and catalog entry.
+  * **A third small deviation:** the shell test could not exercise the command, because
+    `toggleNavigatorCollapsed` needs a repository identity and a widget test resolves none, so
+    the toggle was correctly doing nothing. The test now overrides
+    `repositoryUiIdentityProvider('/srv/repo')` with a real `RepositoryUiIdentity.ssh`, which
+    makes it exercise the true save → invalidate → reload path rather than a stub. No
+    production change; the no-op for an identity-less session is deliberate and stays.
+  * **A guard for D1 was added** to the test file: ⇧⌘N on History must **not** reveal the rail,
+    so a future rebind cannot quietly take History's chord.
+  * `flutter analyze`: `No issues found! (ran in 4.6s)`.
+    `flutter test test/workspace_navigator_reveal_test.dart`: `00:01 +6: All tests passed!`.
+    `flutter test test/help_book_json_test.dart test/chrome_correctness_test.dart
+    test/keymap_test.dart test/tabs_host_test.dart`: `00:02 +51: All tests passed!`, 0 `[E]`.

@@ -35,6 +35,7 @@ import 'common/undo_toast.dart';
 import 'common/workspace_focus.dart';
 import 'common/workspace_focus_order.dart';
 import 'common/workspace_navigation.dart';
+import 'common/workspace_preferences_binding.dart';
 import 'connection/connection_landing.dart';
 import 'dashboard/dashboard_sheet.dart';
 import 'dnd/drop_registry.dart';
@@ -913,6 +914,13 @@ class _AppShellState extends ConsumerState<AppShell> {
       'global.toggleOutput': () =>
           ref.read(outputLogProvider.notifier).toggle(),
       'global.toggleSidebar': _toggleSidebar,
+      // Collapsing is a per-repository workspace preference, so this needs a
+      // repository — `connected` already implies one (MADR 0066).
+      'global.toggleNavigator': connected
+          ? () => unawaited(
+              toggleNavigatorCollapsed(ref, connection.repoPath!),
+            )
+          : null,
       'global.toggleFileView': () =>
           ref.read(fileViewVisibleProvider.notifier).toggle(),
       'global.toggleDashboard': () =>

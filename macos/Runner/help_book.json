@@ -474,7 +474,7 @@
           "sections": [
             {
               "type": "paragraph",
-              "text": "File View is View ▸ Show File View (⇧⌘E). It is on by default but hidden until the canvas is at least 1200 px wide unless you Pin file view open. Hide and Collapse all sit on the Files header. There is no Changes | Files switch — the change list stays in the navigator and the tree is this third pane."
+              "text": "File View is View ▸ Show File View (⇧⌘E). The workspace's left pane — the commit list, branch tree or stash list — is View ▸ Show Navigator (⌥⌘N); collapsed (as the Minimal preset leaves it), it shows a narrow rail at the left edge naming the pane, and clicking the rail brings it back. It is on by default but hidden until the canvas is at least 1200 px wide unless you Pin file view open. Hide and Collapse all sit on the Files header. There is no Changes | Files switch — the change list stays in the navigator and the tree is this third pane."
             },
             {
               "type": "heading",
@@ -1933,6 +1933,7 @@
             { "label": "Switch to Worktrees", "keys": "⌘6", "actionId": "global.panel6" },
             { "label": "Toggle Output View", "keys": "⇧⌘O", "actionId": "global.toggleOutput" },
             { "label": "Toggle File View", "keys": "⇧⌘E", "actionId": "global.toggleFileView" },
+            { "label": "Toggle Navigator", "keys": "⌥⌘N", "actionId": "global.toggleNavigator" },
             { "label": "Toggle Dashboard", "keys": "⇧⌘D", "actionId": "global.toggleDashboard" },
             { "label": "Toggle Recovery", "keys": "⇧⌘U", "actionId": "global.toggleRecovery" },
             { "label": "Open History in New Window", "keys": "⇧⌘H", "actionId": "global.openHistoryWindow" },
@@ -2004,7 +2005,7 @@
                 "Stash — Stash with Message…, Apply Stash, Pop Stash, Drop Stash…, Apply Latest Stash, Pop Latest Stash, Clear All Stashes….",
                 "Forge — New Issue…, New Pull Request…, New Merge Request…, Approve, Approve Merge Request, Merge Pull Request…, Merge Merge Request…, Cancel Auto-merge, Re-run Failed Jobs, Retry Pipeline.",
                 "Worktree — Add Worktree…, Open Worktree, Lock Worktree, Unlock Worktree, Move Worktree…, Repair Worktree, Repair All Worktree Links, Prune Stale Worktrees, Remove Worktree….",
-                "View — Show Output View, Toggle Sidebar, Show File View, Show Dashboard View, Show Recovery View, Open History in New Window, Refresh, Command Palette, Focus Navigator, Focus Canvas, Focus Inspector (unused), Focus Task Dock, Focus Activity.",
+                "View — Show Output View, Toggle Sidebar, Show File View, Show Navigator, Show Dashboard View, Show Recovery View, Open History in New Window, Refresh, Command Palette, Focus Navigator, Focus Canvas, Focus Inspector (unused), Focus Task Dock, Focus Activity.",
                 "Help — Support & Help."
               ]
             },

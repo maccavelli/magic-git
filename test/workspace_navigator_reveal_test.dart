@@ -4,7 +4,7 @@
 // the pane as a zero-width box with no child — on History that is the commit
 // list, so the page looked broken and Refresh looked dead, with nothing on
 // screen to undo it. These tests pin the two ways back: the reveal rail, and
-// the ⇧⌘N command. They assert the rendered pane, not the preference, which is
+// the ⌥⌘N command. They assert the rendered pane, not the preference, which is
 // what the earlier tests checked and why nobody noticed the pane was
 // unreachable.
 
@@ -16,6 +16,7 @@ import 'package:macos_ui/macos_ui.dart';
 import 'package:remote_magic_git/core/git/watch_event.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/core/settings/repository_workspace_prefs.dart';
+import 'package:remote_magic_git/core/storage/repository_ui_identity.dart';
 import 'package:remote_magic_git/features/app_shell.dart';
 import 'package:remote_magic_git/features/common/adaptive_workspace_layout.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -85,6 +86,16 @@ Future<void> _pumpConnectedShell(WidgetTester tester, Size size) async {
         ).overrideWith((ref) => const Stream<RepoWatchEvent>.empty()),
         savedConnectionsProvider.overrideWith((ref) async => const []),
         savedLocalReposProvider.overrideWith((ref) async => const []),
+        // The command persists through the repository's workspace record, and
+        // that record is keyed on an identity a widget test has no real
+        // repository to resolve. Supplying one lets the test exercise the
+        // real save → invalidate → reload path rather than a stub.
+        repositoryUiIdentityProvider('/srv/repo').overrideWith(
+          (ref) async => RepositoryUiIdentity.ssh(
+            connectionId: 'test-connection',
+            gitCommonDir: '/srv/repo/.git',
+          ),
+        ),
       ],
       child: const MacosApp(
         debugShowCheckedModeBanner: false,
@@ -101,10 +112,13 @@ Future<void> _chord(
   WidgetTester tester,
   LogicalKeyboardKey key, {
   bool shift = false,
+  bool alt = false,
 }) async {
   await tester.sendKeyDownEvent(LogicalKeyboardKey.metaLeft);
   if (shift) await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+  if (alt) await tester.sendKeyDownEvent(LogicalKeyboardKey.altLeft);
   await tester.sendKeyEvent(key);
+  if (alt) await tester.sendKeyUpEvent(LogicalKeyboardKey.altLeft);
   if (shift) await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
   await tester.sendKeyUpEvent(LogicalKeyboardKey.metaLeft);
   await tester.pump();
@@ -190,23 +204,40 @@ void main() {
     );
   });
 
-  testWidgets('⇧⌘N hides the navigator and shows it again', (tester) async {
+  // ⌥⌘N, not ⇧⌘N: that chord is History's "Branch from selected commit", and
+  // this command is global (MADR Amendment 0066.1).
+  testWidgets('⌥⌘N hides the navigator and shows it again', (tester) async {
     await _pumpConnectedShell(tester, const Size(1400, 900));
     await _chord(tester, LogicalKeyboardKey.digit2); // History
     expect(find.byKey(_railKey), findsNothing, reason: 'starts expanded');
 
-    await _chord(tester, LogicalKeyboardKey.keyN, shift: true);
+    await _chord(tester, LogicalKeyboardKey.keyN, alt: true);
     expect(
       find.byKey(_railKey),
       findsOneWidget,
-      reason: '⇧⌘N collapsed the navigator, and the rail says so',
+      reason: '⌥⌘N collapsed the navigator, and the rail says so',
     );
+
+    await _chord(tester, LogicalKeyboardKey.keyN, alt: true);
+    expect(
+      find.byKey(_railKey),
+      findsNothing,
+      reason: '⌥⌘N brought the navigator back',
+    );
+    await _unmount(tester);
+  });
+
+  // The chord the MADR first claimed was free belongs to History, and must
+  // still reach it rather than the new global command (deviation D1).
+  testWidgets('⇧⌘N stays with History, not the navigator', (tester) async {
+    await _pumpConnectedShell(tester, const Size(1400, 900));
+    await _chord(tester, LogicalKeyboardKey.digit2);
 
     await _chord(tester, LogicalKeyboardKey.keyN, shift: true);
     expect(
       find.byKey(_railKey),
       findsNothing,
-      reason: '⇧⌘N brought the navigator back',
+      reason: '⇧⌘N is Branch from selected commit, not Toggle Navigator',
     );
     await _unmount(tester);
   });
