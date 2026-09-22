@@ -1154,8 +1154,13 @@ class _AppShellState extends ConsumerState<AppShell> {
   Widget _pages(String repoPath, int pageIndex, Set<int> visitedPages) {
     final connection = ref.read(connectionProvider);
     final key = WorkspaceSessionKey(repoPath, connection.sessionEpoch);
-    final navigation = ref.watch(workspaceNavigationProvider(key));
-    if (navigation.locations.isEmpty && connection.sessionEpoch > 0) {
+    // Only emptiness matters here. Watching the whole state rebuilt the shell
+    // — and every page in the IndexedStack below — on every navigation write,
+    // which is half of the per-frame loop 0065-MADR removed.
+    final navigationEmpty = ref.watch(
+      workspaceNavigationProvider(key).select((s) => s.locations.isEmpty),
+    );
+    if (navigationEmpty && connection.sessionEpoch > 0) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         ref
             .read(workspaceNavigationProvider(key).notifier)

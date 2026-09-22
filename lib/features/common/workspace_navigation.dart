@@ -52,15 +52,6 @@ class WorkspaceNavigationHistory extends Notifier<WorkspaceNavigationState> {
   final WorkspaceSessionKey session;
   static const int capacity = 50;
 
-  /// While a restore/reveal is settling, the destination screen still
-  /// re-reports its pre-restore selection from post-frame callbacks it
-  /// scheduled with build-time values — recording that echo would truncate
-  /// the forward stack and undo the Back the user just pressed. Only visits
-  /// EQUAL to the pre-restore current are suppressed; any other visit (a
-  /// genuinely new selection, the applied restore itself) clears the guard
-  /// and records normally.
-  WorkspaceFocus? _staleEcho;
-
   @override
   WorkspaceNavigationState build() => const WorkspaceNavigationState();
 
@@ -69,12 +60,9 @@ class WorkspaceNavigationHistory extends Notifier<WorkspaceNavigationState> {
         location.sessionEpoch != session.sessionEpoch) {
       return;
     }
-    if (_staleEcho != null) {
-      if (location == _staleEcho && state.current != location) {
-        return; // the pre-restore selection re-reporting itself
-      }
-      _staleEcho = null;
-    }
+    // A panel records a location once per change (WorkspaceLocationRecorder),
+    // so the only repeat that reaches here is the restored location itself,
+    // re-recorded by its adapter — a no-op against the current entry.
     if (state.current == location) return;
     var entries = state.index < state.locations.length - 1
         ? state.locations.sublist(0, state.index + 1)
@@ -94,10 +82,8 @@ class WorkspaceNavigationHistory extends Notifier<WorkspaceNavigationState> {
   /// "open this entity" path (0009 H3); plain [visit] only records — the
   /// sidebar's `panel:N` visits must never become pending selections.
   void reveal(WorkspaceFocus location) {
-    final echo = state.current;
     visit(location);
     if (state.current == location) {
-      _staleEcho = echo == location ? null : echo;
       state = state.copyWith(pending: location, clearUnavailable: true);
     }
   }
@@ -108,7 +94,6 @@ class WorkspaceNavigationHistory extends Notifier<WorkspaceNavigationState> {
   WorkspaceFocus? _restore(int index) {
     if (index < 0 || index >= state.locations.length) return null;
     final location = state.locations[index];
-    _staleEcho = state.current == location ? null : state.current;
     state = state.copyWith(
       index: index,
       pending: location,
@@ -131,9 +116,8 @@ class WorkspaceNavigationHistory extends Notifier<WorkspaceNavigationState> {
   }
 
   void markUnavailable(WorkspaceFocus location) {
-    // _staleEcho stays: the screen still re-reports its pre-restore
-    // selection, and recording that echo would instantly wipe the
-    // unavailable notice (visit() builds a fresh state).
+    // The restore is over (pending cleared) and the chrome can say why: the
+    // notice survives until the next visit builds a fresh state.
     state = state.copyWith(clearPending: true, unavailable: location);
   }
 }

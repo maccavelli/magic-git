@@ -100,33 +100,36 @@ void main() {
     expect(container.read(workspaceNavigationProvider(_key)).pending, isNull);
   });
 
-  // The destination screen re-reports its pre-restore selection from a
-  // post-frame callback scheduled with build-time values. Recording that
-  // echo would truncate the forward stack and undo the Back — only the
-  // exact echo is suppressed; a genuinely new visit records normally.
-  test('a restore ignores the stale echo but not a new visit', () {
+  // 0065: panels record a location once per change, so after a Back the only
+  // repeat the notifier sees is the adapter re-recording the restored
+  // location — a no-op that keeps the forward stack. A new selection still
+  // truncates it.
+  test('a restore keeps forward through the adapter\'s re-record', () {
     final container = ProviderContainer.test();
     final history = container.read(workspaceNavigationProvider(_key).notifier);
     history.visit(_location('a'));
     history.visit(_location('b'));
 
     expect(history.back(), _location('a'));
-    // The screen (still showing b) echoes b — must not re-advance history.
-    history.visit(_location('b'));
-    var state = container.read(workspaceNavigationProvider(_key));
-    expect(state.current, _location('a'));
-    expect(state.canForward, isTrue);
-
-    // The adapter applied the restore; the screen now visits a — a no-op.
     history.visit(_location('a'));
-    state = container.read(workspaceNavigationProvider(_key));
+    var state = container.read(workspaceNavigationProvider(_key));
     expect(state.current, _location('a'));
     expect(state.canForward, isTrue, reason: 'b is still ahead');
 
-    // A genuinely new selection truncates forward, exactly as before.
     history.visit(_location('c'));
     state = container.read(workspaceNavigationProvider(_key));
     expect(state.current, _location('c'));
     expect(state.canForward, isFalse);
+  });
+
+  test('revealing the current location adds no entry but marks it pending', () {
+    final container = ProviderContainer.test();
+    final history = container.read(workspaceNavigationProvider(_key).notifier);
+    history.visit(_location('a', panel: 1));
+
+    history.reveal(_location('a', panel: 1));
+    final state = container.read(workspaceNavigationProvider(_key));
+    expect(state.locations, [_location('a', panel: 1)]);
+    expect(state.pending, _location('a', panel: 1));
   });
 }

@@ -283,3 +283,14 @@ shape.
     panel's `PanelShortcuts` are empty while inactive, so the inactive case proves its selection
     by the canvas placeholder ("Select a commit") disappearing, not by a handler. Both earlier
     runs failed on those harness errors, not on the assertion, and are not evidence.
+* **Phase 1 (2026-09-22).** As written: `workspace_location_recorder.dart` added with the
+  plan's code; `_staleEcho`, its `visit` guard, its `reveal` and `_restore` assignments and the
+  `markUnavailable` comment removed from `workspace_navigation.dart`; `AppShell._pages` watches
+  `select((s) => s.locations.isEmpty)`. In `test/workspace_navigation_test.dart` the stale-echo
+  test is replaced by "a restore keeps forward through the adapter's re-record" (Back, the
+  adapter re-records the restored location, forward survives, a new visit truncates) and
+  "revealing the current location adds no entry but marks it pending" is added — step 1.4's
+  read of the existing reveal test found it covers only a *new* location.
+  `flutter analyze`: `No issues found! (ran in 5.6s)`. `dart format --set-exit-if-changed` on the
+  four files: `0 changed`. `flutter test test/workspace_navigation_test.dart
+  test/app_shell_test.dart test/app_shell_undo_test.dart`: `+19: All tests passed!`, 0 `[E]`.
