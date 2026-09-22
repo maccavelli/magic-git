@@ -564,6 +564,63 @@ All of these runs used scratch clones of `21d32bc`, never this tree.
   * **Incident.** A rejected tool call partly ran at 18:18. It wrote a first copy of the driver,
     stopped the executor's spinning build (pid 65549) and launched one build (pid 5653). It made
     no clicks or keystrokes (none in `frontlog.txt`), and no Magic Git process remains.
+* **D6 (2026-09-22, deviation, after Phase 4 shipped).** The maintainer reported, on the device:
+  with the File view open on Repository, the Output pane runs across the whole page and cuts off
+  the bottom of the file tree.
+  * **Evidence.** `a412fbe` (Phase 4, F3) removed `OutputView` from the Repository page's centre
+    column and docked it in `OutputViewHost` under the whole page stack
+    (`lib/features/common/output_view.dart`, `OutputViewHost.build`), and rewrote the
+    `repo_status_view.dart` pane-priority comment to say so. MADR 0064 listed this under
+    Consequences as a Bad it accepted. It is not a pre-existing defect: before `a412fbe` the
+    Output view was the last child of `centerColumn`, beside the File view.
+  * **Decision (maintainer, 2026-09-22):** restore the File view's full height and add a
+    regression harness. Recorded as MADR Amendment 0064.1, which supersedes F3's layout clause
+    only.
+  * **Steps.**
+    1. In a scratch clone of `b9cecf3`, add the geometry tests to
+       `test/output_view_placement_test.dart` and run them: they must fail (Output under the File
+       view; height not shared).
+    2. `output_view.dart`: `outputViewHeightProvider` (`Notifier<double?>`) holds the dragged
+       height; `OutputView` reads and writes it. `OutputViewHost` gains `dock` (default true).
+    3. `repo_status_view.dart`: `hostsOutputView` (default false); `centerColumn` ends with
+       `OutputView` when `hostsOutputView && widget.isActive && outputVisible`; the pane-priority
+       comment is restored to its pre-0064 rule, citing Amendment 0064.1.
+    4. `app_shell.dart`: `OutputViewHost(dock: pageIndex != 0, …)` and
+       `RepoStatusView(hostsOutputView: true, …)`. `secondary_window_main.dart`: the detached
+       window passes `dock: false` and `hostsOutputView: true`.
+    5. `macos/Runner/help_book.json`: the Output paragraph names the Repository placement.
+    6. Verify: the new tests pass; the existing twelve toggle tests pass unchanged (exactly one
+       Output view on every page, at 1400×900 and 640×480); `flutter analyze`; the full suite.
+  * **Files added to scope:** `lib/features/common/output_view.dart`,
+    `lib/features/repository/repo_status_view.dart`, `lib/features/app_shell.dart`,
+    `lib/features/window/secondary_window_main.dart`, `macos/Runner/help_book.json`,
+    `test/output_view_placement_test.dart`.
+  * **Execution (2026-09-22).**
+    * **Step 1, seen to fail first** (scratch clone of `b9cecf3`, only the test file copied
+      in): the Repository case failed with `Expected: 1000.0 (±1.0)` / `Actual:
+      <833.3333333333334>` on "the File view runs as low as the docked Output view" — the file
+      tree stopped 167 pt short of the dock, the reported defect. Two harness errors were fixed
+      on the way and are not evidence: comparing the File view's bottom with the *page's*
+      bottom passed on the broken tree (the dock shortens the whole page), so it now compares
+      with the Output view's bottom; and the span check measured `BranchesView`, which lays out
+      815 pt wide at 1800×1000, so it now measures the `OutputViewHost` area.
+    * **Steps 2–5 as written.** `hostsOutputView` and `dock` default to the pre-amendment
+      behaviour for every other caller; the nested worktree Repository keeps
+      `hostsOutputView: false`, so the Worktrees page still shows exactly one view (the
+      existing 1400×900 toggle test for it passes).
+    * **The guard tests were each seen to fail** (scratch clone with the fixed files, one
+      mutation at a time, anchored and asserted): shell docking on Repository too → `Found 2
+      widgets with type "OutputView"`; Repository's view lifted 120 pt off the page bottom →
+      `Expected: 880.0 … Actual: <1000.0>`; shell dock 300 pt narrower than the page area →
+      `Expected: 1560.0 … Actual: <1260.0>`; height kept per instance → `Expected:
+      246.67 … Actual: <166.67>`. 4 of 4 caught; the unmutated baseline passes.
+    * **Placement tests on the fixed tree:** `00:02 +11: All tests passed!` (eight toggle
+      tests, three geometry tests). `flutter analyze`: `No issues found! (ran in 6.1s)`;
+      `dart format --set-exit-if-changed` on the five code files: clean. Full suite: `02:48
+      +4319 ~3: All tests passed!`, `[E]` count 0 (+3 over `b9cecf3`, the three geometry
+      tests).
+    * **Not yet done:** a look at it on the device by the maintainer (File view open,
+      Output toggled, on Repository and one other page).
 * **P-1 (2026-09-21, planning).** The first four patches (F4, F3, F1, F2), stacked in a fresh clone
   of `21d32bc`:
   * each `git apply --index` exited 0;

@@ -28,6 +28,7 @@ import '../common/escape_dismissible.dart';
 import '../common/image_diff_view.dart';
 import '../common/inline_action_button.dart';
 import '../common/list_keyboard_nav.dart';
+import '../common/output_view.dart';
 import '../common/panel_shortcuts.dart';
 import '../common/pending_op_banner.dart';
 import '../common/repository_context.dart';
@@ -87,10 +88,18 @@ class RepoStatusView extends ConsumerStatefulWidget {
   /// its keyboard shortcuts must go quiet rather than fire in the background.
   final bool isActive;
 
+  /// Whether this page docks the Output view in its centre column, beside
+  /// the File view, while it is active. True where the page is the window's
+  /// Repository page (the shell, the detached window), whose Output host then
+  /// stands down; false for the Repository nested in a worktree tab, which
+  /// leaves the view to the shell (MADR Amendment 0064.1).
+  final bool hostsOutputView;
+
   const RepoStatusView({
     super.key,
     required this.repoPath,
     this.isActive = true,
+    this.hostsOutputView = false,
   });
 
   @override
@@ -1575,6 +1584,10 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
       connectionProvider.select((c) => c.warning),
     );
     final fileVisible = ref.watch(fileViewVisibleProvider);
+    final outputVisible =
+        widget.hostsOutputView &&
+        widget.isActive &&
+        ref.watch(outputLogProvider.select((s) => s.visible));
 
     final status = statusAsync.value;
     final connection = ref.watch(connectionProvider);
@@ -1870,12 +1883,12 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
             ),
           );
           // Pane priority: a right pane (the file view) is the full-height "3rd
-          // panel" of this page and takes precedence over this page's
-          // horizontal panes, which live inside the center "main" column, so
-          // they're clamped to its width and never extend under (or clip) the
-          // right pane. The Output view is not one of them: it belongs to the
-          // shell, below every page (MADR 0064 F3), so it spans the full width
-          // beneath this whole page, File view included.
+          // panel" and takes precedence over any horizontal pane. Horizontal
+          // panes — including the Output view — live inside the center "main"
+          // column, so they're clamped to its width and never extend under (or
+          // clip) the right pane. The shell's Output host stands down while
+          // this page is active (MADR Amendment 0064.1);
+          // output_view_placement_test.dart pins the geometry.
           final centerColumn = Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
@@ -1895,6 +1908,7 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
                   composerController,
                   policyAdvisory: commitPolicyAdvisory,
                 ),
+              if (outputVisible) OutputView(maxHeight: constraints.maxHeight),
             ],
           );
           final canvas = LayoutBuilder(

@@ -1135,12 +1135,15 @@ class _AppShellState extends ConsumerState<AppShell> {
           // host is healthy) so a gap in the environment is visible wherever
           // the user is, not just in Settings. The Output view sits below
           // every page for the same reason (MADR 0064 F3): its toggle is
-          // global, so the view it toggles must be too.
+          // global, so the view it toggles must be too. Repository (page 0)
+          // docks it in its own centre column instead, beside the full-height
+          // File view, so the host stands down there (Amendment 0064.1).
           return Column(
             children: [
               const ToolHealthBanner(),
               Expanded(
                 child: OutputViewHost(
+                  dock: pageIndex != 0,
                   child: _pages(repoPath, pageIndex, visitedPages),
                 ),
               ),
@@ -1182,7 +1185,11 @@ class _AppShellState extends ConsumerState<AppShell> {
             // Back/Forward are no longer handed down: the context bar reads
             // the session history itself, which is what gives all six panels
             // working navigation instead of only this one.
-            ? RepoStatusView(repoPath: repoPath, isActive: pageIndex == 0)
+            ? RepoStatusView(
+                repoPath: repoPath,
+                isActive: pageIndex == 0,
+                hostsOutputView: true,
+              )
             : const SizedBox.shrink(),
         visitedPages.contains(1)
             ? HistoryView(

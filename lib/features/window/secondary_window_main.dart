@@ -1099,13 +1099,16 @@ class _SecondaryWindowShellState extends ConsumerState<SecondaryWindowShell>
       repoPath: repoPath,
       isActive: true,
     ),
-    // This window has no AppShell, so it hosts its own Output view — the
-    // status view no longer mounts one (MADR 0064 F3).
+    // This window has no AppShell. Its only page is Repository, which docks
+    // the Output view beside its File view (Amendment 0064.1); the host is
+    // kept for the Activity Center's reveal link, and does not dock.
     WindowKind.detachedRepo => OutputViewHost(
+      dock: false,
       child: RepoStatusView(
         key: ValueKey(repoPath),
         repoPath: repoPath,
         isActive: true,
+        hostsOutputView: true,
       ),
     ),
   };

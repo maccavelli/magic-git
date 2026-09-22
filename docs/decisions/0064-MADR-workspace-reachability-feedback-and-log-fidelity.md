@@ -707,3 +707,36 @@ Each automated check must be seen to fail on the unmodified tree before it is tr
   hover.
 * The width classes change. F1's tests run at 600 and 1000 px against the constants in
   `repository_workspace_models.dart`.
+
+## Amendment 0064.1 (2026-09-22): the File view keeps the full height on Repository
+
+F3 above accepted, as a stated Bad consequence, that the shell-owned Output pane would span the
+full width of the Repository page, under the File view's right-hand pane. On the device that
+consequence reads as a regression: with the File view open, the Output pane cuts the bottom off
+the file tree, which breaks the rule the Repository layout has kept since the initial commit —
+the File view is the page's full-height third panel, and every horizontal pane lives in the centre
+column, clamped to its width. The maintainer rejected the consequence on 2026-09-22.
+
+**Amended decision.** The Output view stays one command with one visible effect on every page
+(F3's intent is unchanged), but **where it docks** depends on the page:
+
+* **Repository** (in the shell, and in the detached repository window) docks it at the bottom of
+  its centre column, beside the File view, as it did before 0064. `RepoStatusView` gains
+  `hostsOutputView` (default false); the two places that own a Repository page pass true, and it
+  mounts the view only while it is the active page. The nested Repository inside a worktree tab
+  keeps the default, so the Worktrees page never shows two.
+* **Every other page** keeps the shell's full-width dock. `OutputViewHost` gains `dock`
+  (default true); `AppShell` passes `pageIndex != 0`, and the detached window passes false.
+  The host still publishes `revealerOf` either way, so the Activity Center link is unchanged.
+* **The height is shared.** The user-dragged height moves from `_OutputViewState` into
+  `outputViewHeightProvider`, so the two mount points show the same height; F3's "one instance
+  keeps its height across pages" still holds in effect.
+* **The help book** says "below every page, and on Repository below the changes list, beside the
+  File view".
+
+**Confirmation added.** `test/output_view_placement_test.dart` gains geometry tests on a
+connected `AppShell`: on Repository with the File view open, the File view's bottom edge is the
+page's bottom edge and the Output view ends at or left of the File view's left edge; on History
+the Output view spans the page's full width; a height dragged on History is the height on
+Repository. They were seen to fail on the unamended tree (0064-PLAN, deviation D6). The F3
+section above is not rewritten; this amendment supersedes its layout clause only.

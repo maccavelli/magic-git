@@ -8,7 +8,15 @@
 // AppShell with real key events only — ⌘1…⌘6 to change page, ⇧⌘O to toggle —
 // and assert on the rendered widget, not the provider, which is what every
 // earlier test checked and why the defect shipped green.
+//
+// MADR Amendment 0064.1: where it docks is the page's business. On
+// Repository the File view is the full-height third panel, so the Output view
+// sits at the bottom of the centre column beside it; everywhere else it spans
+// the page. The geometry tests below pin that, because the regression that
+// prompted them passed every toggle test above: the view was there, just in
+// the wrong place.
 
+import 'package:flutter/material.dart' show Icons;
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart' hide ConnectionState;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -21,6 +29,7 @@ import 'package:remote_magic_git/features/branches/branches_view.dart';
 import 'package:remote_magic_git/features/common/output_view.dart';
 import 'package:remote_magic_git/features/forge/forge_panel.dart';
 import 'package:remote_magic_git/features/history/history_view.dart';
+import 'package:remote_magic_git/features/repository/file_view.dart';
 import 'package:remote_magic_git/features/repository/repo_status_view.dart';
 import 'package:remote_magic_git/features/stash/stash_view.dart';
 import 'package:remote_magic_git/features/worktrees/worktrees_view.dart';
@@ -170,4 +179,93 @@ void main() {
       await _unmount(tester);
     });
   }
+
+  // Amendment 0064.1. Wide enough that the Repository canvas clears the File
+  // view's 1200 pt threshold, so the File view is actually beside the list.
+  const wide = Size(1800, 1000);
+
+  testWidgets('on Repository the File view keeps the full height and the '
+      'Output view sits beside it, not under it', (tester) async {
+    await _pumpConnectedShell(tester, wide);
+    await _chord(tester, _pageKeys[0]);
+
+    expect(find.byType(FileView), findsOneWidget, reason: 'File view open');
+    expect(find.byType(OutputView), findsOneWidget);
+    final page = tester.getRect(find.byType(RepoStatusView));
+    final files = tester.getRect(find.byType(FileView));
+    final output = tester.getRect(find.byType(OutputView));
+
+    // Measured against the Output view, not the page: under the regression
+    // the whole page is shortened by the dock, so "reaches the page's bottom"
+    // held while the file tree was cut off.
+    expect(
+      files.bottom,
+      moreOrLessEquals(output.bottom, epsilon: 1),
+      reason:
+          'the File view runs as low as the docked Output view — '
+          'nothing docks under it',
+    );
+    expect(
+      output.right,
+      lessThanOrEqualTo(files.left + 1),
+      reason: 'the Output view ends where the File view begins',
+    );
+    expect(
+      output.bottom,
+      moreOrLessEquals(page.bottom, epsilon: 1),
+      reason: 'the Output view is docked at the bottom of the page',
+    );
+    await _unmount(tester);
+  });
+
+  testWidgets('on every other page the Output view spans the page', (
+    tester,
+  ) async {
+    await _pumpConnectedShell(tester, wide);
+    // The host is the page area: a page's own widget may lay out narrower
+    // than it (Branches does at this size).
+    final area = tester.getRect(find.byType(OutputViewHost));
+    for (final index in const [1, 2, 3, 4, 5]) {
+      await _chord(tester, _pageKeys[index]);
+      final output = tester.getRect(find.byType(OutputView));
+      expect(
+        output.width,
+        moreOrLessEquals(area.width, epsilon: 1),
+        reason: 'full width on ${_pageNames[index]}',
+      );
+      expect(
+        output.bottom,
+        moreOrLessEquals(area.bottom, epsilon: 1),
+        reason: 'docked at the bottom on ${_pageNames[index]}',
+      );
+    }
+    await _unmount(tester);
+  });
+
+  testWidgets('a height dragged on one page is the height on Repository', (
+    tester,
+  ) async {
+    await _pumpConnectedShell(tester, wide);
+    await _chord(tester, _pageKeys[1]);
+    final before = tester.getSize(find.byType(OutputView)).height;
+
+    await tester.drag(
+      find.descendant(
+        of: find.byType(OutputView),
+        matching: find.byIcon(Icons.drag_handle),
+      ),
+      const Offset(0, -80),
+    );
+    await tester.pump();
+    final dragged = tester.getSize(find.byType(OutputView)).height;
+    expect(dragged, greaterThan(before + 40), reason: 'the drag resized it');
+
+    await _chord(tester, _pageKeys[0]);
+    expect(
+      tester.getSize(find.byType(OutputView)).height,
+      moreOrLessEquals(dragged, epsilon: 1),
+      reason: 'one height, wherever the view docks',
+    );
+    await _unmount(tester);
+  });
 }

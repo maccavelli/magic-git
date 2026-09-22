@@ -22,7 +22,13 @@ import 'tool_icon_button.dart';
 class OutputViewHost extends ConsumerWidget {
   final Widget child;
 
-  const OutputViewHost({super.key, required this.child});
+  /// Whether this host docks the view below [child]. False while the page in
+  /// [child] places the view itself: Repository docks it in its centre column,
+  /// beside the full-height File view (MADR Amendment 0064.1). The reveal
+  /// action is published either way.
+  final bool dock;
+
+  const OutputViewHost({super.key, required this.child, this.dock = true});
 
   /// Shows the Output view and scrolls it to [OperationId]'s first line, or
   /// null when no [OutputViewHost] is above [context].
@@ -45,12 +51,27 @@ class OutputViewHost extends ConsumerWidget {
             // Index 0 is always the child, so toggling the log never
             // remounts the pages above it.
             Expanded(child: child),
-            if (visible) OutputView(maxHeight: constraints.maxHeight),
+            if (dock && visible) OutputView(maxHeight: constraints.maxHeight),
           ],
         ),
       ),
     );
   }
+}
+
+/// The Output view's user-dragged height, null until the first drag (the view
+/// then defaults to 1/6 of its dock). Held here rather than in the view's
+/// State because the view docks in two places — the shell, and Repository's
+/// centre column — and one drag must hold in both (MADR Amendment 0064.1).
+final outputViewHeightProvider = NotifierProvider<OutputViewHeight, double?>(
+  OutputViewHeight.new,
+);
+
+class OutputViewHeight extends Notifier<double?> {
+  @override
+  double? build() => null;
+
+  void set(double height) => state = height;
 }
 
 class _OutputViewHostScope extends InheritedWidget {
@@ -84,8 +105,6 @@ class _OutputViewState extends ConsumerState<OutputView> {
   final ScrollController _scroll = ScrollController();
   // Stick to the tail unless the user has scrolled away.
   bool _stick = true;
-  // User-set height; null until first drag (defaults to 1/6 of the window).
-  double? _height;
 
   static const _mono = TextStyle(
     fontFamily: 'Menlo',
@@ -154,7 +173,7 @@ class _OutputViewState extends ConsumerState<OutputView> {
 
     final lines = ref.watch(outputLogProvider.select((s) => s.lines));
     final log = ref.read(outputLogProvider.notifier);
-    final height = (_height ?? widget.maxHeight / 6)
+    final height = (ref.watch(outputViewHeightProvider) ?? widget.maxHeight / 6)
         .clamp(_floor, _ceil)
         .toDouble();
 
@@ -174,11 +193,11 @@ class _OutputViewState extends ConsumerState<OutputView> {
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onVerticalDragUpdate: (d) {
-        setState(() {
-          final current = _height ?? widget.maxHeight / 6;
-          // Dragging up (negative dy) grows the panel.
-          _height = (current - d.delta.dy).clamp(_floor, _ceil).toDouble();
-        });
+        final heights = ref.read(outputViewHeightProvider.notifier);
+        final current =
+            ref.read(outputViewHeightProvider) ?? widget.maxHeight / 6;
+        // Dragging up (negative dy) grows the panel.
+        heights.set((current - d.delta.dy).clamp(_floor, _ceil).toDouble());
       },
       child: MouseRegion(
         cursor: SystemMouseCursors.resizeUpDown,
