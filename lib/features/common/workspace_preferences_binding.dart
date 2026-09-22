@@ -67,7 +67,10 @@ WorkspacePreferencesBinding watchWorkspacePreferences({
 /// A session with no repository identity (disconnected, a widget test) has
 /// nowhere to persist, so this is a no-op rather than a write to a key that
 /// would never be read back.
-Future<void> toggleNavigatorCollapsed(WidgetRef ref, String repositoryPath) async {
+Future<void> toggleNavigatorCollapsed(
+  WidgetRef ref,
+  String repositoryPath,
+) async {
   final identity = await ref.read(
     repositoryUiIdentityProvider(repositoryPath).future,
   );
