@@ -369,6 +369,201 @@ All of these runs used scratch clones of `21d32bc`, never this tree.
   * 6.3: `+26: All tests passed!`.
   * 6.4: format and analyze clean; `flutter test` `02:47 +4307 ~3: All tests passed!` =
     `N0 + 78`. All 8 embedded test hashes match Appendix A.
+* **Phase 7, in progress (2026-09-21, execution).**
+  * 7.1: the maintainer quit the installed app; `pgrep` exit 1. `build_macos.sh --unsigned`
+    `exit=0`, tree clean, `FLTEnableImpeller` `true`.
+  * 7.2: launcher `exit=0`, `Using the Impeller rendering backend (MetalSDF).`, `pid=27129`. The
+    window was moved from another display to (33, 52) with its size unchanged.
+  * **D1 compact History, window 900 pt: PASS.**
+    * A row click shows the diff with a "‹ Commits" bar.
+    * Esc, a clean ⌘[ (sent alone) and a click on the bar each return to the list, with the
+      previous row still selected.
+    * An earlier ⌘[ attempt was discarded as evidence: an unintended ⌘← went out before it.
+  * **The Output pane was visible on History and on Branches at 900 pt** (D3 observed in passing).
+* **D4 (2026-09-21, deviation, step 7.3 D1 Branches).**
+  * **First report: withdrawn.** It said clicking `main` or a tag doesn't open the compact
+    detail. That was an **executor measurement error**. Coordinates were read from thumbnails
+    whose *height* was the limiting dimension (650 × 700 for a 900 × 968 pt window), but were
+    converted with the width ratio, so every click landed 16–26 pt above its target.
+  * **Evidence for the error.** A sidebar click aimed at "History" landed on "Repository". Once
+    the ratio was corrected, every click reached its target.
+  * **A side finding** from the investigation (in `718a354`, headless): all row kinds open the
+    detail with mouse-kind taps. On the device, a synthetic click on an *inactive* Magic Git
+    window was dropped. That is unverified with a real mouse, outside 0064, and recorded for
+    separate follow-up.
+  * **Corrected on-device results at 900 pt.** Before every action Magic Git was confirmed
+    frontmost, and it was activated only when it wasn't (`front_click.py`; log `frontlog.txt`).
+    * Click `main` → detail with "‹ Branches". PASS.
+    * ⌘[ → list. PASS.
+    * Click tag `v3.1.0` → tag detail. PASS.
+    * Back bar → list with `v3.1.0` still highlighted. PASS.
+  * **New defect, reproduced on the device: Esc from the Branches detail fails when the action
+    just before opening it was a keyboard navigation.**
+    * After ⌘3 or ⌘[, then a click on `main`: Esc stayed on the detail, **3 of 3** times.
+    * After a back-bar *click*: Esc returned to the list, **2 of 2** times.
+    * ⌘[ always worked.
+  * **Why the tests missed it.** The committed compact test only does "tap, then Esc", which is
+    the path that works.
+  * **Resolution: an artifact of synthetic input. No app defect, no code change.**
+    * **Headless** (scratch clone of `718a354`): every natural sequence works on Branches and
+      History (⌘[ first, ⌘3 first, back-bar control). The symptom reproduces only when
+      `HardwareKeyboard` still believes ⌘ is held, which makes the modifier check in
+      `_onCompactCanvasKey` reject Esc.
+    * **On the device, synthetic input is inconsistent.**
+      * After a failed Esc, a standalone ⌘ tap then Esc returned to the list.
+      * But System Events ⌘[, then a ⌘ tap, then a click, then Esc failed 3 of 3 times.
+    * **The authoritative check:** the maintainer, with a **real keyboard and mouse** on the same
+      build, ran ⌘[ → click `main` → Esc. It **returned to the list**.
+  * **Gate procedure amended (not the code).**
+    * Mouse-driven checks and pixel measurements are executor-run. Menu *clicks* replace
+      keyboard shortcuts.
+    * Keyboard-sequence checks are maintainer-run with real keys, and recorded as such.
+* **D5 (2026-09-21, deviation, Phase 7).** The build under test (`718a354`, pid 27129) sat at
+  **~89% CPU** while its window was visible.
+  * **Evidence.**
+    * 9 samples over 30 s at 88–93%, with no child processes.
+    * `sample`: the `io.flutter.ui` thread spent about 64% of its time in
+      `Animator::BeginFrame` → Dart frame callbacks, so frames were being produced continuously.
+    * The same at a 900 pt and a 1659 pt window.
+    * The same with the Output view toggled off through the View menu.
+    * **0.0% when the window is minimised**, so the frames are driven by visible content.
+  * **Symptoms it plausibly explains.** Two frontmost-verified synthetic clicks on the sidebar's
+    "Worktrees" didn't navigate while the spin was on.
+  * **F1 layout code.** Its focus handoff runs only on the list-to-detail transition; no loop was
+    found by reading the code.
+  * **Diagnosis in progress.** An A/B build of the pre-0064 commit `21d32bc` in a scratch clone,
+    measured on the same fixture and page; then a bisect across the phase commits if needed.
+  * **App state changed by the executor.** Output view toggled off, then restored to ✓ before
+    quitting; window minimised, then restored.
+  * **Diagnosis so far.**
+    * **Not steady-state.** A fresh 0064 build (`718a354`) idles at 0% CPU on the landing,
+      Repository and Branches pages.
+    * **Pre-0064 control.** The pre-0064 build (`21d32bc`, scratch clone) stays at 0% through
+      the same steps, including a compact History commit selection, which showed the diff.
+    * **The 0064 build does spin, reproducibly, under the session's step sequence.**
+      * In one run it started during the Branches steps (click, Esc, System Events ⌘[, click,
+        Esc, ⌘ tap, cliclick ⌘[), before History was involved, and held at ~102–104%.
+      * In another run the same steps stayed at 0%, and the spin began on the History commit
+        click that followed.
+      * So the trigger is intermittent within that sequence. The pre-0064 comparison did not
+        yet replay the full sequence.
+    * **Not the cause, on its own:** a wide-width commit selection; narrowing into the compact
+      detail; a plain tap from the list to the detail; an explicit ⌘-click. Each stayed at 0%.
+    * **Real input still works during a spin.** The maintainer's real click on the quit
+      dialog's Yes worked first time while synthetic clicks were being lost.
+  * **Replays, 2026-09-22.** The maintainer handed over the mouse and keyboard, and both builds
+    were rebuilt with `./build_macos.sh --unsigned`. Each run relaunches the build, opens the
+    fixture at 900 pt, and samples CPU three times per checkpoint.
+    * **Step-by-step driver** (`bisect_steps.py`), 0064: 3 rounds of the Branches steps, sampled
+      after every step, all at ≤ 0.7%. No spin.
+    * **Exact replay** (`replay_exact.py`, the original timing), 0064, 3 runs.
+      * Run 1 **spun**: 0% through the Branches steps and ⌘2 History, then **~115–123%** after
+        the commit click, still ~115% 5 s later.
+      * Runs 2 and 3 stayed at 0%, but their captures show why: the synthetic ⌘2 was dropped,
+        so the window never left Branches and no commit was clicked.
+    * **The same replay on pre-0064 (`21d32bc`)** stayed at 0%, but its capture shows it too
+      never reached History. It was stuck on the Branch detail, which is F1's defect itself.
+      **The A/B is therefore void.** It did not compare the same state.
+    * **Sidebar-routed variants** (`replay_minimal.py`): History by a sidebar click, then a
+      commit click.
+      * With no prior steps, both builds reached the commit diff (captures checked) and stayed
+        at 0%.
+      * On 0064, with prior Branches steps (clicks and Esc only; a cliclick ⌘[ chord; the full
+        sequence) and a plain ⌘-click on the commit: all at 0%.
+      * **But** after the chord variants the capture shows the sidebar click was also ignored.
+        The window stayed on Branches.
+  * **What that establishes.**
+    * A spin was observed **only** after synthetic modifier chords that leave `HardwareKeyboard`
+      believing ⌘ is held (see D4). In 1 of the 2 runs that got past that into History, the
+      commit click then spun.
+    * Every state reached without synthetic chords idles at 0%, on both builds.
+    * **Whether this is a 0064 regression is not established.** The pre-0064 build cannot reach
+      the same state by the same input, because F1's missing back navigation strands it on the
+      detail page.
+    * **The release build cannot name the frame driver.** `sample` shows only
+      `Animator::BeginFrame` → Dart frame callbacks; which ticker or `scheduleFrame` caller is
+      responsible needs a profile build with the VM service, or a real-input reproduction.
+    * **Code read, with no loop found.**
+      * History's ⌘ tracking (`_syncMeta`, `_onHardwareKey`) calls `setState` only when the
+        value changes.
+      * F1's focus handoff runs once per list-to-detail transition.
+  * **Diagnostic build, 2026-09-22 (maintainer chose this route).** A throwaway clone of
+    `718a354` carries a probe (`lib/diag/frame_spin_probe.dart`, scratch only, never in the
+    repository) installed from `main()`: a 1 Hz frame-rate heartbeat with the live ticker count;
+    on a sustained rate or `SIGUSR1`, a dump of keyboard state, primary focus, the live route
+    stack, every active `Ticker` with its creator chain, the focus tree, and (debug mode) six
+    frames of Flutter's own `scheduleFrame` / `scheduleBuildFor` / `markNeedsLayout` /
+    `markNeedsPaint` stacks; `SIGUSR2` toggles hit-test and gesture-arena printing with the
+    widgets under each pointer-down. The Debug configuration signs with a scratch entitlements
+    file (`DebugProfile-unsigned` minus the sandbox) so the build shares the real `$HOME`, as the
+    `--unsigned` release build does. **The instrument was seen to work before use:** a window
+    resize after arming the trace named its driver (`handleMetricsChanged → markNeedsLayout →
+    scheduleFrame`).
+    * **The "clicks lost after the Branches steps" mechanism is found, and is not an app
+      defect.** In this fixture the Branches list opens on its *Review* tab, where the replay's
+      "click `main`" coordinate lands on the **Filter ▾ pulldown**, not on a row. The click opens
+      macos_ui's `_MacosPulldownRoute`, whose transparent `ModalBarrier` then swallows every
+      shortcut (⌘2, a plain `2`) and the next click; the gesture arena for the swallowed click
+      held only the barrier's `_AnyTapGestureRecognizer`, and the route census showed the
+      pulldown route live before that click and gone after it. A second click navigates. This
+      also explains why the 2026-09-21 A/B runs never reached History, and it is consistent with
+      D4's synthetic-Esc failures (Esc closed the pulldown instead of going back). The keyboard
+      state was `logicalKeysPressed=[]` at every stuck point, so the stale-⌘ theory is
+      **withdrawn**.
+    * **One probe artifact, caught and fixed.** A first route census used `ModalRoute.of()` on
+      every element, which registers inherited dependencies from elements that are not
+      descendants; the next frame hit `InheritedElement.notifyClients`'s "check that it really is
+      our descendant" assertion, painted the window red and spun at ~103% CPU. The census now
+      reads the route off each `_ModalScopeStatus` widget without registering anything, and the
+      same run then idled at 0%. That spin was the probe's, not the app's.
+    * **Debug-mode hunt, 4 runs:** all reached History (by sidebar, after dismissing the
+      pulldown); the commit click idled at 0–0.1% each time. No spin in debug mode.
+    * **Release-mode probe build:** the same probe with a release-safe rebuild hook
+      (`BuildOwner.onBuildScheduled` captures the caller's stack during a trace window, since
+      the framework's stack flags are assert-only).
+    * **Why the later replays never spun: the fixture's Branches page had flipped to its
+      Review tab.** The run that spun on 2026-09-21 was on the Browse tab (its post-steps
+      capture shows it), where the row coordinate selects `master`. Every later launch opened
+      on Review — `lastMode` is persisted in the workspace preferences, and Review is entered
+      by the segmented control or "Compare Changes" — so the same coordinate opened the Filter
+      pulldown instead. With the Browse tab selected first, the release probe **spun on the
+      first run** (123 / 118 / 120%), with the probe attached.
+  * **Root cause (found 2026-09-22, release probe build, pid 8472).** During the spin the
+    heartbeat read 120 fps with three transient callbacks, one live route, and a rebuild
+    scheduled **every frame**. All five captured stacks are identical:
+    `_HistoryViewState.build.<closure>` (the post-frame callback `build` registers at
+    `history_view.dart:1532`, `visit` at `:1562`) → `WorkspaceNavigationHistory.visit`
+    (`workspace_navigation.dart:86`) → `state =` → `ProviderElement._notifyListeners` →
+    `ConsumerStatefulElement.watch` listener → `Element.markNeedsBuild`. The rebuild is
+    `AppShell._pages`, which **watches the whole navigation state** (`app_shell.dart:1157`)
+    while using only `locations.isEmpty`, and rebuilds every page in its `IndexedStack`. Each
+    page's `build` re-registers a post-frame callback that re-`visit`s its current selection,
+    and none of them is gated on `isActive` (`branches_view.dart:443`, `stash_view.dart:372`,
+    `worktrees_view.dart:640`, `forge_workspace.dart:188`, `history_view.dart:1531`).
+    `visit` dedupes only against `state.current`, so two mounted panels holding selections
+    alternate — History's commit, Branches' `master` — and each write is "new". One lap per
+    frame, for as long as the window is visible. (The second visitor is inferred from the code
+    and the reproduction's conditions; the hook logs only the first dirtying per frame, and it
+    is always History's.)
+    * **Minimal reproduction, deterministic:** Branches on Browse → select `master` → ⌘2 →
+      select a commit. **0064 (`718a354`): 120 / 116 / 118%. Pre-0064 (`21d32bc`): 118 / 115 /
+      117%.** Both captures show the same states (the branch detail, then the commit diff).
+      **Pre-existing**, from the 2026-08-13 navigation-history commits (`e5631c5`, `85d0cd3`,
+      `dbc77b8`); 0064's F1 made the state reachable in the compact layout, which is how the
+      gate found it.
+    * **Consequences observed:** ~90–120% of one core while the window is visible, 0% when
+      minimised; synthetic clicks lost while spinning (real input still landed).
+    * **Not the cause:** the three transient callbacks (tickers) are a by-product of the
+      rebuilds, not the driver; no ⌘ key was held at any point; no exception is thrown.
+    * **Resolution (maintainer, 2026-09-22): fixed under its own record**, since it predates
+      0064 and spans four panels and the shell —
+      [0065-MADR](0065-MADR-record-workspace-navigation-on-location-change.md) and
+      [0065-PLAN](0065-PLAN-record-workspace-navigation-on-location-change.md). 0064's D5
+      stays recorded here as the finding; nothing in 0064's own scope changes. MADR 0064 needs no
+      amendment: it asserts nothing about the CPU spin.
+  * **Incident.** A rejected tool call partly ran at 18:18. It wrote a first copy of the driver,
+    stopped the executor's spinning build (pid 65549) and launched one build (pid 5653). It made
+    no clicks or keystrokes (none in `frontlog.txt`), and no Magic Git process remains.
 * **P-1 (2026-09-21, planning).** The first four patches (F4, F3, F1, F2), stacked in a fresh clone
   of `21d32bc`:
   * each `git apply --index` exited 0;
