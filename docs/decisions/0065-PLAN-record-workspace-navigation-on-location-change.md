@@ -1,5 +1,5 @@
 ---
-status: "in-progress"
+status: "complete"
 date: 2026-09-22
 associated-madr: "0065-MADR-record-workspace-navigation-on-location-change.md"
 verified: 2026-09-22
@@ -320,8 +320,9 @@ shape.
   commit, same fixture, 900 pt window): `[0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]`,
   then `[0.0, 0.0, 0.0]` five seconds later; the capture shows the commit's diff in the
   compact canvas, the same state the unfixed build spun in. **AC5 met.**
-  * **Step 3.3 (Back/Forward by hand) is the maintainer's**, per the 0064 gate's amended
-    procedure (keyboard-sequence checks are maintainer-run with real keys). Until it is
-    recorded here, AC6 is open and this plan stays `in-progress`; everything else is done.
+  * **Step 3.3 (Back/Forward by hand) was the maintainer's**, per the 0064 gate's amended
+    procedure (keyboard-sequence checks are maintainer-run with real keys). **Reported working
+    on 2026-09-22** on the built `--unsigned` app: Back and Forward land where they did before
+    this change. **AC6 met**, and with it every acceptance criterion; this plan is `complete`.
   * The MADR moves to `accepted`: its Confirmation section — the failing-first tests, the
     green suite, the on-device reproduction at ≤ 5% — is met in full.

@@ -619,8 +619,9 @@ All of these runs used scratch clones of `21d32bc`, never this tree.
       `dart format --set-exit-if-changed` on the five code files: clean. Full suite: `02:48
       +4319 ~3: All tests passed!`, `[E]` count 0 (+3 over `b9cecf3`, the three geometry
       tests).
-    * **Not yet done:** a look at it on the device by the maintainer (File view open,
-      Output toggled, on Repository and one other page).
+    * **On the device (maintainer, 2026-09-22): the Repository page's File view is right.**
+      D6 is closed; the Output view docks beside the File view on Repository and spans the
+      page elsewhere, as Amendment 0064.1 describes.
 * **P-1 (2026-09-21, planning).** The first four patches (F4, F3, F1, F2), stacked in a fresh clone
   of `21d32bc`:
   * each `git apply --index` exited 0;
