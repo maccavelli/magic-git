@@ -311,3 +311,17 @@ shape.
   Worktrees timing fix, `+2` for the two cases that had failed on their precondition. Full
   suite: `02:49 +4316 ~3: All tests passed!`, `[E]` count 0. `grep -rn _staleEcho lib` prints
   nothing (AC3).
+* **Phase 3 (2026-09-22), steps 3.1–3.2 and 3.4.** `./build_macos.sh --unsigned` exited 0
+  (the tree at `be7774e`). The scratch driver was extended to take ten `ps -o %cpu` samples at
+  1.5 s intervals after the commit click, and to refuse a verdict if the process disappears
+  (an empty `ps` line must not read as idle). **Seen to fail first:** on the pre-0064 build it
+  reported `SPIN` with `[119.1, 115.9, 118.3, 114.6, 115.2, 114.6, 115.6, 114.7, 115.1,
+  115.7]`. **On the fixed build** (Branches on Browse → select `master` → ⌘2 → select a
+  commit, same fixture, 900 pt window): `[0.1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]`,
+  then `[0.0, 0.0, 0.0]` five seconds later; the capture shows the commit's diff in the
+  compact canvas, the same state the unfixed build spun in. **AC5 met.**
+  * **Step 3.3 (Back/Forward by hand) is the maintainer's**, per the 0064 gate's amended
+    procedure (keyboard-sequence checks are maintainer-run with real keys). Until it is
+    recorded here, AC6 is open and this plan stays `in-progress`; everything else is done.
+  * The MADR moves to `accepted`: its Confirmation section — the failing-first tests, the
+    green suite, the on-device reproduction at ≤ 5% — is met in full.

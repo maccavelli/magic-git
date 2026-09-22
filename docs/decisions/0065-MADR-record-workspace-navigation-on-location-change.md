@@ -1,5 +1,5 @@
 ---
-status: "proposed"
+status: "accepted"
 date: 2026-09-22
 decision-makers: [Maintainer]
 consulted: [0064-PLAN-workspace-reachability-feedback-and-log-fidelity.md (deviation D5), 0009-MADR-ui-ux-debug-pass-backlog.md (H3), a release-mode diagnostic build of 718a354 with a frame-spin probe, the same minimal reproduction on 21d32bc]
