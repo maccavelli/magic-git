@@ -40,6 +40,15 @@ const _fastHook = '''#!/bin/sh
 echo "a generated message" > "\$1"
 ''';
 
+/// A hook that talks on stderr (as the AI generator does: "generating via …",
+/// retries) and on stdout, then writes its message.
+const _chattyHook = '''#!/bin/sh
+echo "generating via stub (model-x)..." >&2
+echo "noise on stdout"
+echo "retry 1 of 3" >&2
+echo "a generated message" > "\$1"
+''';
+
 Future<void> _run(Directory cwd, List<String> args) async {
   final result = await Process.run(
     args.first,
@@ -129,6 +138,38 @@ void main() {
       expect(await process.exitCode, 0);
       expect(stdout.trim(), 'a generated message');
       expect(_leftovers(repo), isEmpty);
+    },
+  );
+
+  // MADR Amendment 0068.2: the hook's stderr reaches the caller's stderr, live,
+  // so the executor's onOutput can stream it to the Output view; its stdout
+  // stays discarded so it can never contaminate the message.
+  test(
+    'the hook\'s stderr reaches the caller; the message stays clean',
+    () async {
+      final repo = await _repoWithHook(_chattyHook);
+      final process = await _startPreview(repo);
+      final stdout = process.stdout
+          .transform(const SystemEncoding().decoder)
+          .join();
+      final stderr = process.stderr
+          .transform(const SystemEncoding().decoder)
+          .join();
+      expect(await process.exitCode, 0);
+
+      expect(
+        await stdout,
+        'a generated message\n',
+        reason: 'stdout is the message file and nothing else',
+      );
+      final err = await stderr;
+      expect(err, contains('generating via stub (model-x)...'));
+      expect(err, contains('retry 1 of 3'));
+      expect(
+        err,
+        isNot(contains('noise on stdout')),
+        reason: 'the hook\'s own stdout is not the message and is dropped',
+      );
     },
   );
 

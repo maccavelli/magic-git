@@ -410,9 +410,12 @@ const String kCommitMessagePreviewScript =
     'trap \'[ -n "\$pid" ] && kill "\$pid" 2>/dev/null; rm -f "\$tmp"\' EXIT; '
     "trap 'exit 143' TERM; "
     "trap 'exit 130' INT; "
-    // The hook's own stdout/stderr are discarded; only the message file's
-    // content is emitted.
-    '"\$hook" "\$tmp" </dev/null >/dev/null 2>&1 & pid=\$!; '
+    // The hook's stdout is discarded — only the message file's content is
+    // emitted on stdout. Its stderr is NOT: it flows to this script's stderr,
+    // which the executor streams live, so a hook announcing "generating via …"
+    // or retrying is visible in the Output view while the wait is on (MADR
+    // 0068, Amendment 0068.2).
+    '"\$hook" "\$tmp" </dev/null >/dev/null & pid=\$!; '
     'wait "\$pid"; '
     'pid=; '
     'sed -e /^#/d "\$tmp"';
@@ -3306,12 +3309,20 @@ class GitService {
   /// invocation of this same call) pre-plant a symlink or a file at that path
   /// before the hook writes to it. The hook may invoke a slow AI generator, so
   /// this gets the commit timeout.
-  Future<String?> generateCommitMessage(String repoPath) async {
+  ///
+  /// [onOutput] receives the hook's stderr as it is written (stdout carries
+  /// only the message and arrives in the result), the same live channel
+  /// fetch and push stream into the Output view.
+  Future<String?> generateCommitMessage(
+    String repoPath, {
+    CommandOutputCallback? onOutput,
+  }) async {
     final result = await _executor.execute(
       repoPath: repoPath,
       extraEnv: _scopeEnvFor(repoPath),
       gitArgs: ['sh', '-c', kCommitMessagePreviewScript],
       timeout: commitTimeout,
+      onOutput: onOutput,
       // Isolated, not the default exclusive: this only PREVIEWS a message. It
       // writes a mktemp scratch file under the git-dir and deletes it, touching
       // neither the index, the work tree, refs, nor the network — while the

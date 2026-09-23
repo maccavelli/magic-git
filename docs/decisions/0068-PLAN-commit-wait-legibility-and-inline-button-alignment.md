@@ -107,13 +107,19 @@ Each phase ends with `flutter analyze`, the phase's tests, and one commit
 
 ### Phase 2 — The wait explains itself
 
-2.1. **`git_service.dart`, `generateCommitMessage`.** The hook's stderr stops going to
+~~2.1–2.3 as first written~~ — **replaced by D2**; the original text is kept below for the record.
+
+2.1′. **`git_service.dart`.** In `kCommitMessagePreviewScript` the hook's `2>&1` goes: its stdout stays `>/dev/null`, its stderr inherits the script's. `generateCommitMessage` gains `{CommandOutputCallback? onOutput}` and passes it to `execute`.
+2.2′. **`commit_composer_controller.dart`.** A top-level `previewCommitMessageWithOutput(git, log, repoPath)` — the provider's `generatePreview` calls it with the log notifier read **before** any `await` — forwards `stderr: true` chunks to an `OutputStreamSession` opened on the first chunk, closes it with exit 0 on success, the `GitException`'s exit code on a failure, or `fail()` on anything else (a timeout), and ignores stdout (the message is shown in the composer).
+2.3′. **Tests.** The script half, in `commit_message_preview_test.dart`: a hook writing two stderr lines and a message — `sh`'s stderr carries both lines, its stdout is exactly the message. The wiring half, in `test/commit_preview_output_test.dart` (new): a fake `GitService` that emits stderr and stdout chunks — the stderr lines reach the Output log under a single stream session, stdout does not, the message is returned unchanged; a silent preview adds no line at all; a thrown `GitException` closes the session with its exit code.
+
+~~2.1. **`git_service.dart`, `generateCommitMessage`.** The hook's stderr stops going to
      `/dev/null`: it is captured to `"$tmp.err"` (covered by the same trap), and after the `sed`
      the script emits it on a delimited channel the Dart side can separate — the message first,
      then a line `\u0000MAGICGIT_PREVIEW_STDERR\u0000`, then the captured stderr. The delimiter
      is written in Dart as the escape `\u0000` (a raw NUL in a source file is forbidden — see
-     `CLAUDE.md` and `source_is_text_scan_test.dart`).
-2.2. The Dart side splits on that marker: the message is what precedes it (unchanged behaviour,
+     `CLAUDE.md` and `source_is_text_scan_test.dart`).~~
+~~2.2. The Dart side splits on that marker: the message is what precedes it (unchanged behaviour,
      including the `null` for an empty message). The stderr half is emitted through the
      executor's existing `onOutput` callback (`CommandOutputCallback`, already threaded through
      `git_service.dart:4264` and `:5174`), which is how every other command's output reaches
@@ -126,10 +132,10 @@ Each phase ends with `flutter analyze`, the phase's tests, and one commit
      * a hook that writes stderr and **no** message: the call still returns null (the caller
        falls back to manual entry) and the stderr is still logged;
      * a hook whose stderr contains the marker text itself must not corrupt the split — assert
-       the message is intact.
+       the message is intact.~~
 2.4. Verify: `flutter analyze`; the preview tests; `flutter test test/output_view_test.dart
-     test/output_log_test.dart test/output_log_stream_test.dart test/git_service_test.dart` —
-     all four exist. Commit.
+     test/output_log_test.dart test/output_log_stream_test.dart test/git_service_test.dart
+     test/commit_preview_output_test.dart` (the last is new, D2). Commit.
 
 ### Phase 3 — The inline button sizes to its capsule
 
@@ -161,7 +167,7 @@ Each phase ends with `flutter analyze`, the phase's tests, and one commit
      * the probe's `fps=` heartbeat while the spinner is visible, and
      * `top -l 5 -pid <pid>` (instantaneous CPU, **not** `ps %cpu`),
      each against a control: the same surface with the spinner absent.
-4.3. **Decide from the numbers**, and record the decision as MADR Amendment ~~0068.1~~ 0068.2 (D1) either way:
+4.3. **Decide from the numbers**, and record the decision as MADR Amendment ~~0068.1~~ ~~0068.2~~ 0068.3 (D1, D2) either way:
      * if the spinner's presence costs less than ~5% of a core, the answer is "no change", and
        the report's Finding 2 is closed as measured-and-acceptable;
      * if it costs materially more, option B2 (an elapsed-seconds line in place of the spinner,
@@ -214,7 +220,7 @@ Each phase ends with `flutter analyze`, the phase's tests, and one commit
 * AC6 — The 48 workspace goldens and `inline_button_canon_test.dart` pass unchanged; no golden is
   regenerated.
 * AC7 — Full suite green, 0 `[E]`, after every phase.
-* AC8 — The spinner's cost is measured against a control and recorded as Amendment ~~0068.1~~ 0068.2, with
+* AC8 — The spinner's cost is measured against a control and recorded as Amendment ~~0068.1~~ ~~0068.2~~ 0068.3, with
   either "no change" or a named follow-up.
 * AC9 — Phase 5's four device rows are recorded, including the dropped-first-click observation as
   PASS, FAIL-with-new-record, or explicitly not-run.
@@ -286,3 +292,38 @@ nothing to undo.
     * **seen to fail:** the pre-0068 script taken from `HEAD` — `killed:
       leftovers=['MAGICGIT_MSG_PREVIEW.YK5weS'] hook_orphaned=True`; `stale_swept=False`.
   * AC2 and AC3 met.
+* **D2 (2026-09-22, deviation, before Phase 2): steps 2.1–2.3 would have been silent during a stall.**
+  * **Evidence.** `CommandOutputCallback` is `void Function(String chunk, {required bool stderr})`, delivered live by both executors; fetch/push/clone already stream it into an `OutputStreamSession` (`branches_view.dart:1688-1712`, `clone_controller.dart:263`). The plan's route captured the hook's stderr to `"$tmp.err"` and emitted it after the `sed` — so it would appear only once the hook finished, never during a stall, and the Phase 1 trap would delete it when the preview is killed. It also re-created a stream split the transport already provides, with a NUL escape, a parser and a marker-collision case.
+  * **Resolutions offered:** (1) use the existing split — the hook's stderr to the script's stderr, `onOutput` on `generateCommitMessage`, a stream session in the composer; (2) keep the plan as written.
+  * **Decision (maintainer, 2026-09-22): option 1.** Steps 2.1–2.3 are struck through and replaced by 2.1′–2.3′ above; MADR Amendment 0068.2 records the mechanism; the spinner's amendment becomes 0068.3. Two details decided while reading the code: the session opens on the **first chunk**, so no hook or a quiet hook logs nothing; and the log notifier is read before any `await`, since the composer can close mid-wait and `ref` after an `await` is a known trap here.
+  * **Files added to scope:** `lib/features/repository/commit_composer_controller.dart`, `test/commit_preview_output_test.dart`.
+* **Phase 2 (2026-09-22), as replaced by D2.**
+  * **Script half, seen to fail first.** A new case in `commit_message_preview_test.dart` — a hook
+    that writes two stderr lines, one stdout line and a message — failed on the Phase 1 script with
+    `Expected: contains 'generating via stub (model-x)...'` / `Actual: ''`: the hook's stderr was
+    discarded. After the change (`>/dev/null 2>&1` → `>/dev/null`, so stderr inherits the
+    script's), `sh`'s stdout is exactly `a generated message\n`, its stderr carries both lines, and
+    the hook's own stdout appears in neither. All five preview cases pass, the killed-preview one
+    included — the inherited stderr does not disturb the cleanup.
+  * **Wiring half.** `generateCommitMessage(repoPath, {CommandOutputCallback? onOutput})` passes
+    the callback to `execute`. `previewCommitMessageWithOutput(git, log, repoPath)` in
+    `commit_composer_controller.dart` streams `stderr: true` chunks into an `OutputStreamSession`
+    opened on the first chunk (header `$ prepare-commit-msg (message preview)`), closes it with 0 on
+    success or the `GitException`'s exit code, `fail()`s it on anything else, and ignores stdout;
+    the provider reads the log notifier before calling it. `test/commit_preview_output_test.dart`
+    (new, four cases): stderr reaches the log under one header and stdout does not; a silent
+    preview adds no line; stdout alone opens no session; a failure closes with `✗ exited with code
+    7` and rethrows.
+  * **Seen to fail, by mutation** in the scratch clone, one at a time: session opened eagerly →
+    caught by "a preview that says nothing adds nothing to the log"; stdout forwarded too → caught
+    by "…; stdout does not"; a failure reported as exit 0 → caught by "a failing hook closes the
+    session with its exit code and rethrows". 3 of 3; the unmutated baseline passes.
+  * **A mechanical consequence:** three test fakes override `generateCommitMessage` —
+    `commit_dialog_test.dart` (two) and `keyboard_shortcuts_test.dart` (one) — and took the new
+    signature. Bodies unchanged; both files already imported the executor module. **Files added to
+    scope:** those two.
+  * `flutter analyze`: `No issues found! (ran in 5.1s)`. `dart format --set-exit-if-changed` on the
+    six touched files: `0 changed`. `flutter test` on the preview, wiring, output-view,
+    output-log, output-log-stream, git-service, commit-dialog and keyboard-shortcut files: `00:04
+    +124: All tests passed!`, 0 `[E]`.
+  * AC4 met — its "marker text in stderr" clause no longer applies: there is no marker (D2).

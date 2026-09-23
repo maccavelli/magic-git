@@ -1,7 +1,9 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../core/git/git_service.dart' show PendingOp;
+import '../../core/git/git_service.dart'
+    show GitException, GitService, PendingOp;
+import '../../core/output/output_log.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/utils/display_error.dart';
 import '../common/commit_assistance.dart';
@@ -395,13 +397,56 @@ class CommitComposerController extends ChangeNotifier {
   }
 }
 
+/// Generates the composer's message preview, streaming the
+/// `prepare-commit-msg` hook's stderr into the Output view as it is written —
+/// "generating via …", retries — so a slow or stalled hook explains itself
+/// instead of leaving a silent spinner (MADR 0068, Amendment 0068.2).
+///
+/// The stream session opens on the **first** stderr chunk: a repository with no
+/// hook, or a hook that says nothing, adds nothing to the log. stdout is the
+/// message itself and is shown in the composer, so it is not logged. [log] is
+/// passed in rather than read here because the caller may be disposed while
+/// the hook runs, and nothing may touch a `ref` after that `await`.
+Future<String?> previewCommitMessageWithOutput(
+  GitService git,
+  OutputLogNotifier log,
+  String repoPath,
+) async {
+  OutputStreamSession? session;
+  try {
+    final message = await git.generateCommitMessage(
+      repoPath,
+      onOutput: (chunk, {required stderr}) {
+        if (!stderr) return;
+        (session ??= log.startStream(
+          'prepare-commit-msg (message preview)',
+        )).append(chunk, OutputLineKind.stderr);
+      },
+    );
+    session?.close(exitCode: 0);
+    return message;
+  } on GitException catch (e) {
+    session?.close(exitCode: e.result.exitCode);
+    rethrow;
+  } catch (e) {
+    session?.fail(e.toString());
+    rethrow;
+  }
+}
+
 final commitComposerControllerProvider =
     Provider.family<CommitComposerController, CommitComposerKey>((ref, key) {
       final git = ref.watch(gitServiceProvider);
       final assistanceKey = CommitAssistanceKey(key.repoPath, key.sessionEpoch);
       final controller = CommitComposerController(
         repoPath: key.repoPath,
-        generatePreview: () => git.generateCommitMessage(key.repoPath),
+        // The log notifier is read now, not inside the preview: the controller
+        // can be disposed while the hook runs (see the function's doc).
+        generatePreview: () => previewCommitMessageWithOutput(
+          git,
+          ref.read(outputLogProvider.notifier),
+          key.repoPath,
+        ),
         loadGpgSignConfigured: () => git.commitGpgSignEnabled(key.repoPath),
         loadRecentSubjects: () async => [
           for (final commit in await git.log(key.repoPath, maxCount: 10))

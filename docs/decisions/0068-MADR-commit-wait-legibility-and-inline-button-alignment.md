@@ -290,3 +290,25 @@ level — would touch every remote command. It is recorded in
 decided here.
 
 The spinner's measurement, which the plan first numbered 0068.1, becomes Amendment 0068.2.
+
+## Amendment 0068.2 (2026-09-22): the hook's output is streamed, not captured
+
+§B.1 above says the script "captures it (`2>"$tmp.err"`), and the Dart side appends each
+non-empty line to the Output log". Executed as the plan first wrote it, that would have shown the
+hook's output **only after the hook finished** — captured to a file and emitted after the `sed` —
+so a stalled hook, the one case this exists for, would have stayed silent for its whole wait, and
+a killed preview's trap would have deleted the capture before anyone saw it.
+
+The transport already separates the two streams: `CommandOutputCallback` is
+`void Function(String chunk, {required bool stderr})` (`ssh_command_executor.dart`, beside
+`CommandExecutor`), delivered live, and fetch/push/clone route it into the Output log through a
+stream session (`branches_view.dart:1688-1712`, `clone_controller.dart:263`).
+
+**Amended mechanism.** The hook's stderr flows to the script's stderr (its stdout stays discarded,
+so it can never contaminate the message); `generateCommitMessage` takes the same
+`CommandOutputCallback? onOutput` fetch and push take; the composer's preview forwards stderr
+chunks into an Output stream session **opened on the first chunk**, so a repository with no hook
+or a silent one logs nothing. No marker, no NUL escape, no parser. Found before any Phase 2 code
+was written (0068-PLAN, deviation D2).
+
+The spinner's measurement becomes Amendment 0068.3.

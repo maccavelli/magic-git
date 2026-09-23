@@ -105,7 +105,10 @@ class _FakeGit extends GitService with FakeRefsSnapshot {
   }) async => deletedBranches.add(name);
 
   @override
-  Future<String?> generateCommitMessage(String repoPath) async => null;
+  Future<String?> generateCommitMessage(
+    String repoPath, {
+    CommandOutputCallback? onOutput,
+  }) async => null;
 
   @override
   Future<void> commit(String repoPath, {String? message}) async {

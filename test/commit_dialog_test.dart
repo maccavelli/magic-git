@@ -26,7 +26,10 @@ class _FakeGit extends GitService {
   int pushCalls = 0;
 
   @override
-  Future<String?> generateCommitMessage(String repoPath) async => generated;
+  Future<String?> generateCommitMessage(
+    String repoPath, {
+    CommandOutputCallback? onOutput,
+  }) async => generated;
 
   @override
   Future<void> commit(String repoPath, {String? message}) async {
@@ -590,5 +593,8 @@ class _HangingPreviewGit extends _FakeGit {
   }
 
   @override
-  Future<String?> generateCommitMessage(String repoPath) => _gate.future;
+  Future<String?> generateCommitMessage(
+    String repoPath, {
+    CommandOutputCallback? onOutput,
+  }) => _gate.future;
 }
