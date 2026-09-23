@@ -390,6 +390,12 @@ const String _nullOid = '0000000000000000000000000000000000000000';
 /// the git dir and its hook still running — an AI hook calling its provider
 /// after the app had given up (MADR 0068, Amendment 0068.1).
 ///
+/// Each trap first ignores TERM and INT. A second TERM arriving while the
+/// shell is handling the first re-entered the TERM trap, and its `exit`
+/// abandoned the EXIT trap's cleanup halfway; once cleanup has begun, further
+/// signals now wait for it, and SIGKILL still ends a cleanup that hangs
+/// (MADR 0068, Amendment 0068.6).
+///
 /// A SIGKILL with no TERM first still escapes every trap, so each preview
 /// first sweeps leftovers **older than a day** (`-mtime +0`, measured to mean
 /// that on both BSD and GNU `find`) — never a fresh one, which may be another
@@ -407,9 +413,10 @@ const String kCommitMessagePreviewScript =
     'find "\$dir" -maxdepth 1 -name "MAGICGIT_MSG_PREVIEW.*" -mtime +0 -delete 2>/dev/null; '
     'tmp=\$(mktemp "\$dir/MAGICGIT_MSG_PREVIEW.XXXXXX") || exit 1; '
     'pid=; '
-    'trap \'[ -n "\$pid" ] && kill "\$pid" 2>/dev/null; rm -f "\$tmp"\' EXIT; '
-    "trap 'exit 143' TERM; "
-    "trap 'exit 130' INT; "
+    'trap \'trap "" TERM INT; '
+    '[ -n "\$pid" ] && kill "\$pid" 2>/dev/null; rm -f "\$tmp"\' EXIT; '
+    "trap 'trap \"\" TERM INT; exit 143' TERM; "
+    "trap 'trap \"\" TERM INT; exit 130' INT; "
     // The hook's stdout is discarded — only the message file's content is
     // emitted on stdout. Its stderr is NOT: it flows to this script's stderr,
     // which the executor streams live, so a hook announcing "generating via …"

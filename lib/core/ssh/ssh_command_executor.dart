@@ -1126,7 +1126,7 @@ class SSHCommandExecutor implements CommandExecutor {
       // session keeps buffering the incoming data (now listenerless) without
       // bound — the exact OOM the budget exists to prevent, just moved one
       // layer down. Kill the process like the timeout path does; the local
-      // executor's `finally { process?.kill(); }` is this same rule.
+      // executor's drain-failure path escalates the same way.
       _killAndClose(session);
       recordFailureSample();
       rethrow;

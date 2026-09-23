@@ -35,6 +35,16 @@ sleep 30
 echo "never written" > "\$1"
 ''';
 
+/// Sends TERM, waits 50 µs, sends TERM again. The window in which a second
+/// TERM defeats an unguarded cleanup is about 100 µs wide: sent together the
+/// two merge into one pending signal, sent 200 µs apart the cleanup is already
+/// done. Dart cannot time that; perl's `select` can (and this suite already
+/// relies on perl — local_command_executor_test.dart).
+const _doubleTerm =
+    r'kill TERM => $ARGV[0]; '
+    r'select undef, undef, undef, 0.00005; '
+    r'kill TERM => $ARGV[0];';
+
 /// A hook that writes a message at once.
 const _fastHook = '''#!/bin/sh
 echo "a generated message" > "\$1"
@@ -125,6 +135,31 @@ void main() {
           'the killed preview must not leave its hook running — an AI '
           'hook would keep calling its provider after the app gave up',
     );
+  });
+
+  test('a second TERM during cleanup does not cut the cleanup short', () async {
+    // Anything may signal twice — the executor did until MADR 0068 Amendment
+    // 0068.6, from a `finally`, microseconds after the first. A second TERM
+    // re-entered the TERM trap while the EXIT trap was cleaning up, and its
+    // `exit` ended the shell with the scratch file still in place. Repeated,
+    // because the race is timed, not forced.
+    for (var run = 0; run < 10; run++) {
+      final repo = await _repoWithHook(_slowHook);
+      final process = await _startPreview(repo);
+      final pidFile = File('${repo.path}/.git/HOOK_PID');
+      await _waitFor(pidFile);
+      final hookPid = int.parse(pidFile.readAsStringSync().trim());
+      addTearDown(() => Process.run('kill', ['-9', '$hookPid']));
+
+      await _run(repo, ['perl', '-e', _doubleTerm, '${process.pid}']);
+      await Future<void>.delayed(SSHCommandExecutor.killGrace);
+      process.kill(ProcessSignal.sigkill);
+      await process.exitCode;
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+
+      expect(_leftovers(repo), isEmpty, reason: 'run $run left its file');
+      expect(await _alive(hookPid), isFalse, reason: 'run $run left its hook');
+    }
   });
 
   test(

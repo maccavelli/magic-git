@@ -366,6 +366,8 @@ only sleeps.
 
 ## Amendment 0068.5 (2026-09-23): in the app, the timed-out preview still leaves its file behind
 
+> **Cause established in Amendment 0068.6 (2026-09-23):** the local executor signals a timed-out command with two SIGTERMs, microseconds apart.
+
 Amendment 0068.1's table was measured by running `sh` directly, and
 `commit_message_preview_test.dart` does the same. Run by the app, the shipped script does not
 behave that way. Four previews on this Mac timed out at the configured 60 s (the script taken
@@ -385,3 +387,47 @@ logging hook ran `/bin` tools), so neither explains it. **The cause is not yet e
 maintainer chose to diagnose it in the app before choosing a fix (0068-PLAN, deviation D4). Until
 then, §A's first consequence — no scratch file after a timeout — does not hold in the running app.
 The orphaned child in every run is 0069-REPORT's finding, as expected.
+
+## Amendment 0068.6 (2026-09-23): the executor sent two TERMs; signal once, and clean up under any signal
+
+**Cause.** `LocalCommandExecutor._run`'s timeout path sends SIGTERM from `_killEscalate`, then its
+`finally { process?.kill(); }` sends another — `Process.kill`'s default signal is SIGTERM —
+microseconds later. The `finally` was written as "a harmless no-op on the success path", which it
+is; on the timeout path it is a second signal. When that second TERM lands while bash is already
+handling the first — inside the TERM trap's `exit`, or the EXIT trap before its `rm` has forked —
+bash runs the TERM trap again, and that `exit` ends the shell with the cleanup half done.
+
+**Evidence.** A traced build of the preview script, run by the app: the TERM trap ran twice, and
+the EXIT trap never logged its first line. Outside the app, with the shipped script: a second TERM
+50 µs after the first left the scratch file in 10 of 10 trials, and 100 µs after it in 2–4 of 10.
+Sent together, the two merge into one pending signal; 200 µs or more apart, the cleanup has
+already finished (0 of 10 at either). The existing test sent one TERM to a `sh` it started itself,
+so it could not see what the executor sends. The SSH executor is not affected: it sends TERM once,
+closes the channel, then sends KILL (`ssh_command_executor.dart`, `killAndCloseSession`).
+
+**Reading every local signal site** found three more places the same contract is broken:
+
+| Path | Signals sent before | Signals sent after |
+|---|---|---|
+| Timeout | TERM, TERM, KILL | TERM, KILL |
+| Drain failure (e.g. output over the cap) | TERM only: a process that ignores TERM runs on | TERM, KILL, as the SSH twin does |
+| Stream `cancel()`, called again | TERM, KILL on every call | TERM, KILL once |
+| Spawn resolving after the timeout; stream open timeout | TERM, KILL | unchanged |
+
+**Decision (maintainer, 2026-09-23: both halves).**
+
+* **The executor signals each process at most once.** `_killEscalate` records the processes it has
+  begun to stop, in an `Expando`, and returns at once for one it has seen. Every path that gives up
+  on a process calls it — the drain-failure path included, so it escalates as the SSH twin does —
+  and the `finally` goes. `dart:io`'s `kill` returns without signalling once it has observed the
+  exit, so the delayed KILL reaches neither a process that ended on the TERM nor a reused pid.
+* **The preview script's cleanup survives a second signal from anywhere.** Each trap first
+  ignores TERM and INT (`trap '' TERM INT`), then does its work. Once cleanup begins, a further
+  signal cannot re-enter a trap and cut it short; SIGKILL still ends the shell if the cleanup
+  hangs. A user's `kill`, a second cancel, or a future caller that signals twice is covered as
+  well as this executor.
+
+**Considered and not taken.** Delaying the `finally`'s signal, or catching the second signal in
+the script without ignoring it, would narrow the window without closing it. Removing only the
+`finally` would leave the drain-failure path without its KILL. Signalling the process group is
+0069-REPORT's question, and would not by itself stop a repeated TERM re-entering the trap.

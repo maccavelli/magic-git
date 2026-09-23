@@ -163,6 +163,94 @@ void main() {
     expect(t.samples.single.success, isFalse);
   });
 
+  test('a timed-out command receives exactly one TERM', () async {
+    // TERM once, then KILL after the grace — never a second TERM. A second
+    // one, sent from a `finally` microseconds after the first, re-entered a
+    // shell's TERM trap while its EXIT trap was cleaning up, and the commit
+    // message preview left its scratch file behind (MADR 0068, Amendment
+    // 0068.6). The shell counts every TERM and survives each, so only the KILL
+    // ends it.
+    await expectLater(
+      executor.execute(
+        repoPath: tempDir.path,
+        gitArgs: [
+          'sh',
+          '-c',
+          'trap "echo TERM >> term.log" TERM; '
+              ': > started; '
+              r'while :; do sleep 1 & wait $!; done',
+        ],
+        timeout: const Duration(milliseconds: 500),
+      ),
+      throwsA(isA<SSHCommandTimeout>()),
+    );
+    await Future<void>.delayed(
+      SSHCommandExecutor.killGrace + const Duration(milliseconds: 600),
+    );
+    expect(File('${tempDir.path}/started').existsSync(), isTrue);
+    final log = File('${tempDir.path}/term.log');
+    expect(log.existsSync() ? log.readAsLinesSync() : const <String>[], [
+      'TERM',
+    ]);
+  });
+
+  test(
+    'a command that overflows the output cap and ignores TERM is killed',
+    () async {
+      // The drain-failure path escalates like the timeout path (and like the
+      // SSH twin's `_killAndClose`): a TERM alone let a process that ignores
+      // it run on, unattended, after the executor had given up on it. It
+      // stops writing once over the cap — a writer would die of SIGPIPE
+      // anyway, whatever the executor sends.
+      await expectLater(
+        executor.execute(
+          repoPath: tempDir.path,
+          gitArgs: [
+            'sh',
+            '-c',
+            r"trap '' TERM; echo $$ > pid; "
+                'head -c 60000000 /dev/zero; exec sleep 30',
+          ],
+          timeout: const Duration(seconds: 20),
+        ),
+        throwsA(isA<SSHOutputExceeded>()),
+      );
+      final pid = File('${tempDir.path}/pid').readAsStringSync().trim();
+      await Future<void>.delayed(
+        SSHCommandExecutor.killGrace + const Duration(milliseconds: 600),
+      );
+      addTearDown(() => Process.run('kill', ['-9', pid]));
+      final alive = await Process.run('kill', ['-0', pid]);
+      expect(alive.exitCode, isNot(0), reason: 'pid $pid is still running');
+    },
+  );
+
+  test('cancelling a stream twice signals its process once', () async {
+    // A second cancel is a second TERM — the same re-entry a timed-out
+    // command's double TERM caused (MADR 0068, Amendment 0068.6).
+    final handle = await executor.executeStream(
+      repoPath: tempDir.path,
+      gitArgs: [
+        'sh',
+        '-c',
+        'trap "echo TERM >> term.log" TERM; '
+            ': > started; '
+            r'while :; do sleep 1 & wait $!; done',
+      ],
+    );
+    final started = File('${tempDir.path}/started');
+    while (!started.existsSync()) {
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+    }
+    await handle.cancel();
+    await handle.cancel();
+    await handle.exitCode;
+    final log = File('${tempDir.path}/term.log');
+    expect(log.existsSync() ? log.readAsLinesSync() : const <String>[], [
+      'TERM',
+    ]);
+  });
+
   test('execute throws SSHOutputExceeded for output past the cap', () async {
     expect(
       () => executor.execute(

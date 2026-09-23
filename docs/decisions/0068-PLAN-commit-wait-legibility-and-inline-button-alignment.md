@@ -27,6 +27,7 @@ cost is **measured** and the decision about it recorded — not guessed.
 * Tests: `test/commit_message_preview_test.dart` (new), `test/inline_button_alignment_test.dart`
   (new), and the existing `test/inline_button_canon_test.dart` and workspace goldens as guards.
 * This plan's execution record, the MADR's status, `docs/README.md`.
+* **(D4)** `lib/core/exec/local_command_executor.dart` — each process signalled at most once; the drain-failure path escalates. `lib/core/ssh/ssh_command_executor.dart` — one comment that described the local `finally`. `test/local_command_executor_test.dart` — three cases.
 
 **Out of scope, deliberately**
 
@@ -175,6 +176,34 @@ Each phase ends with `flutter analyze`, the phase's tests, and one commit
        follow-up phase — **written and approved separately**, not smuggled in here.
 4.4. Commit the amendment and this plan's record of the measurement.
 
+### Phase 4a — Signal once; clean up under any signal (D4)
+
+Added by D4 (2026-09-23). The negative rehearsal came first, in the scratch clone at `d8a3b2f`,
+and is recorded in the execution record.
+
+4a.1. **`local_command_executor.dart`.**
+      * `_killEscalate` stops each process at most once: a file-level
+        `Expando<bool>` marks a process when its TERM is sent, and a marked process returns at once.
+        The docstring states the contract (TERM, then KILL after the grace, once) and why a second
+        TERM is harmful.
+      * `_run`'s `catch (_)` calls `_killEscalate(process)`; the `finally { process?.kill(); }` is
+        removed, and the comments that described it are rewritten.
+4a.2. **`ssh_command_executor.dart`.** The comment in `_run`'s `catch (_)` that cites "the local
+      executor's `finally { process?.kill(); }`" is corrected to what the local path now does. No
+      code changes.
+4a.3. **`git_service.dart`, `kCommitMessagePreviewScript`.** Each of the EXIT, TERM and INT traps
+      begins with `trap '' TERM INT;`. The doc comment gains one sentence saying why.
+4a.4. **Tests.**
+      * `test/local_command_executor_test.dart`:
+        - a timed-out command receives exactly one TERM;
+        - a command that overflows the output cap and ignores TERM is killed;
+        - cancelling a stream twice signals its process once.
+      * `test/commit_message_preview_test.dart`: a second TERM during cleanup does not cut the
+        cleanup short (`perl` sends TERM, 50 µs, TERM; ten runs).
+4a.5. **Verify.** `flutter analyze`; `dart format --set-exit-if-changed` on the touched files; the
+      two test files; the full suite; and the hardened script, extracted from the Dart source, under
+      `/bin/sh` (bash 3.2) and `/bin/dash` in the scratch harness. Commit.
+
 ### Phase 5 — Device gate and records
 
 5.1. `./build_macos.sh --unsigned` (and `--install` only if the maintainer asks). Record the exit
@@ -206,6 +235,8 @@ Each phase ends with `flutter analyze`, the phase's tests, and one commit
 | Spinner cost | Phase 4.2 | both numbers recorded, with their control |
 | Device | Phase 5.2 | four rows recorded |
 | Records | `dart run tool/records.dart check` | `0 finding(s)` |
+| **(D4)** Signal once | `flutter test test/local_command_executor_test.dart` | green; the three new cases seen to fail at `d8a3b2f` |
+| **(D4)** Cleanup under a second TERM | `flutter test test/commit_message_preview_test.dart` | green; the new case seen to fail at `d8a3b2f` |
 
 ## Acceptance Criteria
 
@@ -225,6 +256,13 @@ Each phase ends with `flutter analyze`, the phase's tests, and one commit
   either "no change" or a named follow-up.
 * AC9 — Phase 5's ~~four~~ five (D3) device rows are recorded, including the dropped-first-click observation as
   PASS, FAIL-with-new-record, or explicitly not-run.
+* AC10 **(D4)** — A timed-out local command receives exactly one TERM, then a KILL; a stream
+  cancelled twice is signalled once.
+* AC11 **(D4)** — A local command abandoned for any reason — the drain-failure path included — is
+  killed even if it ignores TERM.
+* AC12 **(D4)** — The preview's cleanup completes when a second TERM arrives during it.
+* AC13 **(D4)** — Each of AC10–AC12's tests was seen to fail on the unmodified tree, with its
+  message in the execution record.
 
 ## Rollout and Rollback
 
@@ -384,3 +422,53 @@ nothing to undo.
     executor; (2) fold it into 0069's process-group change.
   * **Decision (maintainer, 2026-09-23): option 1.** The fix, once the cause is known, comes back
     as its own proposal before any code changes; this plan stays `in-progress`.
+* **D4 resolved (2026-09-23).** Diagnosed as planned: a scratch probe build with the preview
+  script traced, run by the app, then reproduced outside it. Cause and design: MADR Amendment
+  0068.6 — the local executor sent two TERMs, microseconds apart.
+  * **Resolutions offered:** (1) the executor signals once *and* the script's traps ignore further
+    signals; (2) the executor only; (3) the script only.
+  * **Decision (maintainer, 2026-09-23): option 1**, "hardened, idiomatic and robust". Reading every
+    local signal site added two more defects of the same kind to the fix: the drain-failure path
+    sent TERM with no KILL, and a second stream `cancel()` signalled again. Phase 4a is added above;
+    AC10–AC13 are added.
+  * **Files added to scope:** `lib/core/exec/local_command_executor.dart`,
+    `lib/core/ssh/ssh_command_executor.dart` (one comment), `test/local_command_executor_test.dart`.
+  * **Negative rehearsal** (scratch clone at `d8a3b2f`, tests added, source unchanged):
+    * `a timed-out command receives exactly one TERM` — fails, `Actual: ['TERM', 'TERM']`, 3 of 3
+      runs;
+    * `a command that overflows the output cap and ignores TERM is killed` — fails, "pid … is still
+      running", 2 of 2. Its first draft wrote with `yes`, and **passed on the old code**: a writer
+      dies of SIGPIPE once the executor stops reading, whatever it is sent. Rewritten to stop
+      writing and `exec sleep`;
+    * `cancelling a stream twice signals its process once` — fails, `Actual: ['TERM', 'TERM']`, 3
+      of 3;
+    * `a second TERM during cleanup does not cut the cleanup short` — fails, `Actual:
+      ['MAGICGIT_MSG_PREVIEW.…']`, 3 of 3, in the first or second of its ten runs.
+    * **Dropped, because they could not be made to fail:** the same preview test run through the
+      executor (passed 3 of 3 on the old code; the race does not land in a test run), two TERMs
+      sent back to back from Dart (they merge), a hook that signals its parent back when stopped
+      (the old cleanup finishes first), and TERM followed by INT (bash takes them in turn).
+* **Phase 4a (2026-09-23).** As planned in 4a.1–4a.4:
+  * `local_command_executor.dart`: `_killEscalate` stops a process at most once (a file-level
+    `Expando<bool>`); the drain-failure path calls it; the signalling `finally` is gone, with a
+    comment where it was saying why. The docstring's claim about the delayed KILL was narrowed while
+    writing: `dart:io` skips a process whose exit it has observed, which makes the KILL a no-op for
+    one that ended on the TERM; it is not a guarantee about reused pids, and the comment no longer
+    says it is.
+  * `ssh_command_executor.dart`: the one comment corrected. `git_service.dart`: each trap starts
+    with `trap "" TERM INT;`, and the doc comment says why.
+  * `flutter analyze`: `No issues found! (ran in 6.0s)`. `dart format` reflowed the preview test
+    only. The two test files: `00:12 +27: All tests passed!`. The new cases, five more times each:
+    0 `[E]`. Full suite: `03:17 +4342 ~3: All tests passed!`, 0 `[E]`.
+  * **The script as shipped, in three shells.** The script Dart evaluates was written out by a
+    scratch test and run through the harness, a second TERM 50 µs and 100 µs after the first, ten
+    trials each, beside the pre-fix script taken from the app's process table:
+
+    | Shell | Pre-fix: file left / hook left running | Shipped: file left / hook left running |
+    |---|---|---|
+    | `/bin/sh` (bash 3.2) | 12/20 / 2/20 | 0/20 / 0/20 |
+    | `/bin/dash` | 11/20 / 0/20 | 0/20 / 0/20 |
+    | Homebrew bash 5 | 16/20 / 6/20 | 0/20 / 0/20 |
+
+    With one TERM, all six rows are clean. The remote host was not re-probed.
+  * AC10–AC13 met. The device check of preview cleanup stays in Phase 5.

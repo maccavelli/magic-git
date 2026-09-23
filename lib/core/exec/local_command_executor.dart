@@ -353,18 +353,19 @@ class LocalCommandExecutor implements CommandExecutor {
       throw SSHCommandTimeout(gitArgs.join(' '));
     } catch (_) {
       // Any other drain failure — canonically SSHOutputExceeded from the
-      // byte budget. Record what it consumed; the dashboard must see failed
-      // commands, not just successes. (The `finally` below still kills.)
+      // byte budget — leaves the process running. Stop it the way the timeout
+      // does (and the SSH twin's `_killAndClose` does): a TERM alone let a
+      // process that ignores it run on after the executor had given up.
+      // Record what it consumed; the dashboard must see failed commands, not
+      // just successes.
+      _killEscalate(process);
       recordFailureSample();
       rethrow;
-    } finally {
-      // Harmless no-op on the success path (the process has already exited
-      // by the time `exitCode` resolves) — guards the case where draining
-      // itself threw for some other reason, leaving the process running.
-      // Use plain kill here (not escalate): the process has usually already
-      // exited; escalate is reserved for the timeout path above.
-      process?.kill();
     }
+    // No `finally` that signals: on the success path the process has already
+    // exited, and on both failure paths it has been stopped exactly once. A
+    // plain `kill()` here was a second SIGTERM on the timeout path, which cut
+    // a shell's EXIT-trap cleanup short (MADR 0068, Amendment 0068.6).
   }
 
   @override
@@ -484,11 +485,25 @@ class _ProcessStreamHandle implements SSHStreamHandle {
   }
 }
 
+/// Processes [_killEscalate] has begun to stop. An [Expando] rather than a
+/// set, so a finished process is not kept alive by having been stopped.
+final Expando<bool> _stopping = Expando<bool>('stopping');
+
 /// TERM immediately, then KILL after [SSHCommandExecutor.killGrace] so a
 /// process that ignores TERM cannot run unattended after the client has
 /// given up. Mirrors the SSH path's escalation.
+///
+/// At most once per process, however many paths give up on it (a timeout, a
+/// drain failure, a stream cancelled twice). A second TERM is not harmless: a
+/// shell handling the first re-enters its TERM trap, and that trap's `exit`
+/// abandons whatever cleanup the EXIT trap was doing — the message preview
+/// left its scratch file behind this way (MADR 0068, Amendment 0068.6).
+///
+/// `dart:io` does not signal a process whose exit it has already seen, so
+/// the delayed KILL is a no-op for one that ended on the TERM.
 void _killEscalate(Process? process) {
-  if (process == null) return;
+  if (process == null || _stopping[process] == true) return;
+  _stopping[process] = true;
   try {
     process.kill(ProcessSignal.sigterm);
   } catch (_) {}
