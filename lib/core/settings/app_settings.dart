@@ -43,7 +43,9 @@ class AppSettings {
   final int autoFetchMinutes;
 
   /// Optional absolute-path overrides for external binaries, keyed by tool name
-  /// (`git`, `glab`, `gh`, `fswatch`, `inotifywait`). Empty = auto-discover.
+  /// (`git`, `bash`, `glab`, `gh`, `fswatch`, `inotifywait`; the list is
+  /// [kOverridableBinaries]). Empty = auto-discover. `bash` is a Windows path to
+  /// Git Bash, which the Windows host probe tries first (MADR 0070).
   /// These win over discovery when resolving the remote environment.
   final Map<String, String> binaryOverrides;
 

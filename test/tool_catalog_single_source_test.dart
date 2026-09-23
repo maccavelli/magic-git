@@ -14,11 +14,14 @@
 // still a derivation. Adding a binary to `kToolCatalog` must be the *only* edit
 // needed to make it probed, overridable, and visible in the doctor.
 
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-
+import 'package:macos_ui/macos_ui.dart';
 import 'package:remote_magic_git/core/settings/app_settings.dart';
 import 'package:remote_magic_git/core/settings/tool_catalog.dart';
 import 'package:remote_magic_git/core/ssh/environment_probe.dart';
+import 'package:remote_magic_git/features/settings/settings_sheet.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 /// The binary names the probe script actually looks for, read back out of the
 /// generated script — i.e. what the *host* will really be searched for, not
@@ -104,5 +107,34 @@ void main() {
             'script safely',
       );
     }
+  });
+
+  testWidgets('Settings offers a path field for every overridable binary', (
+    tester,
+  ) async {
+    // The last link of the derivation: a catalog tool is overridable, and the
+    // sheet shows a field for it — Git Bash included (MADR 0070).
+    SharedPreferences.setMockInitialValues({});
+    await tester.pumpWidget(
+      const ProviderScope(
+        child: MacosApp(
+          debugShowCheckedModeBanner: false,
+          home: SettingsSheet(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    for (final bin in kOverridableBinaries) {
+      expect(
+        find.byWidgetPredicate(
+          (w) =>
+              w is MacosTextField &&
+              w.placeholder == '/path/to/$bin (optional)',
+        ),
+        findsOneWidget,
+        reason: 'no Settings path field for $bin',
+      );
+    }
+    expect(kOverridableBinaries, contains('bash'));
   });
 }

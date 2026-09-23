@@ -53,6 +53,20 @@ void main() {
     expect(env.path, '/opt/homebrew/bin:/usr/bin:/bin');
   });
 
+  test('a Git Bash shell on Windows reports windows (MADR 0070)', () async {
+    for (final uname in [
+      'MINGW64_NT-10.0-26100',
+      'MSYS_NT-10.0-26100',
+      'CYGWIN_NT-10.0-26100',
+    ]) {
+      final env = await EnvironmentResolver(
+        _FakeExecutor('OS=$uname\nPATH=/usr/bin\n'),
+      ).resolve('/c/repo');
+      expect(env.os, 'windows', reason: uname);
+      expect(env.osLabel, 'Windows');
+    }
+  });
+
   test('connect-time probe script spawns no tool (no --version pass)', () {
     // The versions round trip is deliberately deferred to probeVersions —
     // gh/glab update checks must never sit on the connect critical path.

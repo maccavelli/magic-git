@@ -1,6 +1,8 @@
 // Tests for the external-tool catalog: version parsing/comparison, the catalog
 // shape the doctor panel relies on, OS relevance, and platform install hints.
 
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:remote_magic_git/core/settings/tool_catalog.dart';
 
@@ -85,6 +87,14 @@ void main() {
       }
     });
 
+    test('Git Bash is relevant only on Windows (MADR 0070)', () {
+      final bash = toolSpecFor('bash')!;
+      expect(bash.relevantOn('windows'), isTrue);
+      expect(bash.relevantOn('macos'), isFalse);
+      expect(bash.relevantOn('linux'), isFalse);
+      expect(bash.tier, ToolTier.essential);
+    });
+
     test('OS-agnostic tools are relevant everywhere', () {
       expect(toolSpecFor('git')!.relevantOn('linux'), isTrue);
       expect(toolSpecFor('git')!.relevantOn('macos'), isTrue);
@@ -118,11 +128,54 @@ void main() {
       expect(installHints('fswatch', 'linux'), isEmpty);
     });
 
+    test('Windows offers winget, and Git Bash comes with Git for Windows', () {
+      const gitForWindows = 'winget install --id Git.Git -e';
+      expect(installHints('git', 'windows').single.command, gitForWindows);
+      expect(installHints('bash', 'windows').single.command, gitForWindows);
+      expect(
+        installHints('gh', 'windows').single.command,
+        'winget install --id GitHub.cli -e',
+      );
+      expect(
+        installHints('glab', 'windows').single.command,
+        'winget install --id GLab.GLab -e',
+      );
+      expect(installHints('fswatch', 'windows'), isEmpty);
+    });
+
+    test('Git Bash is never offered through Homebrew', () {
+      expect(installHints('bash', 'unknown'), isEmpty);
+    });
+
     test('unknown OS falls back to Homebrew for brew-able tools', () {
       expect(
         installHints('glab', 'unknown').single.command,
         'brew install glab',
       );
     });
+  });
+
+  test('no remote command runs `bash` as argv[0]', () {
+    // `bash` is in the catalog so Windows hosts can name Git Bash (MADR 0070),
+    // which also makes the POSIX probe resolve it on every host and the
+    // executor rewrite any argv[0] of `bash` to that path. Harmless only while
+    // no command's argv[0] is `bash`; scripts run as `sh -c`. This pins it.
+    final argvBash = RegExp(
+      r'\[\s*(?:const\s+)?'
+      "['\"]"
+      r'bash'
+      "['\"]"
+      r'\s*,',
+    );
+    final offenders = <String>[];
+    for (final f in Directory('lib').listSync(recursive: true)) {
+      if (f is! File || !f.path.endsWith('.dart')) continue;
+      final lines = f.readAsLinesSync();
+      for (var i = 0; i < lines.length; i++) {
+        if (lines[i].trimLeft().startsWith('//')) continue;
+        if (argvBash.hasMatch(lines[i])) offenders.add('${f.path}:${i + 1}');
+      }
+    }
+    expect(offenders, isEmpty);
   });
 }

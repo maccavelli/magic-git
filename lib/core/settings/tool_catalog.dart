@@ -98,9 +98,9 @@ class ToolSpec {
   /// Minimum version the app relies on, or null if any version is acceptable.
   final ToolVersion? minVersion;
 
-  /// Restricts relevance to a single OS ('macos' | 'linux'); null = all. The
-  /// file watchers are the only OS-specific tools: fswatch on macOS,
-  /// inotifywait on Linux.
+  /// Restricts relevance to a single OS ('macos' | 'linux' | 'windows'); null
+  /// = all. The OS-specific tools are the file watchers (fswatch on macOS,
+  /// inotifywait on Linux) and Git Bash (Windows, MADR 0070).
   final String? onlyOs;
 
   /// Documentation / install landing page.
@@ -115,7 +115,8 @@ class ToolSpec {
     required this.docsUrl,
   });
 
-  /// Whether this tool is relevant on [os] ('macos' | 'linux' | 'unknown').
+  /// Whether this tool is relevant on [os] ('macos' | 'linux' | 'windows' |
+  /// 'unknown').
   /// When the OS isn't yet known (disconnected), everything is relevant so the
   /// panel can still describe the full toolset.
   bool relevantOn(String os) =>
@@ -133,6 +134,18 @@ const List<ToolSpec> kToolCatalog = [
     // The app uses `--end-of-options` throughout, added in git 2.24.
     minVersion: ToolVersion(2, 24, 0),
     docsUrl: 'https://git-scm.com/downloads',
+  ),
+  ToolSpec(
+    bin: 'bash',
+    tier: ToolTier.essential,
+    purpose:
+        "Windows hosts: Git Bash, from Git for Windows, runs Magic Git's "
+        'commands as the OpenSSH default shell.',
+    // Only a Windows host needs it named: everywhere else a POSIX shell is
+    // the platform (MADR 0070, Amendment 0070.1). Its Settings path is a
+    // Windows path, which the Windows probe tries first.
+    onlyOs: 'windows',
+    docsUrl: 'https://gitforwindows.org/',
   ),
   ToolSpec(
     bin: 'glab',
@@ -212,16 +225,17 @@ class InstallHint {
 }
 
 /// Platform-aware install/upgrade guidance for [bin] on [os] ('macos' |
-/// 'linux' | anything else → generic). We only detect the OS family, not the
+/// 'linux' | 'windows' | anything else → generic). We only detect the OS family, not the
 /// Linux distro, so Linux returns both apt- and dnf-based options plus a
 /// rootless fallback for locked-down bastions where the user has no sudo.
 List<InstallHint> installHints(String bin, String os) {
   if (os == 'macos') return _macHints(bin);
   if (os == 'linux') return _linuxHints(bin);
+  if (os == 'windows') return _windowsHints(bin);
   // Unknown host: offer the most universal guidance (Homebrew works on macOS
   // and Linux) plus a pointer to the docs.
   return [
-    if (bin != 'inotifywait')
+    if (bin != 'inotifywait' && bin != 'bash')
       InstallHint('Homebrew (macOS/Linux)', 'brew install $bin'),
   ];
 }
@@ -235,6 +249,18 @@ List<InstallHint> _macHints(String bin) => switch (bin) {
   'gh' => const [InstallHint('Homebrew', 'brew install gh')],
   'fswatch' => const [InstallHint('Homebrew', 'brew install fswatch')],
   // inotifywait is Linux-only; nothing to install on macOS.
+  _ => const [],
+};
+
+/// winget ships with every supported Windows; each id is the package's own.
+List<InstallHint> _windowsHints(String bin) => switch (bin) {
+  // Git Bash comes with Git for Windows: one install for both.
+  'git' || 'bash' => const [
+    InstallHint('winget (Git for Windows)', 'winget install --id Git.Git -e'),
+  ],
+  'gh' => const [InstallHint('winget', 'winget install --id GitHub.cli -e')],
+  'glab' => const [InstallHint('winget', 'winget install --id GLab.GLab -e')],
+  // The watchers are macOS/Linux tools.
   _ => const [],
 };
 

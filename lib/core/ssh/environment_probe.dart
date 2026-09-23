@@ -9,7 +9,9 @@ import 'ssh_command_executor.dart';
 /// user-installed tools (e.g. Homebrew's `/opt/homebrew/bin`) are found, and
 /// (b) rewrite each command's binary to its resolved absolute path.
 class RemoteEnvironment {
-  /// 'macos' | 'linux' | 'unknown'.
+  /// 'macos' | 'linux' | 'windows' | 'unknown'. `windows` is a Windows host
+  /// whose SSH shell is Git Bash (or another MSYS/Cygwin shell), which is the
+  /// only way a Windows host runs this POSIX probe at all (MADR 0070).
   final String os;
 
   /// Augmented PATH: override dirs, then per-user dirs (`$HOME/.local/bin`,
@@ -75,6 +77,7 @@ class RemoteEnvironment {
   String get osLabel => switch (os) {
     'macos' => 'macOS',
     'linux' => 'Linux',
+    'windows' => 'Windows',
     _ => 'Unknown',
   };
 }
@@ -123,6 +126,12 @@ class EnvironmentResolver {
         os = switch (raw) {
           'Darwin' => 'macos',
           'Linux' => 'linux',
+          // Git Bash reports e.g. `MINGW64_NT-10.0-26100`.
+          _
+              when raw.startsWith('MINGW') ||
+                  raw.startsWith('MSYS') ||
+                  raw.startsWith('CYGWIN') =>
+            'windows',
           _ => 'unknown',
         };
       } else if (line.startsWith('PATH=')) {

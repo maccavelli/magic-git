@@ -413,3 +413,37 @@ setting is machine-wide.
       probe then reported as the Bash it found: `Actual: '…/mgw_canon_…/pwned'`;
     * spliced raw, the script failed to run (`Expected: <0>`, `Actual: <1>`).
   * `flutter analyze`: No issues found. Full suite: `03:03 +4360 ~3: All tests passed!`, 0 `[E]`.
+* **Phase 2 (2026-09-23).**
+  * `tool_catalog.dart`: the D-f `bash` entry, placed after `git`, with `onlyOs: 'windows'`. Windows
+    install hints: `git` and `bash` → `winget install --id Git.Git -e` (one install for both); `gh`
+    and `glab` → their winget ids. The generic unknown-host Homebrew hint now excludes `bash` as
+    well as `inotifywait`: "brew install bash" is not Git Bash.
+  * `environment_probe.dart`: `MINGW*`, `MSYS*` and `CYGWIN*` → `windows`, label `Windows`.
+    `app_settings.dart`: the doc comment.
+  * **What else reads `os`.** Every branch on the OS value was checked:
+    * `install_planner.dart` plans nothing for `windows`, and says there is no supported package
+      manager. The winget hints are shown instead;
+    * sideload rows are limited to `linux`/`macos`;
+    * `tool_health.dart` and the sheets only distinguish `unknown`.
+
+    No other change was needed.
+  * **Existing tests changed by the entry: none.** The full suite passed with the entry and no test
+    edits.
+  * **New tests.**
+    * `tool_catalog_test.dart`: Windows-only relevance and tier, winget hints, no Homebrew hint for
+      `bash`, and the argv[0] scan over `lib/`.
+    * `environment_probe_test.dart`: the three `uname` spellings map to `windows`.
+    * `tool_catalog_single_source_test.dart`: the Settings sheet shows a path field for every
+      overridable binary, `bash` included. That file is the catalog's derivation test, the natural
+      home for "a catalog entry is all it takes".
+  * **Seen to fail** (`mutate_p2.py`), 5 of 5 caught, each by its intended test:
+    * no `bash` entry (Settings field, relevance);
+    * no Windows hints;
+    * a Homebrew hint for `bash`;
+    * MINGW unmapped;
+    * a mutant `['bash', '-c', 'true']` in `lib/` (the scan).
+  * **Noted for the device gate, not changed:** the Bash row's placeholder is the generic
+    `/path/to/bash (optional)`. Its value will be a Windows path (`C:\Program Files\Git\bin\bash.exe`),
+    and `settings_sheet.dart` is not in this phase's files.
+  * `flutter analyze`: No issues found (after sorting one import block the new test added). Full
+    suite: `03:00 +4366 ~3: All tests passed!`, 0 `[E]`.
