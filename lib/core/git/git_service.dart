@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:isolate';
 
+import 'package:flutter/foundation.dart' show visibleForTesting;
+
 import '../exec/operation_activity.dart';
 import '../forge/forge.dart';
 import '../parse/parse_worker.dart';
@@ -371,6 +373,49 @@ class GitWorktree {
 
 /// The all-zero object id git reports for an unborn HEAD.
 const String _nullOid = '0000000000000000000000000000000000000000';
+
+/// The shell script [GitService.generateCommitMessage] runs on the host to
+/// preview the `prepare-commit-msg` hook's message. Exit 3 means "no hook"
+/// (the caller falls back to manual entry); on success stdout is the message.
+/// Public only so the test runs the shipped text, never a retyped copy.
+///
+/// **It must clean up when killed**, and a trailing `rm` cannot: a timed-out
+/// command gets SIGTERM to the `sh` process alone and SIGKILL 400 ms later
+/// (`LocalCommandExecutor._killEscalate`,
+/// `SSHCommandExecutor.killAndCloseSession`), and POSIX `sh` defers a trap
+/// until its foreground child exits. So the hook runs in the background and
+/// the shell `wait`s for it: a signal interrupts `wait` at once, the TERM/INT
+/// trap exits, and the EXIT trap stops the hook and removes the scratch file
+/// inside the grace. Run in the foreground, a killed preview left its file in
+/// the git dir and its hook still running — an AI hook calling its provider
+/// after the app had given up (MADR 0068, Amendment 0068.1).
+///
+/// A SIGKILL with no TERM first still escapes every trap, so each preview
+/// first sweeps leftovers **older than a day** (`-mtime +0`, measured to mean
+/// that on both BSD and GNU `find`) — never a fresh one, which may be another
+/// tab's preview in flight.
+@visibleForTesting
+const String kCommitMessagePreviewScript =
+    // Prefer core.hooksPath; otherwise resolve the hooks dir via
+    // `git rev-parse --git-path hooks` (respecting core.hooksPath first) so
+    // a linked worktree/submodule — where `.git` is a file — still finds it.
+    'hp=\$(git config --get core.hooksPath 2>/dev/null); '
+    '[ -n "\$hp" ] || hp=\$(git rev-parse --git-path hooks 2>/dev/null || echo .git/hooks); '
+    'hook="\$hp/prepare-commit-msg"; '
+    '[ -x "\$hook" ] || exit 3; '
+    'dir=\$(git rev-parse --git-dir 2>/dev/null || echo .git); '
+    'find "\$dir" -maxdepth 1 -name "MAGICGIT_MSG_PREVIEW.*" -mtime +0 -delete 2>/dev/null; '
+    'tmp=\$(mktemp "\$dir/MAGICGIT_MSG_PREVIEW.XXXXXX") || exit 1; '
+    'pid=; '
+    'trap \'[ -n "\$pid" ] && kill "\$pid" 2>/dev/null; rm -f "\$tmp"\' EXIT; '
+    "trap 'exit 143' TERM; "
+    "trap 'exit 130' INT; "
+    // The hook's own stdout/stderr are discarded; only the message file's
+    // content is emitted.
+    '"\$hook" "\$tmp" </dev/null >/dev/null 2>&1 & pid=\$!; '
+    'wait "\$pid"; '
+    'pid=; '
+    'sed -e /^#/d "\$tmp"';
 
 /// Parses `git worktree list --porcelain -z`.
 ///
@@ -3262,25 +3307,10 @@ class GitService {
   /// before the hook writes to it. The hook may invoke a slow AI generator, so
   /// this gets the commit timeout.
   Future<String?> generateCommitMessage(String repoPath) async {
-    // Exit 3 signals "no hook" so we can fall back to manual entry. The hook's
-    // own stdout/stderr are discarded; only the message file content is emitted.
-    const script =
-        // Prefer core.hooksPath; otherwise resolve the hooks dir via
-        // `git rev-parse --git-path hooks` (respecting core.hooksPath first) so
-        // a linked worktree/submodule — where `.git` is a file — still finds it.
-        'hp=\$(git config --get core.hooksPath 2>/dev/null); '
-        '[ -n "\$hp" ] || hp=\$(git rev-parse --git-path hooks 2>/dev/null || echo .git/hooks); '
-        'hook="\$hp/prepare-commit-msg"; '
-        '[ -x "\$hook" ] || exit 3; '
-        'dir=\$(git rev-parse --git-dir 2>/dev/null || echo .git); '
-        'tmp=\$(mktemp "\$dir/MAGICGIT_MSG_PREVIEW.XXXXXX") || exit 1; '
-        '"\$hook" "\$tmp" </dev/null >/dev/null 2>&1 || true; '
-        'sed -e /^#/d "\$tmp"; '
-        'rm -f "\$tmp"';
     final result = await _executor.execute(
       repoPath: repoPath,
       extraEnv: _scopeEnvFor(repoPath),
-      gitArgs: ['sh', '-c', script],
+      gitArgs: ['sh', '-c', kCommitMessagePreviewScript],
       timeout: commitTimeout,
       // Isolated, not the default exclusive: this only PREVIEWS a message. It
       // writes a mktemp scratch file under the git-dir and deletes it, touching

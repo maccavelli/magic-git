@@ -236,3 +236,53 @@ nothing to undo.
   * **Resolutions offered:** (1) background the hook under `wait` with an EXIT trap, in the preview script; (2) make the executors signal the process group, for every command; (3) do 1 here and file 2 as its own record.
   * **Decision (maintainer, 2026-09-22): option 3.** MADR Amendment 0068.1 records the corrected mechanism and the orphan finding; step 1.1 and the two wrong facts-table rows are struck through and corrected above; the spinner's amendment becomes 0068.2. The executors' behaviour is written up in [0069-REPORT](../reports/0069-REPORT-timed-out-commands-signal-only-the-leader.md), not fixed here. No code had been written when this was found.
   * **Files added to scope:** `docs/reports/0069-REPORT-timed-out-commands-signal-only-the-leader.md`.
+* **Phase 0 (2026-09-22).** Scratch clone of `dbd6d1b`; both new tests copied in; the one change
+  the preview test needs to compile — today's script lifted, text unchanged, from
+  `generateCommitMessage` into a top-level `kCommitMessagePreviewScript` — made in the clone only.
+  * **A rehearsal error, caught and redone.** The first run's lift took the **first**
+    `const script =` in `git_service.dart`, which belongs to the commit-template reader, not the
+    preview; its "unchanged text" check only looked at the declaration's shape. The test
+    therefore ran a script that never invokes a hook, and failed on `HOOK_PID never appeared` —
+    a harness failure, not the defect, and not evidence. Traced with `sh -x`, the lift was
+    re-anchored on the preview method and now asserts the lifted text contains
+    `MAGICGIT_MSG_PREVIEW`; the lifted script was confirmed to return a fast hook's message.
+  * **Second run — the real negative:**
+    * `a preview killed like a timed-out command leaves no scratch file and no running hook` —
+      **fails**: `Actual: ['MAGICGIT_MSG_PREVIEW.4ROqZo']` / "the killed preview must remove its
+      scratch file". The test stops at that first expectation, so its orphaned-hook assertion was
+      not reached on the unmodified tree; the orphan is evidenced by D1's probe, and by this
+      case passing after Phase 1.
+    * `a leftover older than a day is swept` — **fails**: `Expected: false` / `Actual: <true>` /
+      "what a SIGKILL left behind is collected by the next preview".
+    * `a preview that completes …` and `a fresh leftover … is not swept` — **pass**, as they
+      must: both describe behaviour the shipped script already has.
+    * `the compact back bar keeps its capsule at the left edge` — **fails**: `Expected: a value
+      less than or equal to <20>` / `Actual: <256.04999923706055>`.
+    * `a bare inline button in a wide left-aligned slot stays left` — **fails**: `Expected: a
+      value less than or equal to <1>` / `Actual: <158.25>`.
+  * Also measured before Phase 1: step 1.1's `-mtime +0` selects only a 25-hour-old file, never a
+    fresh or 23-hour-old one, on **both** macOS `find` and the remote host's GNU `find` — BSD and
+    GNU round ages differently, so this was checked rather than assumed. The step stands as
+    written.
+  * AC1 met. The two test files stay uncommitted until the phase that makes each pass.
+* **Phase 1 (2026-09-22).** As corrected by D1: the preview script is now the top-level
+  `@visibleForTesting const kCommitMessagePreviewScript` (house style: `package:flutter/foundation.dart
+  show visibleForTesting`), with the sweep (`-mtime +0`), `pid=`, an EXIT trap that stops the hook
+  and removes the scratch file, `exit 143`/`exit 130` traps for TERM/INT, and the hook run as
+  `… & pid=$!; wait "$pid"; pid=;`. The trailing `rm` is gone; the doc comment carries both
+  reasons (the kill sequence, and `sh` deferring a trap while a foreground child runs).
+  * `flutter test test/commit_message_preview_test.dart test/git_service_test.dart`: `00:02 +53:
+    All tests passed!`, 0 `[E]` — the killed-preview case now passes **both** assertions,
+    including the orphaned-hook one the unmodified tree never reached. `flutter analyze`: `No
+    issues found! (ran in 5.7s)`. `dart format`: the test file reflowed, no content change.
+  * **The remote host too, since its `/bin/sh` is bash and `wait` semantics differ by shell.**
+    A Python probe sent over `ssh … python3 -` runs the script under that host's `/bin/sh`
+    (`/usr/bin/bash`, git 2.48.1), killed the executors' way. The script it sends is extracted from
+    the Dart source and **checked byte for byte against the value Dart itself evaluates** (a first
+    extraction read apostrophes inside a `//` comment as quotes and sent a corrupted script, so
+    the check exists for a reason). Results:
+    * shipped (new) script — `killed: leftovers=[] hook_orphaned=False`; `completes: exit=0
+      stdout='a generated message' stale_swept=True fresh_kept=True`;
+    * **seen to fail:** the pre-0068 script taken from `HEAD` — `killed:
+      leftovers=['MAGICGIT_MSG_PREVIEW.YK5weS'] hook_orphaned=True`; `stale_swept=False`.
+  * AC2 and AC3 met.
