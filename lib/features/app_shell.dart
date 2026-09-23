@@ -917,7 +917,12 @@ class _AppShellState extends ConsumerState<AppShell> {
       // Collapsing is a per-repository workspace preference, so this needs a
       // repository — `connected` already implies one (MADR 0066).
       'global.toggleNavigator': connected
-          ? () => unawaited(toggleNavigatorCollapsed(ref, connection.repoPath!))
+          ? () => unawaited(
+              toggleNavigatorCollapsed(
+                ProviderScope.containerOf(context, listen: false),
+                connection.repoPath!,
+              ),
+            )
           : null,
       'global.toggleFileView': () =>
           ref.read(fileViewVisibleProvider.notifier).toggle(),

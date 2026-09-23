@@ -64,23 +64,31 @@ WorkspacePreferencesBinding watchWorkspacePreferences({
 /// global command and its View-menu item (MADR 0066). The pages read the same
 /// record, so the rail or the pane appears on the next frame.
 ///
-/// A session with no repository identity (disconnected, a widget test) has
-/// nowhere to persist, so this is a no-op rather than a write to a key that
-/// would never be read back.
+/// Takes the [container] rather than a `WidgetRef` because the two callers
+/// live on opposite sides of the tab boundary: `AppShell` runs inside the
+/// active tab's container, while `TabsHost` — which receives the native menu's
+/// invocation — runs in the root one and must act on the *active tab's*
+/// container, as its sibling menu cases do. Reading through the root container
+/// wrote the preference where no page was watching, which is how ⌥⌘N shipped
+/// doing nothing (0066-PLAN, deviation D2).
+///
+/// A session with no repository identity (disconnected, a widget test with no
+/// override) has nowhere to persist, so this is a no-op rather than a write to
+/// a key that would never be read back.
 Future<void> toggleNavigatorCollapsed(
-  WidgetRef ref,
+  ProviderContainer container,
   String repositoryPath,
 ) async {
-  final identity = await ref.read(
+  final identity = await container.read(
     repositoryUiIdentityProvider(repositoryPath).future,
   );
   if (identity == null) return;
-  final current = await ref.read(
+  final current = await container.read(
     repositoryWorkspacePrefsProvider(repositoryPath).future,
   );
   await saveRepositoryWorkspacePrefs(
     identity: identity,
     next: current.copyWith(navigatorCollapsed: !current.navigatorCollapsed),
   );
-  ref.invalidate(repositoryWorkspacePrefsProvider(repositoryPath));
+  container.invalidate(repositoryWorkspacePrefsProvider(repositoryPath));
 }

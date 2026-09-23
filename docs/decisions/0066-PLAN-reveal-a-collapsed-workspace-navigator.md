@@ -276,3 +276,33 @@ previous behaviour, and any repository whose navigator was revealed simply stays
   * What to look for: History on that tab shows a 28 pt rail labelled "Commits"; clicking it
     restores the commit list; ⌥⌘N hides and shows it; View ▸ Show Navigator carries a checkmark
     that follows.
+* **D2 (2026-09-22, deviation, after Phase 2 shipped): ⌥⌘N did nothing on the device.**
+  * **Reported** by the maintainer on the installed build. The build was confirmed to contain
+    the change (`global.toggleNavigator` in the binary, `workspace-navigator-reveal` and
+    `toggleNavigatorCollapsed` in `App.framework`), so it was not a stale install.
+  * **Cause: the wrong provider container.** The native ⌥⌘N key equivalent is consumed by the
+    menu item, so the command arrives through `TabsHost._handleMenuCall`, which runs in the
+    **root** container while each tab's pages live in their own. Every sibling case reads
+    through `c`, the active tab's container; the `toggleNavigator` case passed the host's own
+    `ref` (`tabs_host.dart:361` as shipped in `dd38c36`), so the preference was written and
+    invalidated where no page was watching. The Flutter-side ⌥⌘N path in `AppShell` was
+    correct, which is why the widget test — one container, no tabs — passed.
+  * **Fix.** `toggleNavigatorCollapsed` now takes a `ProviderContainer` instead of a
+    `WidgetRef`: `TabsHost` passes the active tab's `c`, `AppShell` passes
+    `ProviderScope.containerOf(context, listen: false)`. One implementation, and the caller
+    states which container it means.
+  * **Regression test** in `test/tabs_host_test.dart`: a connected tab with a real identity,
+    `toggleNavigator` sent over the `magicgit/menu` channel, and the assertion that **that
+    tab's** record flipped. **Seen to fail** with the menu routed through the root container
+    again: `Expected: <true>` / `Actual: <false>` / "the menu item toggled the pane in the tab
+    the user is looking at, not in the host's root container". It needed its own container
+    factory — the file's shared one pins every tab disconnected, and overriding
+    `connectionProvider` twice throws.
+  * **Files added to scope:** `test/tabs_host_test.dart`.
+  * `flutter analyze`: `No issues found! (ran in 5.5s)` — a first run reported an unused import
+    and an out-of-order one in the test, both fixed before the commit.
+    `flutter test test/tabs_host_test.dart test/workspace_navigator_reveal_test.dart
+    test/navigator_label_scan_test.dart`: `00:02 +19: All tests passed!`, 0 `[E]`.
+    Full suite: `02:52 +4327 ~3: All tests passed!`, 0 `[E]`.
+  * **The device check (step 3.3) needs a rebuild**, since the fix is in the shipped bundle's
+    Dart and the maintainer tested the previous install.

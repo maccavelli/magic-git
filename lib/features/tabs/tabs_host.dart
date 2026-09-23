@@ -358,7 +358,7 @@ class _TabsHostState extends ConsumerState<TabsHost> with WindowListener {
       case 'toggleNavigator':
         final repoPath = c.read(connectionProvider).repoPath;
         if (repoPath != null) {
-          unawaited(toggleNavigatorCollapsed(ref, repoPath));
+          unawaited(toggleNavigatorCollapsed(c, repoPath));
         }
       case 'toggleFileView':
         c.read(fileViewVisibleProvider.notifier).toggle();

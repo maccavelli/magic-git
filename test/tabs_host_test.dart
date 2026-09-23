@@ -16,11 +16,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
 import 'package:remote_magic_git/core/git/git_service.dart' show PendingOp;
+import 'package:remote_magic_git/core/git/watch_event.dart';
 import 'package:remote_magic_git/core/output/output_log.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/core/providers/window_manager_bridge.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
+import 'package:remote_magic_git/core/storage/repository_ui_identity.dart';
 import 'package:remote_magic_git/core/storage/saved_workspace_set.dart';
 import 'package:remote_magic_git/core/utils/git_porcelain_parser.dart';
 import 'package:remote_magic_git/features/app_shell.dart';
@@ -536,5 +538,79 @@ void main() {
       expect(tabB.container.read(outputLogProvider).visible, !bBefore);
       await _teardownHost(tester);
     },
+  );
+
+  // MADR 0066: View ▸ Show Navigator. Its first wiring read and invalidated
+  // through the HOST's root container instead of the active tab's, so the
+  // write landed where no page was watching and ⌥⌘N did nothing on the device
+  // (0066-PLAN, deviation D2). Every menu case must act on the active tab.
+  testWidgets('Show Navigator writes into the ACTIVE tab\'s container', (
+    tester,
+  ) async {
+    const repo = '/repo-alpha';
+    final c = TabsController(
+      // Its own factory rather than [_tabContainer]: that one pins every tab
+      // disconnected, and this case needs a repository to act on.
+      containerFactory: (overrides) => ProviderContainer(
+        retry: (_, _) => null,
+        overrides: [
+          executorProvider.overrideWithValue(_QuietExecutor()),
+          savedConnectionsProvider.overrideWith((ref) => const []),
+          savedLocalReposProvider.overrideWith((ref) => const []),
+          forgeRepoListProvider.overrideWith((ref, key) async => const []),
+          forgeAuthHostProvider.overrideWith((ref, key) async => null),
+          repoWatchProvider(
+            repo,
+          ).overrideWith((ref) => const Stream<RepoWatchEvent>.empty()),
+          connectionProvider.overrideWith(() => _ConnectedTo(repo)),
+          repositoryUiIdentityProvider(repo).overrideWith(
+            (ref) async => RepositoryUiIdentity.ssh(
+              connectionId: 'a',
+              gitCommonDir: '$repo/.git',
+            ),
+          ),
+          ...overrides,
+        ],
+      ),
+    );
+    addTearDown(c.dispose);
+    c.ensureInitialTab();
+    c.openOrFocus(connectionId: 'a', repoPath: repo, connect: (_) {});
+    await _pumpHost(tester, c);
+
+    final tab = c.tabs.last;
+    final before = await tab.container.read(
+      repositoryWorkspacePrefsProvider(repo).future,
+    );
+
+    await _sendMenu(tester, 'toggleNavigator');
+    await tester.pumpAndSettle();
+
+    final after = await tab.container.read(
+      repositoryWorkspacePrefsProvider(repo).future,
+    );
+    expect(
+      after.navigatorCollapsed,
+      !before.navigatorCollapsed,
+      reason:
+          'the menu item toggled the pane in the tab the user is looking '
+          'at, not in the host\'s root container',
+    );
+    await _teardownHost(tester);
+  });
+}
+
+/// A connection pinned to one repository, so the navigator toggle has a
+/// repository to act on.
+class _ConnectedTo extends ConnectionController {
+  _ConnectedTo(this.repoPath);
+  final String repoPath;
+
+  @override
+  ConnectionState build() => ConnectionState(
+    phase: ConnectionPhase.connected,
+    backend: ConnectionBackend.ssh,
+    repoPath: repoPath,
+    repoPaths: [repoPath],
   );
 }
