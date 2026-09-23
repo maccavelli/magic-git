@@ -1,10 +1,10 @@
 ---
-status: "proposed"
-date: 2026-09-21
+status: "accepted"
+date: 2026-09-22
 decision-makers: [Maintainer]
 consulted: [0063-PLAN-adopt-impeller-renderer-on-macos.md (deviations D2 and D3), 0063-GATES-impeller-on-device.md, 0005-MADR-task-centered-adaptive-repository-workspace.md, 0005-PLAN-task-centered-adaptive-repository-workspace.md, 0060-REPORT-drag-and-drop-engine-feasibility.md, widget-test probes at 600/1000 px, on-device runs on Impeller and a Skia testbed, cli/cli source and issues, gh 2.99.0]
 informed: [Magic Git contributors]
-verified: 2026-09-21
+verified: 2026-09-22
 ---
 
 # Make compact panes reachable, keep drop targets visible under the drag image, show the Output view on every page, strip escape codes from CI logs, and fix the two defects behind the suite's flaky tests

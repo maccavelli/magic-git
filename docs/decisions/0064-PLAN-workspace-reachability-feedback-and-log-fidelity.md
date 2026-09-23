@@ -1,8 +1,8 @@
 ---
-status: "in-progress"
-date: 2026-09-21
+status: "complete"
+date: 2026-09-22
 associated-madr: "0064-MADR-workspace-reachability-feedback-and-log-fidelity.md"
-verified: 2026-09-21  # every "proven at planning time" row below was run on this date
+verified: 2026-09-22  # the on-device gate closed on this date; the "proven at planning time" rows below were run on 2026-09-21
 ---
 
 # Implement: workspace reachability, drop feedback, Output scope, CI log fidelity and suite stability
@@ -380,6 +380,14 @@ All of these runs used scratch clones of `21d32bc`, never this tree.
       previous row still selected.
     * An earlier ⌘[ attempt was discarded as evidence: an unintended ⌘← went out before it.
   * **The Output pane was visible on History and on Branches at 900 pt** (D3 observed in passing).
+* **Phase 7 complete (2026-09-22).** The maintainer ran the remaining 7.3 items on their
+  installed build and reported "phase 7 checks pass": D1 compact Branches and Worktrees, D2 drag
+  hover, D3 Output on History and Branches, D4 the CI log, and D5 the SSH observation. With D1
+  compact History already PASS from 2026-09-21, **AC7 is met**. Written up in
+  [0064-GATES](../reports/0064-GATES-workspace-defects-on-device.md), which also records that
+  the second sitting ran on a build carrying Amendment 0064.1, 0065 and 0066 Phases 1–2 — the
+  only 0064 code that differs from `718a354` is F3's placement, which is what 0064.1 amended and
+  what D3 exercises. 7.4: the GATES record written, both records closed, the index updated.
 * **D4 (2026-09-21, deviation, step 7.3 D1 Branches).**
   * **First report: withdrawn.** It said clicking `main` or a tag doesn't open the compact
     detail. That was an **executor measurement error**. Coordinates were read from thumbnails
