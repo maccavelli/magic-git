@@ -6,11 +6,11 @@ indistinguishable from one that does nothing.  This applies a catalogue of
 deliberate defects ("mutations") to `lib/`, runs the tests that claim to cover
 them, and reports which mutations went UNNOTICED.
 
-    tool/mutate.py catalogue.json            # run every mutation in the file
-    tool/mutate.py catalogue.json --only glab   # substring-filter by label
-    tool/mutate.py catalogue.json --keep      # leave the worktree for inspection
-    tool/mutate.py --check                    # every catalogue: applies, still compiles
-    tool/mutate.py --check a.json b.json      # the same, for the catalogues named
+    scripts/tools/mutate.py catalogue.json            # run every mutation in the file
+    scripts/tools/mutate.py catalogue.json --only glab   # substring-filter by label
+    scripts/tools/mutate.py catalogue.json --keep      # leave the worktree for inspection
+    scripts/tools/mutate.py --check                    # every catalogue: applies, still compiles
+    scripts/tools/mutate.py --check a.json b.json      # the same, for the catalogues named
 
 The catalogue is JSON: a list of objects with
 
@@ -90,8 +90,8 @@ import sys
 import tempfile
 import time
 
-REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-CATALOGUE_DIR = os.path.join(REPO, 'tool', 'mutations')
+REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # scripts/tools/ -> repo
+CATALOGUE_DIR = os.path.join(REPO, 'scripts', 'tools', 'mutations')
 
 # A run takes minutes and is usually redirected to a file, where Python's block
 # buffering would hold every line until exit — turning a live progress report
@@ -125,7 +125,15 @@ ANALYZE_EXIT_CODES = {0, 1, 2, 3}
 
 
 def run(cmd, cwd):
-    return subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
+    # Resolve the executable the way a shell would. On Windows `flutter` and `dart`
+    # are `.bat` launchers, which CreateProcess does not find by bare name — only
+    # PATHEXT lookup (which shutil.which does) turns `flutter` into `flutter.bat`.
+    # On macOS and Linux this resolves to the same file the bare name would.
+    exe = shutil.which(cmd[0]) or cmd[0]
+    # Decode as UTF-8 explicitly: Windows would otherwise use the ANSI code page
+    # and fail on flutter's box-drawing output; elsewhere UTF-8 is already the default.
+    return subprocess.run([exe, *cmd[1:]], cwd=cwd, capture_output=True, text=True,
+                          encoding='utf-8', errors='replace')
 
 
 def load_catalogue(path):
@@ -416,7 +424,7 @@ def main():
     ap.add_argument('catalogues', nargs='*', metavar='catalogue')
     ap.add_argument('--check', action='store_true',
                     help='apply every entry and analyse the package, running no '
-                         'test; every catalogue in tool/mutations/ unless named')
+                         'test; every catalogue in scripts/tools/mutations/ unless named')
     ap.add_argument('--only', default='', help='substring filter on the label')
     ap.add_argument('--keep', action='store_true', help='keep the worktree')
     args = ap.parse_args()

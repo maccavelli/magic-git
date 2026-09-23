@@ -1,7 +1,7 @@
 [
   {
     "label": "p1: R1: the existence check never fails",
-    "file": "tool/records.dart",
+    "file": "scripts/tools/records.dart",
     "find": "} else if (!_exists(root, path)) {",
     "replace": "} else if (false) {",
     "tests": [
@@ -10,7 +10,7 @@
   },
   {
     "label": "p1: fences are not tracked",
-    "file": "tool/records.dart",
+    "file": "scripts/tools/records.dart",
     "find": "        fence = open.group(1);",
     "replace": "        fence = null;",
     "tests": [
@@ -19,7 +19,7 @@
   },
   {
     "label": "p1: inline code spans are not removed",
-    "file": "tool/records.dart",
+    "file": "scripts/tools/records.dart",
     "find": "    if (close < 0) {",
     "replace": "    if (true) {",
     "tests": [
@@ -28,7 +28,7 @@
   },
   {
     "label": "p1: every scheme is treated as relative",
-    "file": "tool/records.dart",
+    "file": "scripts/tools/records.dart",
     "find": "    _scheme.hasMatch(target) || target.startsWith('//');",
     "replace": "    false;",
     "tests": [
@@ -37,7 +37,7 @@
   },
   {
     "label": "p1: reference definitions are not collected",
-    "file": "tool/records.dart",
+    "file": "scripts/tools/records.dart",
     "find": "  if (ref != null) targets.add(unwrap(ref.group(1)!));",
     "replace": "  if (ref != null && false) targets.add(unwrap(ref.group(1)!));",
     "tests": [
@@ -46,7 +46,7 @@
   },
   {
     "label": "p1: R2 is skipped",
-    "file": "tool/records.dart",
+    "file": "scripts/tools/records.dart",
     "find": "        if (!anchors.contains(fragment)) {",
     "replace": "        if (false) {",
     "tests": [
@@ -55,7 +55,7 @@
   },
   {
     "label": "p1: the duplicate-heading suffix is dropped",
-    "file": "tool/records.dart",
+    "file": "scripts/tools/records.dart",
     "find": "      anchors.add(n == 0 ? slug : '$slug-$n');",
     "replace": "      anchors.add(slug);",
     "tests": [
@@ -64,7 +64,7 @@
   },
   {
     "label": "p1: heading links are not reduced to their text",
-    "file": "tool/records.dart",
+    "file": "scripts/tools/records.dart",
     "find": "      .replaceAllMapped(_mdLinkText, (m) => m.group(1)!)\n",
     "replace": "\n",
     "tests": [
@@ -73,7 +73,7 @@
   },
   {
     "label": "p1: R3 blockquote exemption removed",
-    "file": "tool/records.dart",
+    "file": "scripts/tools/records.dart",
     "find": "        if (!line.parsed || line.blockquote) continue;",
     "replace": "        if (!line.parsed) continue;",
     "tests": [
@@ -82,7 +82,7 @@
   },
   {
     "label": "p1: R3 skips .dart files",
-    "file": "tool/records.dart",
+    "file": "scripts/tools/records.dart",
     "find": "    } else if (file.endsWith('.dart')) {",
     "replace": "    } else if (false) {",
     "tests": [
@@ -91,7 +91,7 @@
   },
   {
     "label": "p1: the 0011/0012 allowance becomes three",
-    "file": "tool/records.dart",
+    "file": "scripts/tools/records.dart",
     "find": "    final allowed = twinMadrNumbers.contains(number) ? 2 : 1;",
     "replace": "    final allowed = twinMadrNumbers.contains(number) ? 3 : 1;",
     "tests": [
@@ -100,7 +100,7 @@
   },
   {
     "label": "p1: the PLAN-beside-MADR check is skipped",
-    "file": "tool/records.dart",
+    "file": "scripts/tools/records.dart",
     "find": "      if (madrDirs.isNotEmpty && !madrDirs.contains(_dirname(plan.path))) {",
     "replace": "      if (false) {",
     "tests": [
@@ -109,7 +109,7 @@
   },
   {
     "label": "p1: nextNumber counts only the root tree",
-    "file": "tool/records.dart",
+    "file": "scripts/tools/records.dart",
     "find": "  for (final r in recordsIn(files)) {\n    final n = int.parse(r.number);",
     "replace": "  for (final r in recordsIn([\n    for (final f in files)\n      if (f.startsWith('docs/')) f,\n  ])) {\n    final n = int.parse(r.number);",
     "tests": [
@@ -118,7 +118,7 @@
   },
   {
     "label": "p1: the symlink filter is removed",
-    "file": "tool/records.dart",
+    "file": "scripts/tools/records.dart",
     "find": "      followLinks: false,",
     "replace": "      followLinks: true,",
     "tests": [
@@ -127,7 +127,7 @@
   },
   {
     "label": "p1: ignored files are listed",
-    "file": "tool/records.dart",
+    "file": "scripts/tools/records.dart",
     "find": "    '--exclude-standard',\n",
     "replace": "",
     "tests": [
@@ -136,7 +136,7 @@
   },
   {
     "label": "p1: R5 accepts a missing required key",
-    "file": "tool/records.dart",
+    "file": "scripts/tools/records.dart",
     "find": "      if (!pattern.hasMatch(frontmatter)) {",
     "replace": "      if (false) {",
     "tests": [
@@ -145,7 +145,7 @@
   },
   {
     "label": "p1: R6 docs/ children allow-list accepts anything",
-    "file": "tool/records.dart",
+    "file": "scripts/tools/records.dart",
     "find": "  for (final child in children.difference(_docsChildren)) {",
     "replace": "  for (final child in <String>{}) {",
     "tests": [
@@ -154,7 +154,7 @@
   },
   {
     "label": "p1: R6 index completeness is skipped",
-    "file": "tool/records.dart",
+    "file": "scripts/tools/records.dart",
     "find": "    if (!links.contains(r.path)) {",
     "replace": "    if (false) {",
     "tests": [
@@ -163,7 +163,7 @@
   },
   {
     "label": "follow-up: R5 requires only status:",
-    "file": "tool/records.dart",
+    "file": "scripts/tools/records.dart",
     "find": "  for (final key in ['status', 'verified'])",
     "replace": "  for (final key in ['status'])",
     "tests": [

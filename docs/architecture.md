@@ -24,7 +24,9 @@ lib/
   features/<area>/ widgets, one directory per area of the app
 macos/Runner/      the native shell: windows, menus, Help, entitlements
 test/              flat, roughly one file per unit or widget
-tool/              mutate.py (sabotage harness), records.dart (docs checker)
+scripts/          one-off scripts
+  tools/          mutate.py (sabotage harness), records.dart (docs checker),
+                  devenv/ (read-only developer-environment probe)
 ```
 
 ## The executor seam
@@ -255,12 +257,12 @@ in the [build guide](guides/build-macos.md).
   (no raw NUL bytes in source), `no_real_identifiers_scan_test`,
   `shell_injection_canon_test`, `button_cursor_canon_test`, `watch_stack_structure_test`,
   and the two provider scans above.
-* **A check is not trusted until it has been seen to fail.** `tool/mutate.py` applies a
-  catalogue of deliberate defects (`tool/mutations/*.json`) in a scratch worktree and
+* **A check is not trusted until it has been seen to fail.** `scripts/tools/mutate.py` applies a
+  catalogue of deliberate defects (`scripts/tools/mutations/*.json`) in a scratch worktree and
   reports any the tests did not notice
   ([0030-MADR](decisions/0030-MADR-test-coverage-gaps-are-shaped-not-sized.md)).
-* **Documentation is checked too.** `tool/records.dart`, run by
+* **Documentation is checked too.** `scripts/tools/records.dart`, run by
   `test/docs_records_test.dart`, fails the suite on a broken relative link, anchor or
   `docs/` path mention, on a numbering or frontmatter error, and on any file out of place
-  in this tree. `dart run tool/records.dart next` prints the next free record number
+  in this tree. `dart run scripts/tools/records.dart next` prints the next free record number
   ([0054-MADR](decisions/0054-MADR-docs-link-checker-and-standard-layout-migration.md)).

@@ -7,8 +7,8 @@
 // numbering, and the documentation layout, and `test/docs_records_test.dart`
 // runs it under `flutter test`, the gate every change already passes.
 //
-//     dart run tool/records.dart check [--root <dir>] [--rules links,anchors,...]
-//     dart run tool/records.dart next [--root <dir>]
+//     dart run scripts/tools/records.dart check [--root <dir>] [--rules links,anchors,...]
+//     dart run scripts/tools/records.dart next [--root <dir>]
 //
 // Rules (the MADR's R1–R6): links, anchors, paths, numbering, frontmatter,
 // layout. `dart:io` only, so it runs without `pub get`.
@@ -470,7 +470,7 @@ List<Finding> checkNumbering(Directory root, List<String> files) {
             m.path,
             0,
             '$number carries ${madrs.length} MADRs; renumber the newest '
-                '(the next free number is `dart run tool/records.dart next`)',
+                '(the next free number is `dart run scripts/tools/records.dart next`)',
           ),
         );
       }
@@ -678,9 +678,9 @@ void main(List<String> args) {
       exitCode = findings.isEmpty ? 0 : 1;
     default:
       stderr.writeln(
-        'usage: dart run tool/records.dart check [--root <dir>] '
+        'usage: dart run scripts/tools/records.dart check [--root <dir>] '
         '[--rules ${allRules.join(',')}]\n'
-        '       dart run tool/records.dart next [--root <dir>]',
+        '       dart run scripts/tools/records.dart next [--root <dir>]',
       );
       exitCode = 2;
   }

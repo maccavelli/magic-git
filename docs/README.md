@@ -3,8 +3,9 @@
 Everything written down about Magic Git, beyond the code: how it is built, how to
 build it, and every decision, plan and report behind it. This file is the table of
 contents, and the one place to see what is actually live.
-`tool/records.dart` checks that it stays complete: a record with no row here fails
-`flutter test`.
+`scripts/tools/records.dart` checks that it stays complete: a record with no row here fails
+`flutter test`. The repository's tooling moved from `tool/` to `scripts/tools/` on 2026-09-23; older
+records cite the old paths.
 
 ## I want to…
 
@@ -13,13 +14,14 @@ contents, and the one place to see what is actually live.
 | understand how the app fits together | [architecture.md](architecture.md) |
 | build, install or sign the app | [the build guide](guides/build-macos.md) |
 | run the Xcode unit tests without a certificate | [the build guide](guides/build-macos.md#running-the-xcode-unit-tests-without-a-certificate) |
-| write a new decision record, plan or report | [CLAUDE.md](../CLAUDE.md#decision-records-madr-and-plans), and `dart run tool/records.dart next` for its number |
+| write a new decision record, plan or report | [CLAUDE.md](../CLAUDE.md#decision-records-madr-and-plans), and `dart run scripts/tools/records.dart next` for its number |
 | know why there is no libgit2 | [0001-MADR](decisions/0001-MADR-native-git-libgit2.md) |
 | know why the SSH transport works as it does | [0011](decisions/0011-MADR-ssh-transport-stability-hardening.md), [0012](decisions/0012-MADR-adopt-dartssh2-v3.md), [0014](decisions/0014-MADR-ssh-engine-next-wave-hardening.md), [0024](decisions/0024-MADR-ssh-and-remote-repo-engine-debug-audit.md) |
 | understand the file watcher | [0045-MADR](decisions/0045-MADR-one-owner-per-watcher-concern.md), and the watch section of [architecture.md](architecture.md#watching-for-changes) |
 | know why the entitlements files are never edited | [0042-MADR](decisions/0042-MADR-the-macos-build-mutates-its-own-inputs.md), [0053-MADR](decisions/0053-MADR-in-app-help-and-readme-currency-refresh.md) |
 | know why every provider declares `retry:` | [0017-MADR](decisions/0017-MADR-provider-retry-policy-on-providers.md) |
-| prove that a test or guard can actually fail | [0029-MADR](decisions/0029-MADR-host-scripts-must-be-executed-by-a-test.md), [0030-MADR](decisions/0030-MADR-test-coverage-gaps-are-shaped-not-sized.md), and `tool/mutate.py` |
+| prove that a test or guard can actually fail | [0029-MADR](decisions/0029-MADR-host-scripts-must-be-executed-by-a-test.md), [0030-MADR](decisions/0030-MADR-test-coverage-gaps-are-shaped-not-sized.md), and `scripts/tools/mutate.py` |
+| inventory a developer machine's toolchains and shell environment, read-only | [scripts/tools/devenv/README.md](../scripts/tools/devenv/README.md) |
 | know why the docs are laid out like this, and what checks them | [0054-MADR](decisions/0054-MADR-docs-link-checker-and-standard-layout-migration.md) |
 
 ## Architecture

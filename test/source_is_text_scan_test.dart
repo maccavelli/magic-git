@@ -21,7 +21,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 /// Where source lives. `build/` and `.dart_tool/` are deliberately absent:
 /// generated output is not ours to hold to this.
-const _roots = ['lib', 'test', 'tool', 'integration_test', 'scripts'];
+const _roots = ['lib', 'test', 'integration_test', 'scripts'];
 
 void main() {
   test('no source file contains a raw NUL byte', () {

@@ -102,6 +102,13 @@ the script:
 ./build_macos.sh --unsigned --install # also replaces ~/Applications/Magic Git.app
 ```
 
+**Scripts.** `scripts/` holds one-off scripts (`scripts/generate_app_icons.sh`);
+`scripts/tools/` holds reusable tooling: `mutate.py` and its `mutations/`
+catalogues, `records.dart` (the docs checker), and `devenv/`, a read-only probe of a
+developer machine's toolchains and shell environment (its README says how to run
+it). Until 2026-09-23 the tooling lived in `tool/`, and older records cite those
+paths.
+
 ## Decision records (MADR) and plans
 
 **The layout is the global one** — see *MADR & PLAN file standards* in the
@@ -121,7 +128,7 @@ sits directly in `docs/`.**
 Numbering rules:
 
 - `NNNN` is a zero-padded 4-digit sequence number shared by every record type.
-  **Allocate one with `dart run tool/records.dart next`**, which scans the
+  **Allocate one with `dart run scripts/tools/records.dart next`**, which scans the
   **whole repository** for `NNNN-MADR-*`, `NNNN-PLAN-*`, `NNNN-REPORT-*` and
   `NNNN-GATES-*` and adds 1 to the highest. Never scan a single directory by
   hand — the sequence is repository-wide and does not restart per directory.
@@ -142,11 +149,11 @@ Numbering rules:
   (MADR 0054).
 
 **The tree is checked, not just described.** `test/docs_records_test.dart` runs
-`tool/records.dart` under `flutter test` and fails on: a relative link, anchor or
+`scripts/tools/records.dart` under `flutter test` and fails on: a relative link, anchor or
 `docs/…` path mention that does not resolve; a second MADR on a number (0011 and
 0012 excepted); a PLAN outside its MADR's directory; a record with no `status:`
 or no `verified:`; anything in `docs/` other than the layout above; and a record with no row in
-`docs/README.md`. `dart run tool/records.dart check` prints the same findings.
+`docs/README.md`. `dart run scripts/tools/records.dart check` prints the same findings.
 Fenced blocks, blockquotes and frontmatter are not searched for path mentions,
 so a quotation stays verbatim — and a record that names a file which does not
 exist *yet* writes it without the `docs/` prefix (MADR 0054).

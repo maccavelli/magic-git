@@ -68,6 +68,14 @@ app.*.map.json
 # build configuration, never shared — see Configs/AppInfo.xcconfig.
 /macos/Runner/Configs/Local.xcconfig
 
+# Python tooling under scripts/ (never commit interpreter or tool caches)
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+
 # Android Studio will place build artifacts here
 /android/app/debug
 /android/app/profile

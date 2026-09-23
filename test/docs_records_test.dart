@@ -1,4 +1,4 @@
-// The documentation checker (tool/records.dart, MADR 0054) and the tree it
+// The documentation checker (scripts/tools/records.dart, MADR 0054) and the tree it
 // guards.
 //
 // Two groups. "fixtures" builds a small tree per case with one planted defect
@@ -14,7 +14,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 
-import '../tool/records.dart';
+import '../scripts/tools/records.dart';
 
 /// A correct tree exercising every construct the rules must tolerate: an
 /// anchored link, a dead link inside a fence and inside inline code, a dead
@@ -371,7 +371,7 @@ void main() {
         findings,
         isEmpty,
         reason:
-            'Documentation problems (`dart run tool/records.dart check`):\n'
+            'Documentation problems (`dart run scripts/tools/records.dart check`):\n'
             '${findings.join('\n')}',
       );
     }
