@@ -8,9 +8,10 @@ verified: 2026-09-22
 
 Three things surfaced on 2026-09-22 while investigating a report that the app "spun" on commit
 and then presented the manual-edit screen. **The report itself was not an app defect** — the
-maintainer's `prepare-commit-msg` hook exhausted its own retries — but the investigation left
-two small defects in this app and one open question. Nothing here is decided: each finding
-states what was measured, what was not, and what a fix would have to cover.
+maintainer's `prepare-commit-msg` hook exhausted its own retries, and switching the model it
+calls made commits fast again (Finding 3) — but the investigation left two small defects in this
+app. Nothing here is decided: each finding states what was measured, what was not, and what a fix
+would have to cover.
 
 Host-specific paths are written `<repo>`; the remote host is `<bastion>`.
 
@@ -65,7 +66,7 @@ deviation D5 would settle it in one run. **Do not treat "the spinner costs 58% o
 measured fact.** What is certain: an indeterminate spinner produces continuous frames, and this
 one can be on screen for minutes.
 
-## Finding 3 — the hook itself stalled, and the evidence is gone
+## Finding 3 — the hook itself stalled: provider-side, and now resolved
 
 **The user-visible report.** Commit, the composer spun, it timed out, the manual-edit screen
 appeared. Twice.
@@ -95,6 +96,13 @@ cat /tmp/mg-msg.txt; rm /tmp/mg-msg.txt
 
 90 s or more with a retry line means the provider is stalling on that content and the app is
 waiting faithfully; ~3 s means the difference is inside the app's channel after all.
+
+**Resolved (maintainer, 2026-09-22): provider-side.** Changing the default model in the
+`prepare-commit-msg` binary's configuration made commits fast again. That fits every measurement
+above — the app's invocation, the hook binary, the environment and the staged diff were all
+constant across a call that stalled and a call that finished in five seconds, so the only
+remaining variable was the model serving the request. **Nothing in this app needs to change for
+this finding**, and the capture procedure above is kept only in case it recurs.
 
 **Worth considering either way:** the app discards the hook's stderr (`>/dev/null 2>&1` in the
 preview script), so the "generating via …" and retry lines never reach the Output view. Surfacing
