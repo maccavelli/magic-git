@@ -9,6 +9,7 @@ import '../../core/git/git_service.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/settings/app_settings.dart';
 import '../../core/settings/keymap.dart';
+import '../../core/settings/tool_catalog.dart';
 import '../../core/settings/tool_health.dart';
 import '../../core/ssh/environment_probe.dart';
 import '../../core/storage/known_hosts_store.dart';
@@ -584,7 +585,8 @@ class _SettingsSheetState extends ConsumerState<SettingsSheet> {
               controller: _bin[bin],
               placeholder: resolved != null && resolved.isNotEmpty
                   ? resolved
-                  : '/path/to/$bin (optional)',
+                  : '${toolSpecFor(bin)?.pathExample ?? '/path/to/$bin'} '
+                        '(optional)',
               placeholderStyle: kAppPlaceholderStyle,
               decoration: kAppTextFieldDecoration,
               focusedDecoration: kAppTextFieldFocusedDecoration,

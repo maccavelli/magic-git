@@ -125,11 +125,14 @@ void main() {
     );
     await tester.pumpAndSettle();
     for (final bin in kOverridableBinaries) {
+      // Each field shows an example path in its host's own form: Git Bash's
+      // is a Windows path, the only form it will ever take (MADR 0070).
+      final example = bin == 'bash'
+          ? r'C:\Program Files\Git\bin\bash.exe'
+          : '/path/to/$bin';
       expect(
         find.byWidgetPredicate(
-          (w) =>
-              w is MacosTextField &&
-              w.placeholder == '/path/to/$bin (optional)',
+          (w) => w is MacosTextField && w.placeholder == '$example (optional)',
         ),
         findsOneWidget,
         reason: 'no Settings path field for $bin',

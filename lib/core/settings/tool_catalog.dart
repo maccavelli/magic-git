@@ -106,6 +106,13 @@ class ToolSpec {
   /// Documentation / install landing page.
   final String docsUrl;
 
+  /// The example path the Settings override field shows, in the form this
+  /// tool's path actually takes; null means `/path/to/<bin>`.
+  final String? examplePath;
+
+  /// [examplePath], or the POSIX default.
+  String get pathExample => examplePath ?? '/path/to/$bin';
+
   const ToolSpec({
     required this.bin,
     required this.tier,
@@ -113,6 +120,7 @@ class ToolSpec {
     this.minVersion,
     this.onlyOs,
     required this.docsUrl,
+    this.examplePath,
   });
 
   /// Whether this tool is relevant on [os] ('macos' | 'linux' | 'windows' |
@@ -146,6 +154,8 @@ const List<ToolSpec> kToolCatalog = [
     // Windows path, which the Windows probe tries first.
     onlyOs: 'windows',
     docsUrl: 'https://gitforwindows.org/',
+    // A Windows path: Git Bash only ever lives on a Windows host.
+    examplePath: r'C:\Program Files\Git\bin\bash.exe',
   ),
   ToolSpec(
     bin: 'glab',

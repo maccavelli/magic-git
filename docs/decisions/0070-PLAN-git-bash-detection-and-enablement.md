@@ -42,6 +42,7 @@ the environment health sheet for Windows hosts.
 | `test/shell_injection_canon_test.dart` | 1 (D1) | The probe's raw line under the canon's attack strings. |
 | `test/host_script_coverage_test.dart` | 1 (D2) | `windowsHostProbeScript` registered as executed. |
 | `test/provider_ref_after_await_scan_test.dart` | 3 (D3) | The allowlist keyed by provider name, not line number. |
+| `lib/features/settings/settings_sheet.dart` | 5 (D4) | The override field's example path comes from the catalog. |
 | `lib/core/settings/tool_catalog.dart` | 2 | A `bash` entry (Windows only), and Windows install hints. |
 | `lib/core/ssh/environment_probe.dart` | 2 | `uname` values `MINGW*`, `MSYS*` and `CYGWIN*` map to `os: 'windows'`; the display name. |
 | `lib/core/settings/app_settings.dart` | 2 | The doc comment listing overridable tools. |
@@ -390,6 +391,18 @@ setting is machine-wide.
     6,000-line file, which would recur in this plan's later phases. The scan reports the name of the
     provider it flags.
   * **Files added to scope:** `test/provider_ref_after_await_scan_test.dart`.
+* **D4 (2026-09-23, maintainer direction): the Bash field shows a Windows example.**
+  * **Found in Phase 2 and reported at Phase 4's close:** the Bash override field's placeholder was
+    the generic `/path/to/bash (optional)`, a POSIX path for a value that is always a Windows path.
+    `settings_sheet.dart` was not in the plan's files.
+  * **Decision (maintainer, 2026-09-23):** "make it a windows example obviously."
+  * **Done.** `ToolSpec.examplePath`, with `pathExample` defaulting to `/path/to/<bin>`. The `bash`
+    entry carries `C:\Program Files\Git\bin\bash.exe`, and the Settings field reads it from the
+    catalog, which keeps the catalog the single source.
+    `tool_catalog_single_source_test.dart` now expects that placeholder for `bash` and the default
+    for the rest. **Red first:** on the old field it failed with "no Settings path field for bash".
+  * `flutter analyze`: No issues found. Full suite: `03:05 +4386 ~3: All tests passed!`, 0 `[E]`.
+  * **Files added to scope:** `lib/features/settings/settings_sheet.dart`.
 * **Phase 0 (2026-09-23).** Records: MADR 0070 `accepted`, this plan `in-progress`, the index row.
   The negative rehearsal ran per phase, not up front: each new check was run against deliberately
   broken code in a scratch clone (`p1-clone`) before the phase was committed, which is the stronger
@@ -559,5 +572,5 @@ setting is machine-wide.
     defect. The AppShell cases now assert that the sheet widget itself is gone, and the rerun
     catches it in two cases.
   * `flutter analyze`: No issues found. Full suite: `03:00 +4386 ~3: All tests passed!`, 0 `[E]`.
-  * **Carried to Phase 5:** the Settings Bash row's generic `/path/to/bash (optional)` placeholder
-    (noted in Phase 2), and the device gate itself.
+  * **Carried to Phase 5:** ~~the Settings Bash row's generic `/path/to/bash (optional)`
+    placeholder (noted in Phase 2)~~ resolved by D4; and the device gate itself.
