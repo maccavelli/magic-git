@@ -17,6 +17,10 @@
 // element to the formatter, a whole program to the shell. Any caller value
 // inside it must already be escaped. That is what this asserts.
 
+import 'dart:convert';
+import 'dart:io';
+import 'dart:typed_data';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:remote_magic_git/core/git/git_service.dart';
 import 'package:remote_magic_git/core/git/host_fs_service.dart';
@@ -24,6 +28,7 @@ import 'package:remote_magic_git/core/ssh/command_formatter.dart';
 import 'package:remote_magic_git/core/ssh/shell_escaper.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
+import 'package:remote_magic_git/core/ssh/windows_host_probe.dart';
 
 /// Shell metacharacters in every position that has mattered: command
 /// separation, substitution (both spellings), a newline (which reasoning
@@ -38,6 +43,13 @@ const _payloads = <String>[
   '--upload-pack=touch /tmp/pwned',
   "it's a branch",
 ];
+
+/// PowerShell 7, when installed, runs the Windows probe for real.
+final String? _pwsh = () {
+  final which = Process.runSync('which', ['pwsh']);
+  final path = (which.stdout as String).trim();
+  return which.exitCode == 0 && path.isNotEmpty ? path : null;
+}();
 
 /// Records argv without touching SSH.
 class _Recorder extends SSHCommandExecutor {
@@ -108,6 +120,86 @@ void expectNeverSyntax(List<List<String>> calls, String payload, String what) {
 }
 
 void main() {
+  test('the Windows probe carries a hostile Bash path only as data', () {
+    // The probe reaches the host unformatted (`executeRaw`), under whatever
+    // shell sshd runs — cmd.exe, PowerShell or bash (MADR 0070). A Settings
+    // path is the one caller value in it. It must change nothing but the
+    // Base64 payload, and inside the script nothing but its own literal.
+    final bare = windowsHostProbeScript();
+    for (final payload in _payloads) {
+      final line = encodedPowerShellCommand(
+        windowsHostProbeScript(bashOverride: payload),
+      );
+      expect(
+        line,
+        matches(
+          RegExp(
+            r'^powershell\.exe -NoProfile -NonInteractive '
+            r'-ExecutionPolicy Bypass -EncodedCommand [A-Za-z0-9+/]+=*$',
+          ),
+        ),
+        reason: payload,
+      );
+      final bytes = base64.decode(line.split(' ').last);
+      final data = ByteData.sublistView(Uint8List.fromList(bytes));
+      final script = String.fromCharCodes([
+        for (var i = 0; i < bytes.length; i += 2)
+          data.getUint16(i, Endian.little),
+      ]);
+      final literal = powerShellLiteral(payload.trim());
+      expect(
+        literal,
+        matches(RegExp(r"^'(?:[^']|'')*'$")),
+        reason: 'a PowerShell literal cannot be closed early: $payload',
+      );
+      expect(
+        script,
+        bare.replaceFirst(r'$candidates = @()', '\$candidates = @($literal)'),
+        reason: 'only the literal differs: $payload',
+      );
+    }
+  });
+
+  test('run under PowerShell, a hostile Bash path only fails to match', () {
+    // The executing half of the case above (0070-PLAN D2). Each payload
+    // tries to leave its literal and create a sentinel file; a probe that
+    // kept it data reports no Bash and creates nothing. These are not the
+    // shared payloads: those include `rm -rf /`, which is fine as text and
+    // must never run, not even under a mutation that breaks the quoting.
+    final dir = Directory.systemTemp.createTempSync('mgw_canon_');
+    addTearDown(() => dir.deleteSync(recursive: true));
+    final sentinel = '${dir.path}/pwned';
+    final make = "New-Item -ItemType File -Path '$sentinel'";
+    final payloads = <String>[
+      "'; $make; '",
+      '\$($make)',
+      'a\n$make',
+      "') ; $make ; ('",
+      "x'); $make; #",
+    ];
+    for (final payload in payloads) {
+      final run = Process.runSync(_pwsh!, [
+        '-NoProfile',
+        '-NonInteractive',
+        '-EncodedCommand',
+        encodedPowerShellCommand(
+          windowsHostProbeScript(bashOverride: payload),
+        ).split(' ').last,
+      ]);
+      expect(run.exitCode, 0, reason: '$payload\n${run.stderr}');
+      expect(
+        WindowsHostFacts.parse(run.stdout as String)?.bashPath,
+        isEmpty,
+        reason: payload,
+      );
+      expect(
+        File(sentinel).existsSync(),
+        isFalse,
+        reason: 'the Bash path ran as code: $payload',
+      );
+    }
+  }, skip: _pwsh == null ? 'pwsh is not installed' : false);
+
   for (final payload in _payloads) {
     group('payload ${payload.replaceAll('\n', r'\n')}', () {
       test('GitService keeps caller values literal', () async {

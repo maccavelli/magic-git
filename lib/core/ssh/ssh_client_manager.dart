@@ -331,6 +331,12 @@ class SSHClientManager {
   /// Primary client (commands, SFTP, health). Backward-compatible name.
   SSHClient? get client => _client;
 
+  /// The attached server's SSH identification string, e.g.
+  /// `SSH-2.0-OpenSSH_for_Windows_9.5`; null while nothing is attached.
+  /// How a Windows host is recognised before any command is sent
+  /// (MADR 0070, 0070-PLAN D-a).
+  String? get remoteVersion => _client?.remoteVersion;
+
   /// Client for [SSHCommandExecutor.executeStream]. Falls back to [client]
   /// when the dual stream client failed to connect (degraded mode).
   SSHClient? get streamClient => _streamClient ?? _client;

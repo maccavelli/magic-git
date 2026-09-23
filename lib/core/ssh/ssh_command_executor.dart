@@ -491,6 +491,53 @@ class SSHCommandExecutor implements CommandExecutor {
   /// link can move in 60s — and the sideload's whole audience is air-gapped
   /// hosts behind exactly such links. The timeout stays a safety net against
   /// a wedged transfer, not a clock a slow-but-progressing one can lose to.
+  /// The attached server's SSH identification string (see
+  /// [SSHClientManager.remoteVersion]).
+  String? get remoteVersion => _clientManager.remoteVersion;
+
+  /// Sends [command] to the host's own shell exactly as given: no
+  /// [CommandFormatter] prelude, no `cd`, no environment, no compression.
+  ///
+  /// For the one moment the shell is unknown — probing a Windows host, whose
+  /// `sshd` runs `exec` through `cmd.exe`, PowerShell or bash (MADR 0070,
+  /// 0070-PLAN D-a). A caller passes only text every one of those shells reads
+  /// the same way: the builders in `windows_host_probe.dart`, whose payload is
+  /// Base64. `shell_injection_canon_test.dart` pins the call sites. Otherwise
+  /// the command has the full lifecycle: lane, generation pinning, byte budget,
+  /// telemetry and the timeout's cleanup.
+  Future<SSHCommandResult> executeRaw(
+    String command, {
+    Duration timeout = defaultTimeout,
+    ExecLane lane = ExecLane.isolated,
+  }) {
+    final gen = _clientManager.generation;
+    // The label telemetry and errors show: the payload is not a readable
+    // command, and a Base64 blob in the dashboard helps nobody.
+    const label = ['<raw host command>'];
+    return runWithRetries(
+      () => _run(
+        gen,
+        '/',
+        label,
+        null,
+        null,
+        timeout,
+        false,
+        lane,
+        null,
+        null,
+        rawCommand: command,
+      ),
+      0,
+      enqueue: (attempt) => _scheduler.run(
+        lane,
+        attempt,
+        deadline: timeout + CommandLaneScheduler.watchdogMargin,
+      ),
+      telemetry: _telemetry,
+    );
+  }
+
   @visibleForTesting
   static Duration uploadTimeoutFor(int byteCount) =>
       defaultTimeout + Duration(seconds: byteCount ~/ (64 * 1024));
@@ -799,8 +846,9 @@ class SSHCommandExecutor implements CommandExecutor {
     bool compress,
     ExecLane lane,
     Duration? activityIdle,
-    CommandOutputCallback? onOutput,
-  ) async {
+    CommandOutputCallback? onOutput, {
+    String? rawCommand,
+  }) async {
     // Started before the channel open so the sample's duration reflects the
     // full user-perceived cost of the command, not just the drain.
     if (_clientManager.generation != gen) {
@@ -857,6 +905,7 @@ class SSHCommandExecutor implements CommandExecutor {
         repoPath,
         activityIdle,
         onOutput,
+        rawCommand: rawCommand,
       );
       // Only the read lane, for BOTH signals: this is the lane whose
       // concurrency is being controlled, and a fetch or a commit says nothing
@@ -900,21 +949,25 @@ class SSHCommandExecutor implements CommandExecutor {
     ExecLane lane,
     String repoPath,
     Duration? activityIdle,
-    CommandOutputCallback? onOutput,
-  ) async {
+    CommandOutputCallback? onOutput, {
+    String? rawCommand,
+  }) async {
     final sw = Stopwatch()..start();
     // Compression is honored only when the probe actually found gzip on the
     // host (configureEnvironment's binaries map) — otherwise the command runs
     // uncompressed exactly as before, so a minimal host degrades gracefully.
-    final compressed = compress && _binaryPaths.containsKey('gzip');
-    final command = CommandFormatter.format(
-      repoPath: repoPath,
-      gitArgs: gitArgs,
-      env: _mergedEnv(extraEnv),
-      binaryPaths: _binaryPaths,
-      neutralizeEnv: _neutralizeTokens,
-      compressOutput: compressed,
-    );
+    final compressed =
+        rawCommand == null && compress && _binaryPaths.containsKey('gzip');
+    final command =
+        rawCommand ??
+        CommandFormatter.format(
+          repoPath: repoPath,
+          gitArgs: gitArgs,
+          env: _mergedEnv(extraEnv),
+          binaryPaths: _binaryPaths,
+          neutralizeEnv: _neutralizeTokens,
+          compressOutput: compressed,
+        );
 
     // The session is assigned as soon as the channel opens, so a timeout that
     // fires later (during drain) can still reach it for cleanup below. A

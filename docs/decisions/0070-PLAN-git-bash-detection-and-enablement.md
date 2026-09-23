@@ -1,5 +1,5 @@
 ---
-status: "proposed"
+status: "in-progress"
 date: 2026-09-23
 associated-madr: "0070-MADR-native-windows-hosts-over-ssh.md"
 verified: 2026-09-23
@@ -38,6 +38,9 @@ the environment health sheet for Windows hosts.
 | `lib/core/ssh/windows_host_probe.dart` (new) | 1 | The PowerShell probe script, its encoded command line, the result type and parser, and the enable-command builder. |
 | `lib/core/ssh/ssh_command_executor.dart` | 1 | `remoteVersion` getter; `executeRaw` for the few commands that must reach the host's own shell unformatted. |
 | `lib/core/ssh/ssh_client_manager.dart` | 1 | Expose the connected client's `remoteVersion`. |
+| `test/ssh_command_executor_test.dart` | 1 (D1) | `executeRaw` sends exactly the given text; `remoteVersion` passes through. |
+| `test/shell_injection_canon_test.dart` | 1 (D1) | The probe's raw line under the canon's attack strings. |
+| `test/host_script_coverage_test.dart` | 1 (D2) | `windowsHostProbeScript` registered as executed. |
 | `lib/core/settings/tool_catalog.dart` | 2 | A `bash` entry (Windows only), and Windows install hints. |
 | `lib/core/ssh/environment_probe.dart` | 2 | `uname` values `MINGW*`, `MSYS*` and `CYGWIN*` map to `os: 'windows'`; the display name. |
 | `lib/core/settings/app_settings.dart` | 2 | The doc comment listing overridable tools. |
@@ -179,9 +182,13 @@ deviation: stop and prompt.
        scheduling, and without `CommandFormatter`.
 
      The doc comment states the contract: callers pass only commands whose every character is
-     safe under any shell, as Base64 is. The file's injection canon test is extended to scan
+     safe under any shell, as Base64 is. ~~The file's injection canon test is extended to scan
      `executeRaw` call sites and fail if any passes anything but a `WindowsHostProbe` constant or
-     builder output.
+     builder output.~~ **Replaced (D1):** pinned behaviourally. `shell_injection_canon_test.dart`
+     feeds its attack strings in as the Settings Bash path and asserts the raw line is the fixed
+     prefix plus Base64 only, with the attack text only inside a PowerShell literal once decoded.
+     `ssh_command_executor_test.dart` asserts, through `FakeSshClient`, that `executeRaw` sends
+     exactly the given text.
 1.3. `windows_host_probe.dart`:
      * `const kWindowsHostProbeScript` (the PowerShell of D-b, with a `{{BASH_OVERRIDE}}` slot
        filled by a single-quoted literal);
@@ -336,4 +343,73 @@ setting is machine-wide.
 
 ## Execution record
 
-Not started. This plan is `proposed` until the maintainer approves it.
+* **Approved (maintainer, 2026-09-23):** "accept the madr, plan approved to proceed." MADR 0070 → `accepted`; this plan → `in-progress`.
+* **D1 (2026-09-23, deviation, Phase 1): step 1.2's source scan contradicts the file it was to go in.**
+  * **Evidence.** Step 1.2 asked for `shell_injection_canon_test.dart` to scan `executeRaw` call
+    sites. That file's header records the opposite decision (MADR 0017 G2): it is deliberately not a
+    source scan, because scans there were ~90% noise, and it asserts the injection property by driving
+    real code with attack strings. Found while writing Phase 1; nothing was committed.
+  * **Resolutions offered:**
+    1. behavioural: the canon test drives the probe builders with its attack strings, and
+       `ssh_command_executor_test.dart` pins `executeRaw` through `FakeSshClient`;
+    2. a narrow scan in a new file;
+    3. both.
+  * **Decision (maintainer, 2026-09-23): option 1.** Step 1.2 is struck through and annotated above.
+  * **Files added to scope:** `test/ssh_command_executor_test.dart`,
+    `test/shell_injection_canon_test.dart`, both listed in the Scope table.
+* **D2 (2026-09-23, deviation, Phase 1): two of the repository's own guards fire on the new script.**
+  * **Evidence.** The full suite after Phase 1's code: `+4342 ~3 -2`, the two failures being guards,
+    not behaviour:
+    * `host_script_coverage_test.dart` (MADR 0029): "a new host script must be executed by a test
+      or added to _exempt with a reason. Unclassified: {windowsHostProbeScript}". The script *is*
+      executed, under `pwsh` in `windows_host_probe_test.dart`, but is not registered;
+    * `assertion_strength_scan_test.dart` (MADR 0030): D1's canon case asserts on the script's text
+      and `shell_injection_canon_test.dart` runs no process: "these assert on a generated script's
+      text without executing it".
+  * **Resolutions offered:**
+    1. register the builder as executed, and make the canon case run the probe under `pwsh` with
+       attack strings as the Bash path, asserting no side effect;
+    2. register it, and list the canon file as composition-only.
+  * **Decision (maintainer, 2026-09-23): option 1.** The executing case uses its own harmless
+    payloads, each trying to `touch` a sentinel in a temp directory. The canon's shared payloads
+    include `rm -rf /`, which is fine as text but must never be run, not even by a mutation that
+    breaks the quoting.
+  * **Files added to scope:** `test/host_script_coverage_test.dart`.
+* **Phase 0 (2026-09-23).** Records: MADR 0070 `accepted`, this plan `in-progress`, the index row.
+  The negative rehearsal ran per phase, not up front: each new check was run against deliberately
+  broken code in a scratch clone (`p1-clone`) before the phase was committed, which is the stronger
+  form of 0.2's "compile failures" (a missing symbol proves nothing about a check).
+* **Phase 1 (2026-09-23).**
+  * `windows_host_probe.dart`: the D-b script (`Get-ItemProperty` for the two registry reads, the
+    same values D-b names), `windowsHostProbeScript({bashOverride})`, `encodedPowerShellCommand`,
+    `WindowsHostFacts.parse`, `isWindowsBanner`, `looksLikeCmdExe`, `enableGitBashCommand`,
+    `kDisableGitBashCommand`, `powerShellLiteral`.
+  * `ssh_client_manager.dart` and `ssh_command_executor.dart`: `remoteVersion`, and `executeRaw`,
+    which passes `rawCommand` down `_run`/`_runBody` so the lane, generation pinning, byte budget,
+    telemetry (label `<raw host command>`) and timeout cleanup are the same code as every other
+    command. Compression is off for raw commands.
+  * **Tests.**
+    * `windows_host_probe_test.dart`: 14 cases. Under `pwsh` (7, on this Mac) the script parses
+      clean and runs. A clarification of step 1.4's wording: "prints every key with empty values"
+      holds for the Windows-only keys (`DEFAULT_SHELL`, `GIT_ROOT`, `BASH`, `ADMIN`=0). `PS` and
+      `GIT` are real values on a Mac, and the test asserts exactly that split.
+    * One check, the parse, first read the script from stdin, which `Process.runSync` does not
+      provide, so it parsed an empty string and could not fail. Fixed before any mutation run: it
+      parses the real script from a file and requires at least 50 tokens.
+  * **Seen to fail** (`mutate_p1.py`, scratch clone), 7 of 7 caught, each by the test meant to catch
+    it:
+    * a syntax error (parse and run);
+    * `exit 3` (run);
+    * big-endian encoding (decode, run);
+    * an unescaped literal (literal, apostrophe);
+    * the bare `bash.exe` spelling (shell recognition);
+    * `New-Item -Force` (golden, never-replaces);
+    * a dropped key (run).
+  * **D1 tests** (`mutate_p1b.py`), 3 of 3 caught:
+    * `executeRaw` formatting anyway → "executeRaw sends exactly the given text";
+    * an unescaped literal, and the override spliced raw → the canon's text case.
+  * **D2 tests** (`mutate_p1c.py`, the executing case alone, `--plain-name`), 2 of 2 caught:
+    * with escaping broken, a payload left its literal and **created the sentinel file**, which the
+      probe then reported as the Bash it found: `Actual: '…/mgw_canon_…/pwned'`;
+    * spliced raw, the script failed to run (`Expected: <0>`, `Actual: <1>`).
+  * `flutter analyze`: No issues found. Full suite: `03:03 +4360 ~3: All tests passed!`, 0 `[E]`.

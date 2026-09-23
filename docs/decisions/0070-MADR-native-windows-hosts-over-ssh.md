@@ -1,5 +1,5 @@
 ---
-status: "proposed"
+status: "accepted"
 date: 2026-09-23
 decision-makers: [Maintainer]
 consulted: [a read-only inventory of lib/ (scripts, escaping, watchers, path checks), the failed connection to a Windows 11 host on 2026-09-23, Microsoft Learn (OpenSSH for Windows, PowerShell, cmd.exe, .NET), the Win32-OpenSSH project, Git for Windows and git-scm documentation, dartssh2 3.3.0 source]

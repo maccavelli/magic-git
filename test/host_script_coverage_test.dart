@@ -25,6 +25,11 @@ const _executed = <String>{
   // string assertion could never establish — the guard is a token comparison
   // whose whole value is in the case where it declines to act.
   'watchLockReleaseScript',
+  // Run under pwsh in windows_host_probe_test.dart: it reports every key and
+  // exits 0 where the Windows registry is absent, and parses clean; and in
+  // shell_injection_canon_test.dart with hostile Bash paths, which must
+  // change nothing on the machine (MADR 0070, 0070-PLAN D2).
+  'windowsHostProbeScript',
 };
 
 /// Builders that cannot be executed on the development machine.

@@ -460,6 +460,30 @@ void main() {
     });
   });
 
+  group('executeRaw', () {
+    test('sends exactly the given text: no prelude, no cd, no env', () async {
+      // The one path that reaches a host's own shell unformatted — a Windows
+      // host runs `exec` through cmd.exe, and any POSIX text would be
+      // rejected (MADR 0070). Configure everything the formatter would add,
+      // so a formatted command could not pass for a raw one.
+      final manager = SSHClientManager();
+      final executor = SSHCommandExecutor(manager)
+        ..configureEnvironment(
+          path: '/opt/tools/bin',
+          binaries: {'gzip': '/usr/bin/gzip'},
+        )
+        ..setForgeTokenNeutralization(['GITHUB_TOKEN']);
+      final client = FakeSshClient();
+      manager.bindTestClients(command: client);
+
+      const line = 'powershell.exe -NoProfile -EncodedCommand JABFAA==';
+      final result = await executor.executeRaw(line);
+
+      expect(result.isSuccess, isTrue);
+      expect(client.executeCommands, [line]);
+    });
+  });
+
   group('ExecLane routing across the client slots', () {
     // `executeCommands` holds formatted shell strings (`cd '<repo>' && …`),
     // not argv — so match on a marker substring, never list membership.
