@@ -12,8 +12,8 @@ import '../../core/settings/tool_catalog.dart';
 import '../../core/ssh/environment_probe.dart';
 import '../common/actions.dart';
 import '../common/buttons.dart';
+import '../common/copyable_command_block.dart';
 import '../common/sized_sheet.dart';
-import '../common/tool_icon_button.dart';
 
 /// The health state of one tool for the current host.
 enum _Health { ok, outdated, overridden, missing, unknown }
@@ -510,52 +510,10 @@ class _EnvironmentHealthSheetState
     );
   }
 
-  Widget _hintRow(BuildContext context, InstallHint hint) {
-    final typography = MacosTheme.of(context).typography;
-    return Padding(
-      padding: const EdgeInsets.only(top: 10),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  hint.label,
-                  style: typography.caption1.copyWith(
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
-              ToolIconButton(
-                icon: CupertinoIcons.doc_on_clipboard,
-                tooltip: 'Copy command',
-                onPressed: () =>
-                    Clipboard.setData(ClipboardData(text: hint.command)),
-              ),
-            ],
-          ),
-          const SizedBox(height: 4),
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-            decoration: BoxDecoration(
-              color: MacosColors.black.withValues(alpha: 0.06),
-              borderRadius: BorderRadius.circular(4),
-            ),
-            child: Text(
-              hint.command,
-              style: const TextStyle(
-                fontFamily: 'Menlo',
-                fontSize: 11.5,
-                height: 1.4,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
+  Widget _hintRow(BuildContext context, InstallHint hint) => Padding(
+    padding: const EdgeInsets.only(top: 10),
+    child: CopyableCommandBlock(label: hint.label, command: hint.command),
+  );
 
   Widget _tierChip(BuildContext context, ToolTier tier) {
     final color = switch (tier) {

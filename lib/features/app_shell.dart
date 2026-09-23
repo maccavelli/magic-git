@@ -37,6 +37,7 @@ import 'common/workspace_focus_order.dart';
 import 'common/workspace_navigation.dart';
 import 'common/workspace_preferences_binding.dart';
 import 'connection/connection_landing.dart';
+import 'connection/windows_shell_prompt_sheet.dart';
 import 'dashboard/dashboard_sheet.dart';
 import 'dnd/drop_registry.dart';
 import 'dnd/nav_rail.dart';
@@ -268,6 +269,11 @@ class _AppShellState extends ConsumerState<AppShell> {
   /// second, underlying route being popped if the prompt cleared after the
   /// dialog had already been dismissed but before the bool was reset.
   ModalRoute<dynamic>? _hostKeyDialogRoute;
+
+  /// The Windows shell prompt's own route while it is open (MADR 0070), so
+  /// the listener closes exactly it when the prompt clears — a Reconnect or
+  /// Enable's reconnect starts a connect, which clears the prompt.
+  ModalRoute<dynamic>? _windowsShellRoute;
 
   /// The dashboard sheet's live route while it's open — how the
   /// menu-uncheck path closes exactly that route (and only it). Null when
@@ -721,6 +727,26 @@ class _AppShellState extends ConsumerState<AppShell> {
     });
   }
 
+  void _showWindowsShellPrompt(BuildContext context) {
+    showMacosSheet<void>(
+      context: context,
+      builder: (sheetContext) {
+        _windowsShellRoute = ModalRoute.of(sheetContext);
+        return EscapeDismissible(
+          child: WindowsShellPromptSheet(
+            onOpenSettings: () => _openSettings(context),
+          ),
+        );
+      },
+    ).then((_) {
+      _windowsShellRoute = null;
+      // Any close that was not a decision (Esc, a teardown) releases the
+      // session the stopped connect kept, exactly as Cancel does. A no-op
+      // when the prompt already cleared (Reconnect, Enable).
+      ref.read(connectionProvider.notifier).dismissWindowsShellPrompt();
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final connection = ref.watch(connectionProvider);
@@ -887,6 +913,22 @@ class _AppShellState extends ConsumerState<AppShell> {
         if (route != null && route.isCurrent) {
           Navigator.of(context).pop();
         }
+      }
+    });
+
+    // A connect to a Windows host that stopped at the shell check (MADR
+    // 0070): shown whichever flow started the connect, like the host-key
+    // prompt. Keyed on presence, so Enable's progress and errors update the
+    // open sheet instead of reopening it.
+    ref.listen(connectionProvider.select((c) => c.windowsShellPrompt != null), (
+      previous,
+      next,
+    ) {
+      if (next && previous != true) {
+        _showWindowsShellPrompt(context);
+      } else if (!next) {
+        final route = _windowsShellRoute;
+        if (route != null && route.isCurrent) Navigator.of(context).pop();
       }
     });
 

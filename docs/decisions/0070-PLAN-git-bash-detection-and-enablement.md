@@ -513,3 +513,51 @@ setting is machine-wide.
     * 50 lines inserted above everything passes, which is the point;
     * a new provider using `ref` after `await` fails, naming `#mutantProbeProvider`.
   * `flutter analyze`: No issues found. Full suite: `03:08 +4375 ~3: All tests passed!`, 0 `[E]`.
+* **Phase 4 (2026-09-23).**
+  * `copyable_command_block.dart`: the health sheet's copy row extracted, with the command now a
+    `SelectableText` (the app's existing `show SelectableText` import). The health sheet's
+    `_hintRow` renders it; the look is the same, and its existing tests pass unchanged.
+  * `windows_shell_prompt_sheet.dart`: a `ConsumerWidget` that watches
+    `connectionProvider.windowsShellPrompt`, so "Enabling…" and an Enable error update the open
+    sheet. It shows, per kind:
+    * **not active:** title, cause, Bash path, the machine-wide note, the non-administrator note
+      when `MGW_ADMIN` is 0, the Enable error, the copyable command, the undo command, and
+      Cancel / Reconnect / Enable;
+    * **not installed:** the winget command and Cancel / Open Settings / Reconnect;
+    * **probe failed:** the reason and Cancel / Reconnect.
+  * `app_shell.dart`: a listener keyed on the prompt's *presence*, beside the host-key listener. It
+    shows the sheet in its own route and pops exactly that route when the prompt clears (Reconnect,
+    or Enable's reconnect). Any other close (Esc, a teardown) releases the session, as Cancel does.
+  * **Tests.**
+    * `copyable_command_block_test.dart`: byte-exact copy (special characters, a doubled
+      apostrophe, a trailing space), and the command is selectable.
+    * `windows_shell_prompt_test.dart`, 9 cases:
+      * each kind's text and buttons, with a fake controller recording calls;
+      * the non-admin note;
+      * no second Enable while enabling;
+      * a failed Enable's words shown;
+      * **through `AppShell` against a fake Windows host:** a stopped connect shows the prompt and
+        Cancel releases the session; Esc does the same; Reconnect after the shell is fixed closes
+        the sheet and connects.
+    * Drafting fixes:
+      * one case re-pumped a `ProviderScope` with new overrides, which Riverpod does not allow, so
+        it is split in two;
+      * the connected case left session timers pending at teardown, so it now disconnects first,
+        as the app would.
+  * **Seen to fail** (`mutate_p4.py`, fresh clone, baseline `+11` first), 8 of 8 caught:
+    * copy trimming the command;
+    * the command not selectable;
+    * Enable wired to Reconnect;
+    * Enable live while enabling;
+    * the admin note inverted;
+    * the prompt never shown;
+    * **the prompt never closed**;
+    * Esc keeping the session.
+
+    **"Never closed" was missed on the first run.** Once the prompt cleared, the sheet rendered
+    nothing, so its title vanished while its route and barrier stayed open, which is exactly the
+    defect. The AppShell cases now assert that the sheet widget itself is gone, and the rerun
+    catches it in two cases.
+  * `flutter analyze`: No issues found. Full suite: `03:00 +4386 ~3: All tests passed!`, 0 `[E]`.
+  * **Carried to Phase 5:** the Settings Bash row's generic `/path/to/bash (optional)` placeholder
+    (noted in Phase 2), and the device gate itself.
