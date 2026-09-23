@@ -1,5 +1,5 @@
 ---
-status: "in-progress"
+status: "complete"
 date: 2026-09-22
 associated-madr: "0066-MADR-reveal-a-collapsed-workspace-navigator.md"
 verified: 2026-09-22
@@ -14,8 +14,9 @@ Associated MADR:
 
 After this plan, a collapsed navigator is visible and reversible at every width: a 28 pt rail
 carrying the pane's name stands where the pane was and restores it when clicked, and
-**⇧⌘N** / **View ▸ Show Navigator** toggles it from the keyboard and the menu bar with a
-checkmark that follows the live state. The preference, the presets and the persisted layout are
+**⌥⌘N** / **View ▸ Show Navigator** toggles it from the keyboard and the menu bar with a
+checkmark that follows the live state. (This goal said ⇧⌘N when the plan was approved; that
+chord was already History's — deviation D1 and MADR Amendment 0066.1.) The preference, the presets and the persisted layout are
 unchanged.
 
 ## Scope
@@ -113,11 +114,12 @@ Each phase ends with `flutter analyze`, the phase's tests, and one commit
      showNavigatorItem, "global.toggleNavigator")` in the shortcut sync; a
      `setNavigatorChecked` case beside the others.
 2.6. **`help_book.json`:** add "Show Navigator" to the View-menu inventory string and one
-     sentence to the workspace-chrome topic: what the rail is and that ⇧⌘N does the same.
+     sentence to the workspace-chrome topic: what the rail is and that ~~⇧⌘N~~ ⌥⌘N does the same.
      `test/help_book_json_test.dart` cross-checks the label against the Swift installer.
 2.7. **`workspace_navigator_reveal_test.dart`** (command half), on a connected `AppShell` as
-     `output_view_placement_test.dart` does: ⇧⌘N hides the navigator on History, ⇧⌘N shows it
-     again, asserting the rendered pane and the rail — not the flag.
+     `output_view_placement_test.dart` does: ~~⇧⌘N~~ ⌥⌘N hides the navigator on History and shows
+     it again, asserting the rendered pane and the rail — not the flag. A second case pins that
+     ⇧⌘N still reaches History's "Branch from selected commit" (D1).
 2.8. Verify: `flutter analyze`; the new test; `flutter test test/help_book_json_test.dart
      test/chrome_correctness_test.dart test/keymap_test.dart test/tabs_host_test.dart` — all four
      exist. Commit.
@@ -130,7 +132,7 @@ Each phase ends with `flutter analyze`, the phase's tests, and one commit
      by deleting one page's label in a scratch copy.
 3.2. `flutter analyze`; full suite to a log; `[E]` count 0.
 3.3. `./build_macos.sh --unsigned`; on the `ocp-login` tab: History shows the rail with
-     "Commits"; clicking it restores the commit list; ⇧⌘N hides and shows it; View ▸ Show
+     "Commits"; clicking it restores the commit list; ~~⇧⌘N~~ ⌥⌘N hides and shows it; View ▸ Show
      Navigator carries the right checkmark. Record what was seen.
 3.4. Update both records' status, `docs/README.md`, and the execution record.
      `dart run tool/records.dart check` prints `0 finding(s)`. Commit.
@@ -155,7 +157,8 @@ Each phase ends with `flutter analyze`, the phase's tests, and one commit
 * AC2 — A collapsed navigator shows a 28 pt named rail at standard and wide widths, and none at
   compact width.
 * AC3 — Clicking the rail persists `navigatorCollapsed: false` through `onPreferencesChanged`.
-* AC4 — ⇧⌘N and View ▸ Show Navigator both toggle it, and the menu checkmark follows.
+* AC4 — ~~⇧⌘N~~ ⌥⌘N (D1) and View ▸ Show Navigator both toggle it, and the menu checkmark
+  follows.
 * AC5 — The scan test rejects a `navigator:` without a `navigatorLabel:`.
 * AC6 — The 48 workspace goldens are unchanged and not regenerated.
 * AC7 — Full suite green with 0 `[E]`; records check clean; the device checks recorded.
@@ -304,5 +307,8 @@ previous behaviour, and any repository whose navigator was revealed simply stays
     `flutter test test/tabs_host_test.dart test/workspace_navigator_reveal_test.dart
     test/navigator_label_scan_test.dart`: `00:02 +19: All tests passed!`, 0 `[E]`.
     Full suite: `02:52 +4327 ~3: All tests passed!`, 0 `[E]`.
-  * **The device check (step 3.3) needs a rebuild**, since the fix is in the shipped bundle's
-    Dart and the maintainer tested the previous install.
+  * **Confirmed on the device (maintainer, 2026-09-22): step 3.3 passes.** The rail appears for
+    a collapsed navigator and restores the pane when clicked, ⌥⌘N toggles it, and the View-menu
+    checkmark follows. The installed bundle's `App.framework` is stamped 19:54, two minutes
+    after this fix's commit (`0e58304`, 19:52), so the build under test carries it. **AC4 met**,
+    and with it every acceptance criterion; this plan is `complete`.
