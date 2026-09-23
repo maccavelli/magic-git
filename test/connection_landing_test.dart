@@ -168,14 +168,14 @@ void main() {
     'Connections Manager opens the connections panel with its full toolbar',
     (tester) async {
       await _pump(tester);
-      expect(find.text('Connections'), findsNothing);
+      expect(find.text('Workspaces'), findsNothing);
 
       await tester.tap(find.text('Connections Manager'));
       await tester.pumpAndSettle();
 
       // The panel is open with every workspace action available from its
       // toolbar (each action's own sheet is covered by the switcher tests).
-      expect(find.text('Connections'), findsOneWidget);
+      expect(find.text('Workspaces'), findsOneWidget);
       expect(_byMacosTooltip('Add connection'), findsOneWidget);
       expect(_byMacosTooltip('Add existing repository'), findsOneWidget);
       expect(_byMacosTooltip('Clone repository'), findsOneWidget);

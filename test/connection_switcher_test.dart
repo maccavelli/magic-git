@@ -364,16 +364,17 @@ void main() {
     connectionLabel: 'my-repo',
   );
 
-  testWidgets('B1 switcher button reads Connections for an SSH session', (
+  testWidgets('B1 switcher button reads Workspaces for an SSH session', (
     tester,
   ) async {
     await pumpSwitcher(tester, sshSession);
-    expect(find.text('Connections'), findsOneWidget);
+    expect(find.text('Workspaces'), findsOneWidget);
+    expect(find.text('Connections'), findsNothing);
     expect(find.text('build01.example.com'), findsNothing);
     expect(find.text('my-repo'), findsNothing);
   });
 
-  testWidgets('B2 switcher button reads Connections for a local session', (
+  testWidgets('B2 switcher button reads Workspaces for a local session', (
     tester,
   ) async {
     await pumpSwitcher(
@@ -384,7 +385,8 @@ void main() {
         connectionLabel: 'my-local-repo',
       ),
     );
-    expect(find.text('Connections'), findsOneWidget);
+    expect(find.text('Workspaces'), findsOneWidget);
+    expect(find.text('Connections'), findsNothing);
     expect(find.text('Local'), findsNothing);
     expect(find.text('This Mac'), findsNothing);
     expect(find.text('my-local-repo'), findsNothing);

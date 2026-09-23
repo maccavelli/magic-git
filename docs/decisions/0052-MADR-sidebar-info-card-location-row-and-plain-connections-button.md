@@ -387,3 +387,20 @@ now use `sessionLocationIcon`: a **globe for remote** and a **folder for local**
 `folder` / `folder_fill`. They name a repository within a location, not the location, and the fill
 marks the active repo. The same reasoning keeps the sidebar Repository row on `folder_fill`.
 
+## Amendment 0052.3 (2026-09-23): the button and the manager card read "Workspaces"
+
+**Decision.** The maintainer renamed two labels from **Connections** to **Workspaces**:
+
+- the sidebar button's fixed label;
+- the title of the card it opens (`ConnectionsPanel`).
+
+Everything else in "The button" stands: it is still one fixed label with the same glyph, style and
+`HoverPop`, and it still opens the manager. The landing screen's button still reads **Connections
+Manager**, and so does the help book topic of that name.
+
+- `connection_switcher.dart`: the button label and the card title.
+- The help book's two sentences that name the sidebar button now say **Workspaces**: the overview's
+  sidebar list, and the first paragraph of the Connections Manager topic.
+- Confirmation: tests B1 and B2 in `connection_switcher_test.dart` now pin **Workspaces** on the
+  button for both an SSH and a local session, with **Connections** absent. The landing test and
+  `widget_test.dart` pin the card title.

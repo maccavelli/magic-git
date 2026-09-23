@@ -699,3 +699,18 @@ changed. `flutter analyze`: No issues found. Full `flutter test`: `+4189 ~3: All
 | J4 | unsaved local row back to `folder_fill` | M3 |
 | J5 | landing remote row back to `desktopcomputer` | "recent rows show the globe…" |
 
+### Post-execution change (2026-09-23): button and card read "Workspaces", MADR Amendment 0052.3
+
+A maintainer-requested rename, made without a new plan. In `connection_switcher.dart`, the sidebar
+button's fixed label and the manager card's title change from `Connections` to `Workspaces`. The
+help book's two sentences about the sidebar button follow. The landing screen's **Connections
+Manager** button is unchanged.
+
+**Tests.**
+- B1 and B2 in `connection_switcher_test.dart` are renamed, and expect `Workspaces` with
+  `Connections` absent.
+- `connection_landing_test.dart` ("Connections Manager opens the connections panel…") and
+  `widget_test.dart` pin the card title.
+
+**Red first.** Before each label changed, its tests failed with `Found 0 widgets with text
+"Workspaces"`: B1 and B2 for the button, and the landing test for the card.

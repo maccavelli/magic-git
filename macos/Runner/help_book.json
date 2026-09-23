@@ -57,7 +57,7 @@
               "items": [
                 "Repository — the repository name (the tab alias if you set one, otherwise the folder name). Hover for the full path. Ahead/behind counts and a dirty or conflict dot sit on the right; their tooltip reads, for example, \"2 uncommitted · 1 ahead\", or \"Clean, in sync\".",
                 "Location — This Mac for a local session, or the SSH host. Hover for user@host:port.",
-                "Connections — opens the Connections Manager (see Connections Manager).",
+                "Workspaces — opens the Connections Manager (see Connections Manager).",
                 "Logout — ends the session after a Log out? confirmation. Nothing on the host is deleted."
               ]
             },
@@ -175,7 +175,7 @@
           "sections": [
             {
               "type": "paragraph",
-              "text": "The Connections button in the sidebar (or Connections Manager on the landing screen) opens your local repositories and saved SSH hosts. Its toolbar has Saved workspaces, Add connection, Add existing repository, Clone repository, and Create repository."
+              "text": "The Workspaces button in the sidebar (or Connections Manager on the landing screen) opens your local repositories and saved SSH hosts. Its toolbar has Saved workspaces, Add connection, Add existing repository, Clone repository, and Create repository."
             },
             {
               "type": "heading",

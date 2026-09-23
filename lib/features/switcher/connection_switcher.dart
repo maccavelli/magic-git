@@ -72,7 +72,7 @@ class ConnectionSwitcher extends ConsumerWidget {
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  'Connections',
+                  'Workspaces',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: MacosTheme.of(context).typography.body,
@@ -213,7 +213,7 @@ class _ConnectionsPanelState extends ConsumerState<ConnectionsPanel> {
               padding: const EdgeInsets.fromLTRB(18, 16, 12, 12),
               child: Row(
                 children: [
-                  Text('Connections', style: typography.title2),
+                  Text('Workspaces', style: typography.title2),
                   const Spacer(),
                   ToolIconButton(
                     icon: CupertinoIcons.rectangle_stack,

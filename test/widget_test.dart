@@ -22,6 +22,6 @@ void main() {
     // No saved profiles in a fresh test → the recent pulldown is disabled.
     expect(find.text('No Recent Repositories'), findsOneWidget);
     // The manager panel is not shown until its button is pressed.
-    expect(find.text('Connections'), findsNothing);
+    expect(find.text('Workspaces'), findsNothing);
   });
 }
