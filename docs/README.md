@@ -152,6 +152,7 @@ Audits and investigations that record what was found and decide nothing.
 | 0062 | [Flutter SDK pin currency — 3.47.2 vs. current stable](reports/0062-REPORT-flutter-sdk-pin-currency.md) | `complete` — renderer decision and 3.47.5 bump await the maintainer |
 | 0063 | [Impeller on-device gate](reports/0063-GATES-impeller-on-device.md) | `complete` |
 | 0064 | [Workspace defects on-device gate](reports/0064-GATES-workspace-defects-on-device.md) | `complete` |
+| 0067 | [Commit-message preview and composer findings](reports/0067-REPORT-commit-message-preview-and-composer-findings.md) | `complete` |
 
 ## What "verified" means here
 
