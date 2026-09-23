@@ -17,7 +17,10 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   test('no provider body uses ref in a statement after an earlier await', () {
-    // file:line -> reason. A match here has been checked by hand and is not
+    // file#provider -> reason. Keyed by the provider's declared name, not its
+    // line: a line key went stale whenever anything was added above it in a
+    // long file, and the guard then failed on sites it had already reviewed
+    // (0070-PLAN D3). A match here has been checked by hand and is not
     // a live defect, for one of three reasons (MADR 0050's Option C):
     //  - a textual false positive: the `ref` use is inside a separate
     //    asynchronous context (a Timer/Stream callback), not the provider's
@@ -34,39 +37,39 @@ void main() {
     //    picking the branch, before knowing what to do) — the guard turns a
     //    disposed-mid-`await` throw into a quiet early return instead.
     const allowed = <String, String>{
-      'lib/core/providers/app_providers.dart:3597': //
+      'lib/core/providers/app_providers.dart#autoFetchProvider': //
           'autoFetchProvider: the flagged ref calls are inside its '
           'Timer.periodic callback, a separate async context from the '
           "provider's own (synchronous) build, and are already guarded "
           'with `if (!ref.mounted) return;` before each one.',
-      'lib/core/providers/app_providers.dart:4768': //
+      'lib/core/providers/app_providers.dart#remoteTagsProvider': //
           'remoteTagsProvider: `keepAlive`/`onDispose` only make sense once '
           '`remote` (the awaited value) is known, so they cannot be '
           'hoisted; guarded with `if (!ref.mounted) return null;` instead.',
-      'lib/core/providers/app_providers.dart:5726': //
+      'lib/core/providers/app_providers.dart#forgeProvider': //
           'forgeProvider: `keepAlive` depends on the awaited `forge`, so it '
           'cannot be hoisted; guarded with `if (ref.mounted && ...)` '
           'instead.',
-      'lib/core/providers/app_providers.dart:5809': //
+      'lib/core/providers/app_providers.dart#forgeRepoListProvider': //
           'forgeRepoListProvider: the flagged read is in the `if (local)` '
           "branch; the scan's first-await search lands on the `else` "
           "branch's await, which never runs in the same call as the "
           'flagged branch.',
-      'lib/features/branches/pinned_branches.dart:25': //
+      'lib/features/branches/pinned_branches.dart#pinnedBranchesProvider': //
           'pinnedBranchesProvider: the flagged watch is in the `else` path '
           'of an early-return `if`; the scan\'s first-await search lands on '
           "the `if` branch's await (`return await _legacyPins(...)`), which "
           'never runs in the same call as the flagged watch.',
-      'lib/core/forge/branch_forge_status.dart:179': //
+      'lib/core/forge/branch_forge_status.dart#branchForgeProvider': //
           'branchForgeProvider: each switch case watches a different '
           'provider depending on the awaited `forge`, so none can be '
           'hoisted without watching all of them regardless of forge — a '
           'real behaviour change; guarded with `if (!ref.mounted) return '
           'const {};` instead.',
-      'lib/core/forge/branch_forge_status.dart:219': //
+      'lib/core/forge/branch_forge_status.dart#protectedBranchRulesProvider': //
           'protectedBranchRulesProvider: same shape as branchForgeProvider '
           'above — guarded, not hoisted, for the same reason.',
-      'lib/core/forge/branch_forge_status.dart:297': //
+      'lib/core/forge/branch_forge_status.dart#branchForgeKnowledgeProvider': //
           'branchForgeKnowledgeProvider: same shape as branchForgeProvider '
           'above — guarded, not hoisted, for the same reason.',
     };
@@ -90,9 +93,9 @@ void main() {
         final body = source.substring(start, end);
         final hit = _refAfterFirstAwait(body);
         if (hit == null) continue;
-        final key = '${file.path}:${_lineOf(source, start)}';
+        final key = '${file.path}#${match[1]}';
         if (allowed.containsKey(key)) continue;
-        offenders.add('$key: $hit');
+        offenders.add('$key (line ${_lineOf(source, start)}): $hit');
       }
     }
 
@@ -116,7 +119,7 @@ void main() {
 /// Matches this codebase's provider-declaration convention, the same one
 /// `provider_retry_policy_test.dart` scans for annotation coverage.
 final _declaration = RegExp(
-  r'^final [A-Za-z0-9_]+Provider = '
+  r'^final ([A-Za-z0-9_]+Provider) = '
   r'(FutureProvider|StreamProvider|Provider|NotifierProvider|'
   r'AsyncNotifierProvider|StateNotifierProvider)',
   multiLine: true,

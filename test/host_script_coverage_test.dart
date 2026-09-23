@@ -30,6 +30,10 @@ const _executed = <String>{
   // shell_injection_canon_test.dart with hostile Bash paths, which must
   // change nothing on the machine (MADR 0070, 0070-PLAN D2).
   'windowsHostProbeScript',
+  // Run under pwsh in windows_host_probe_test.dart, where there is no
+  // registry: it must exit 1 with the reason on stderr, the path a denied
+  // Enable takes on a Windows host (0070-PLAN D-d).
+  'enableGitBashScript',
 };
 
 /// Builders that cannot be executed on the development machine.

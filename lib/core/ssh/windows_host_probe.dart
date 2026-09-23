@@ -98,6 +98,15 @@ String enableGitBashCommand(String bashPath) =>
     "New-ItemProperty -Path 'HKLM:\\SOFTWARE\\OpenSSH' -Name DefaultShell "
     '-Value ${powerShellLiteral(bashPath)} -PropertyType String -Force';
 
+/// What Enable runs: [enableGitBashCommand] exactly, told to stop on error and
+/// to report it, so the exit code says whether the value was set (0) or not
+/// (1, with the host's own message on stderr — typically access denied for
+/// an account that is not an administrator).
+String enableGitBashScript(String bashPath) =>
+    'try { ${enableGitBashCommand(bashPath)} -ErrorAction Stop | Out-Null; '
+    'exit 0 } catch { [Console]::Error.WriteLine(\$_.Exception.Message); '
+    'exit 1 }';
+
 /// Undoes [enableGitBashCommand]: every SSH user of the host gets `cmd.exe`
 /// again.
 const String kDisableGitBashCommand =

@@ -41,6 +41,7 @@ the environment health sheet for Windows hosts.
 | `test/ssh_command_executor_test.dart` | 1 (D1) | `executeRaw` sends exactly the given text; `remoteVersion` passes through. |
 | `test/shell_injection_canon_test.dart` | 1 (D1) | The probe's raw line under the canon's attack strings. |
 | `test/host_script_coverage_test.dart` | 1 (D2) | `windowsHostProbeScript` registered as executed. |
+| `test/provider_ref_after_await_scan_test.dart` | 3 (D3) | The allowlist keyed by provider name, not line number. |
 | `lib/core/settings/tool_catalog.dart` | 2 | A `bash` entry (Windows only), and Windows install hints. |
 | `lib/core/ssh/environment_probe.dart` | 2 | `uname` values `MINGW*`, `MSYS*` and `CYGWIN*` map to `os: 'windows'`; the display name. |
 | `lib/core/settings/app_settings.dart` | 2 | The doc comment listing overridable tools. |
@@ -375,6 +376,20 @@ setting is machine-wide.
     include `rm -rf /`, which is fine as text but must never be run, not even by a mutation that
     breaks the quoting.
   * **Files added to scope:** `test/host_script_coverage_test.dart`.
+* **D3 (2026-09-23, deviation, Phase 3): a guard keyed by line numbers went stale.**
+  * **Evidence.** After Phase 3's code the full suite failed in
+    `provider_ref_after_await_scan_test.dart` (MADR 0050) with four "offenders" at
+    `app_providers.dart:3855, 5026, 5984, 6067`. Each is a site the test had already reviewed and
+    allowed, keyed `3597, 4768, 5726, 5809`: `autoFetchProvider`, `remoteTagsProvider`,
+    `forgeProvider` and `forgeRepoListProvider`, pushed down 258 lines by the Windows prompt model
+    and methods. Matched line for line against `HEAD`. No new ref-after-await site was added.
+  * **Resolutions offered:**
+    1. key the allowlist by the flagged provider's name;
+    2. update the four line numbers.
+  * **Decision (maintainer, 2026-09-23): option 1.** Line keys break on any edit above them in a
+    6,000-line file, which would recur in this plan's later phases. The scan reports the name of the
+    provider it flags.
+  * **Files added to scope:** `test/provider_ref_after_await_scan_test.dart`.
 * **Phase 0 (2026-09-23).** Records: MADR 0070 `accepted`, this plan `in-progress`, the index row.
   The negative rehearsal ran per phase, not up front: each new check was run against deliberately
   broken code in a scratch clone (`p1-clone`) before the phase was committed, which is the stronger

@@ -55,6 +55,7 @@ import '../ssh/host_key_prompt.dart';
 import '../ssh/ssh_client_manager.dart';
 import '../ssh/ssh_command_executor.dart';
 import '../ssh/ssh_error_messages.dart';
+import '../ssh/windows_host_probe.dart';
 import '../storage/connection_store.dart';
 import '../storage/known_hosts_store.dart';
 import '../storage/local_repo_store.dart';
@@ -769,6 +770,97 @@ enum ConnectionPhase { disconnected, connecting, connected, error, lost }
 /// `hostKeyPrompt` — those fields exist purely to serve SSH's failure modes
 /// (a network drop, a changed host key) that a local filesystem repo has no
 /// equivalent of.
+/// Why a connect to a Windows host stopped before running any command, and what
+/// the user can do about it (MADR 0070, Amendment 0070.1; 0070-PLAN D-c).
+enum WindowsShellPromptKind {
+  /// Git Bash is installed; the SSH default shell is something else.
+  notActive,
+
+  /// No Git Bash was found (nor a Settings path that exists).
+  notInstalled,
+
+  /// The host looks like Windows, but the probe itself did not answer.
+  probeFailed,
+}
+
+/// The state behind the Windows shell prompt, carried on
+/// [ConnectionState.windowsShellPrompt] the way [HostKeyPrompt] is.
+class WindowsShellPrompt {
+  const WindowsShellPrompt({
+    required this.kind,
+    this.facts,
+    this.detail,
+    this.enableError,
+    this.enabling = false,
+  });
+
+  final WindowsShellPromptKind kind;
+
+  /// What the probe found; null only for [WindowsShellPromptKind.probeFailed].
+  final WindowsHostFacts? facts;
+
+  /// The probe's failure, for [WindowsShellPromptKind.probeFailed].
+  final String? detail;
+
+  /// The host's own words from the last Enable that failed.
+  final String? enableError;
+
+  /// Whether Enable is running now.
+  final bool enabling;
+
+  /// The shell `sshd` runs commands through today, by file name.
+  String get currentShell {
+    final shell = facts?.defaultShell ?? '';
+    if (shell.isEmpty) return 'cmd.exe';
+    return shell.replaceAll('/', r'\').split(r'\').last;
+  }
+
+  /// The exact command that enables Git Bash, as shown and as run; null when
+  /// there is no Git Bash to enable.
+  String? get enableCommand {
+    final bash = facts?.bashPath ?? '';
+    return bash.isEmpty ? null : enableGitBashCommand(bash);
+  }
+
+  /// One sentence naming the real cause — never "not a git repository".
+  String get message => switch (kind) {
+    WindowsShellPromptKind.notActive =>
+      "This Windows host's SSH shell is $currentShell. Magic Git needs Git "
+          'Bash as the shell, and Git Bash is installed.',
+    WindowsShellPromptKind.notInstalled =>
+      "This Windows host's SSH shell is $currentShell, and Git Bash was not "
+          'found. Magic Git needs Git Bash, from Git for Windows, as the shell.',
+    WindowsShellPromptKind.probeFailed =>
+      "This looks like a Windows host, but its SSH shell could not be "
+          'checked${detail == null || detail!.isEmpty ? '.' : ': $detail'}',
+  };
+
+  WindowsShellPrompt _copy({String? enableError, bool enabling = false}) =>
+      WindowsShellPrompt(
+        kind: kind,
+        facts: facts,
+        detail: detail,
+        enableError: enableError,
+        enabling: enabling,
+      );
+
+  /// This prompt while Enable runs.
+  WindowsShellPrompt asEnabling() => _copy(enabling: true);
+
+  /// This prompt after an Enable that failed with [error].
+  WindowsShellPrompt withEnableError(String error) => _copy(enableError: error);
+}
+
+/// Stops a connect at the Windows shell check; handled in `connect()`'s catch.
+class WindowsShellSetupRequired implements Exception {
+  const WindowsShellSetupRequired(this.prompt);
+
+  final WindowsShellPrompt prompt;
+
+  @override
+  String toString() => prompt.message;
+}
+
 enum ConnectionBackend { ssh, local }
 
 class ConnectionState {
@@ -805,6 +897,10 @@ class ConnectionState {
   /// and takes UI priority over [reconnecting] since it can occur mid-retry too.
   final HostKeyPrompt? hostKeyPrompt;
 
+  /// Set when a connect to a Windows host stopped at the shell check
+  /// (MADR 0070); `AppShell` shows the prompt, as it does [hostKeyPrompt].
+  final WindowsShellPrompt? windowsShellPrompt;
+
   /// When the current session reached [ConnectionPhase.connected] — null
   /// while not connected. Drives the dashboard's session-uptime readout.
   final DateTime? connectedAt;
@@ -839,6 +935,7 @@ class ConnectionState {
     this.reconnectAttempt = 0,
     this.reconnecting = false,
     this.hostKeyPrompt,
+    this.windowsShellPrompt,
     this.connectedAt,
     this.sessionEpoch = 0,
     this.scopedGitDirs = const {},
@@ -869,6 +966,8 @@ class ConnectionState {
     bool? reconnecting,
     HostKeyPrompt? hostKeyPrompt,
     bool clearHostKeyPrompt = false,
+    WindowsShellPrompt? windowsShellPrompt,
+    bool clearWindowsShellPrompt = false,
     DateTime? connectedAt,
     int? sessionEpoch,
     Map<String, String>? scopedGitDirs,
@@ -889,6 +988,9 @@ class ConnectionState {
       hostKeyPrompt: clearHostKeyPrompt
           ? null
           : (hostKeyPrompt ?? this.hostKeyPrompt),
+      windowsShellPrompt: clearWindowsShellPrompt
+          ? null
+          : (windowsShellPrompt ?? this.windowsShellPrompt),
       connectedAt: connectedAt ?? this.connectedAt,
       sessionEpoch: sessionEpoch ?? this.sessionEpoch,
       scopedGitDirs: scopedGitDirs ?? this.scopedGitDirs,
@@ -1263,6 +1365,9 @@ class ConnectionController extends Notifier<ConnectionState> {
       // running on a since-abandoned attempt must not log its failure as if
       // it were the *current* connection's problem.
       if (attempt != null && attempt != _attempt) return;
+      // A connect (attempt != null) must hear that the shell is cmd.exe:
+      // it is the cause of every later failure (0070-PLAN D-a).
+      if (e is CmdExeShellDetected && attempt != null) rethrow;
       if (!ref.mounted) return;
       // Leave the executor unconfigured; commands use the inherited PATH.
       // Still surfaced so a persistently failing probe is discoverable
@@ -1473,7 +1578,21 @@ class ConnectionController extends Notifier<ConnectionState> {
       // otherwise fail here as a misleading "not a git repository". Best-effort:
       // on probe failure we fall back to bare-name lookup against the inherited
       // PATH, and validateRepoPath still surfaces a real problem.
-      await _resolveEnvironment(repoPath, attempt: attempt);
+      // A Windows host runs every command through its SSH default shell —
+      // cmd.exe unless configured — and the POSIX commands below need Git
+      // Bash (MADR 0070; 0070-PLAN D-a to D-c). Throws
+      // [WindowsShellSetupRequired] when they cannot run.
+      await _checkWindowsShell(attempt);
+      if (attempt != _attempt || !ref.mounted) return;
+      try {
+        await _resolveEnvironment(repoPath, attempt: attempt);
+      } on CmdExeShellDetected {
+        // The banner did not name Windows, but cmd.exe rejected the POSIX
+        // probe: D-a's fallback. Throws the prompt when it can name the
+        // cause; otherwise the rejection itself is the error.
+        await _checkWindowsShell(attempt, force: true);
+        rethrow;
+      }
       if (attempt != _attempt || !ref.mounted) return;
       final envMs = timings.elapsedMilliseconds;
 
@@ -1619,6 +1738,23 @@ class ConnectionController extends Notifier<ConnectionState> {
         // nor (on a reconnect attempt) resumes the auto-reconnect loop, which
         // would just hit the exact same mismatch and re-prompt forever.
         state = const ConnectionState();
+        return;
+      }
+      if (e is WindowsShellSetupRequired) {
+        // Stopped, but the transport stays: Enable runs over it
+        // (0070-PLAN D-d). Released by Reconnect, Enable's reconnect, or
+        // dismissing the prompt. Not retryable: the shell will not change
+        // on its own.
+        state = ConnectionState(
+          phase: ConnectionPhase.error,
+          error: e.prompt.message,
+          repoPath: repoPath,
+          connectionId: connectionId,
+          connectionLabel: connectionLabel ?? profile.host,
+          host: profile.host,
+          sessionEpoch: _attempt,
+          windowsShellPrompt: e.prompt,
+        );
         return;
       }
       // Whatever failed — the SSH handshake itself, or a post-connect stage
@@ -2315,6 +2451,128 @@ class ConnectionController extends Notifier<ConnectionState> {
       scopedGitDirs: _lastScopedGitDirs,
       reconnecting: true,
     );
+  }
+
+  /// The Windows shell check (0070-PLAN D-a to D-c): on a host whose banner
+  /// names Windows, or on any host when [force]d by cmd.exe's rejection, one
+  /// PowerShell probe reads the SSH default shell and looks for Git Bash.
+  /// Returns when Git Bash is the shell; otherwise throws
+  /// [WindowsShellSetupRequired] naming the cause.
+  Future<void> _checkWindowsShell(int attempt, {bool force = false}) async {
+    final executor = ref.read(executorProvider);
+    if (!force && !isWindowsBanner(executor.remoteVersion)) return;
+    final override = ref.read(appSettingsProvider).binaryOverrides['bash'];
+    final SSHCommandResult result;
+    try {
+      result = await executor.executeRaw(
+        encodedPowerShellCommand(
+          windowsHostProbeScript(bashOverride: override),
+        ),
+        timeout: _windowsProbeTimeout,
+      );
+    } catch (e) {
+      if (attempt != _attempt || !ref.mounted) return;
+      throw WindowsShellSetupRequired(
+        WindowsShellPrompt(
+          kind: WindowsShellPromptKind.probeFailed,
+          detail: e.toString(),
+        ),
+      );
+    }
+    if (attempt != _attempt || !ref.mounted) return;
+    final facts = WindowsHostFacts.parse(result.stdout);
+    if (facts == null) {
+      final said = result.stderr.trim();
+      throw WindowsShellSetupRequired(
+        WindowsShellPrompt(
+          kind: WindowsShellPromptKind.probeFailed,
+          detail: said.isNotEmpty ? said : 'exit ${result.exitCode}',
+        ),
+      );
+    }
+    if (facts.bashIsDefaultShell) return;
+    throw WindowsShellSetupRequired(
+      WindowsShellPrompt(
+        kind: facts.bashFound
+            ? WindowsShellPromptKind.notActive
+            : WindowsShellPromptKind.notInstalled,
+        facts: facts,
+      ),
+    );
+  }
+
+  static const Duration _windowsProbeTimeout = Duration(seconds: 30);
+
+  /// Enable, from the Windows shell prompt (0070-PLAN D-d): sets the
+  /// discovered Git Bash as the host's SSH default shell over the session
+  /// the stopped connect kept, then connects again. On failure the prompt
+  /// stays, carrying the host's own words (access denied, typically).
+  Future<void> enableGitBashShell() async {
+    final prompt = state.windowsShellPrompt;
+    final bash = prompt?.facts?.bashPath ?? '';
+    if (prompt == null ||
+        prompt.kind != WindowsShellPromptKind.notActive ||
+        bash.isEmpty ||
+        prompt.enabling) {
+      return;
+    }
+    final epoch = state.sessionEpoch;
+    state = state.copyWith(windowsShellPrompt: prompt.asEnabling());
+    String? failure;
+    try {
+      final result = await ref
+          .read(executorProvider)
+          .executeRaw(
+            encodedPowerShellCommand(enableGitBashScript(bash)),
+            timeout: _windowsProbeTimeout,
+          );
+      if (!result.isSuccess) {
+        final said = result.stderr.trim();
+        failure = said.isNotEmpty ? said : 'exit ${result.exitCode}';
+      }
+    } catch (e) {
+      failure = e.toString();
+    }
+    // A newer connect or a dismissal owns the state now.
+    if (!ref.mounted ||
+        state.sessionEpoch != epoch ||
+        state.windowsShellPrompt == null) {
+      return;
+    }
+    if (failure != null) {
+      state = state.copyWith(
+        windowsShellPrompt: prompt.withEnableError(failure),
+      );
+      return;
+    }
+    await retryConnect();
+  }
+
+  /// Reconnect, from the Windows shell prompt: the stopped connect again,
+  /// with its own arguments, as a fresh connect rather than a drop recovery.
+  Future<void> retryConnect() async {
+    final profile = _lastProfile;
+    final repoPath = _lastRepoPath;
+    if (profile == null || repoPath == null) return;
+    await connect(
+      profile: profile,
+      repoPath: repoPath,
+      gitlabToken: _lastGitlabToken,
+      githubToken: _lastGithubToken,
+      connectionId: _lastConnectionId,
+      connectionLabel: _lastConnectionLabel,
+      repoPaths: _lastRepoPaths,
+      fsmonitorPaths: _lastFsmonitorPaths,
+      scopedGitDirs: _lastScopedGitDirs,
+    );
+  }
+
+  /// Closes the Windows shell prompt and releases the transport the stopped
+  /// connect kept for Enable.
+  Future<void> dismissWindowsShellPrompt() async {
+    if (state.windowsShellPrompt == null) return;
+    state = state.copyWith(clearWindowsShellPrompt: true);
+    await ref.read(sshClientManagerProvider).disconnect();
   }
 
   /// Switches the active repository on the current host (no reconnect).

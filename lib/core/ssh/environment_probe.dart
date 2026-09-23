@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import '../settings/tool_catalog.dart';
 import 'shell_escaper.dart';
 import 'ssh_command_executor.dart';
+import 'windows_host_probe.dart';
 
 /// The remote host's OS and resolved external-binary locations, discovered once
 /// at connect time. Used to (a) augment the exec channel's minimal `$PATH` so
@@ -82,6 +83,23 @@ class RemoteEnvironment {
   };
 }
 
+/// Thrown by [EnvironmentResolver.resolve] when the host's SSH shell rejected
+/// the POSIX probe the way `cmd.exe` does. The one probe failure that must not
+/// be papered over: every later command fails the same way, and the connect
+/// would otherwise report the next failure, "not a git repository"
+/// (MADR 0070 F3; 0070-PLAN D-a's fallback).
+class CmdExeShellDetected implements Exception {
+  const CmdExeShellDetected(this.stderr);
+
+  /// What the shell said.
+  final String stderr;
+
+  @override
+  String toString() =>
+      "This host's SSH shell rejected Magic Git's commands the way cmd.exe "
+      'does. Magic Git needs a POSIX shell; on Windows, Git Bash.';
+}
+
 /// Probes the remote host once per connection to discover its OS, an augmented
 /// PATH, and the absolute location of each required binary — searching common
 /// user paths (per OS) before system paths, and honoring settings overrides.
@@ -112,6 +130,9 @@ class EnvironmentResolver {
       lane: ExecLane.read,
     );
     if (!result.isSuccess) {
+      if (looksLikeCmdExe(result.stderr)) {
+        throw CmdExeShellDetected(result.stderr);
+      }
       // Probe failed (e.g. odd shell) — fall back to overrides only so the user
       // can still point at the binaries manually.
       return _fromParts('unknown', '', const {}, const {}, overrides);

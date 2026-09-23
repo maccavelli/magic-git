@@ -172,6 +172,29 @@ void main() {
     });
   });
 
+  group('the enable script under pwsh', () {
+    test('fails cleanly where it cannot write the registry', () {
+      // Enable's contract (0070-PLAN D-d): exit 0 only when the value was set,
+      // otherwise exit 1 with the host's own words on stderr, which the prompt
+      // shows. A Mac has no HKLM, so this is the "denied" path, run for real.
+      final run = Process.runSync(_pwsh!, [
+        '-NoProfile',
+        '-NonInteractive',
+        '-EncodedCommand',
+        encodedPowerShellCommand(
+          enableGitBashScript(r'C:\Program Files\Git\bin\bash.exe'),
+        ).split(' ').last,
+      ]);
+      expect(run.exitCode, 1, reason: '${run.stdout}${run.stderr}');
+      expect((run.stderr as String).trim(), isNotEmpty);
+      expect(
+        enableGitBashScript(r'C:\x\bash.exe'),
+        contains(enableGitBashCommand(r'C:\x\bash.exe')),
+        reason: 'Enable runs the command the prompt shows, byte-for-byte',
+      );
+    }, skip: _pwsh == null ? 'pwsh is not installed' : false);
+  });
+
   group('the script under pwsh', () {
     test('parses with no errors', () {
       final dir = Directory.systemTemp.createTempSync('mgw_probe_');
