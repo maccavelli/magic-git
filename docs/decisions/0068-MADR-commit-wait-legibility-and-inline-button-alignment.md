@@ -250,6 +250,8 @@ who gives the button a wide slot and is surprised.
 
 ## Amendment 0068.1 (2026-09-22): the trap alone does not work, and a killed preview orphans the hook
 
+> **Amended by 0068.5 (2026-09-23):** the table below was measured with `sh` started directly. Run by the app, the shipped script still leaves its scratch file behind on a timeout, and in one run the hook too. See Amendment 0068.5.
+
 §A above says the trap removes the file "when the shell dies — which is what the timeout's TERM
 produces". **Measured, that is false.** Both executors signal only the `sh` process —
 `process.kill(ProcessSignal.sigterm)` locally (`local_command_executor.dart:493`),
@@ -337,3 +339,49 @@ callers render as before. The four marked callers each *ask* for left or start a
 button was silently overriding: the same defect as the back bar, on surfaces none of the 48
 workspace goldens renders. The maintainer accepted all four as corrected (0068-PLAN, deviation D3);
 Phase 5's device checklist names them so each is seen.
+
+## Amendment 0068.4 (2026-09-23): the preview's wait costs about 70% of a core, and so does a focused message field
+
+Phase 4 measured the release build of `9626e67` with the 0064 frame probe on this Mac: `top`
+once a second for the app's pid, and the probe's frame counter, in a scratch repository whose hook
+only sleeps.
+
+| State | CPU, mean (n) | Frames |
+|---|---|---|
+| Repository page, idle | 0.0% (30, and 10 on a second launch) | none |
+| Composer open, preview running (spinner) | **69.7%** (15) | 120 fps, every second |
+| Composer open after the timeout, message field focused | **62.1%** (15) | 120 fps, every second |
+| Composer open, field not focused, no spinner | 0.0% (15) | none |
+
+* **The spinner.** Far past the ~5% line §B drew, so by 0068-PLAN step 4.3, option B2 (an
+  elapsed-seconds line in place of the spinner) becomes a follow-up phase, **written and approved
+  separately** — no code under this plan. The figure is the whole preview state: the toolbar's
+  activity indicator animates alongside the spinner, and the probe cannot apportion the frames
+  between them.
+* **A finding outside §B.** A focused message field costs nearly as much. `MacosTextField` in
+  macos_ui 2.2.2 hard-codes `cursorOpacityAnimates: true` (`lib/src/fields/text_field.dart:1491`),
+  so a focused field fades its caret every frame. That is likely true of every `MacosTextField` in
+  the app; it was measured only in the composer (a second field could not be focused with the
+  composer open). Its scope is the maintainer's to set; it is recorded here, not decided.
+
+## Amendment 0068.5 (2026-09-23): in the app, the timed-out preview still leaves its file behind
+
+Amendment 0068.1's table was measured by running `sh` directly, and
+`commit_message_preview_test.dart` does the same. Run by the app, the shipped script does not
+behave that way. Four previews on this Mac timed out at the configured 60 s (the script taken
+verbatim from the app's process table):
+
+| Run | Hook | Scratch file | Hook's shell | Hook's own child |
+|---|---|---|---|---|
+| 1 | `sleep 600` in the foreground | left | **still running, reparented to launchd** | orphaned |
+| 2 | a hook that traps TERM and logs | removed | stopped | — |
+| 3 | the test's hook shape (PID file, foreground `sleep`) | left | stopped | orphaned |
+| 4 | as 3, polled every 10 ms | left | stopped, in the same 10 ms as the outer `sh` | orphaned |
+
+The same script, started from a Python harness with the executor's TERM and SIGKILL 400 ms later,
+cleaned up in all five variants tried (stdout/stderr read or not, stdin a closed pipe or not,
+signalled after 1 s or 5 s). `sh` is bash in both cases, and `/bin` is on the app's `PATH` (the
+logging hook ran `/bin` tools), so neither explains it. **The cause is not yet established**; the
+maintainer chose to diagnose it in the app before choosing a fix (0068-PLAN, deviation D4). Until
+then, §A's first consequence — no scratch file after a timeout — does not hold in the running app.
+The orphaned child in every run is 0069-REPORT's finding, as expected.

@@ -361,3 +361,26 @@ nothing to undo.
     tests passed!`.
   * AC5, AC6 and AC7 met for this phase. The four surfaces D3 found are Phase 5's to see on the
     device.
+* **Phase 4 (2026-09-23).** Release probe build of `9626e67` (the 0064 probe, its automatic dump
+  disabled so it cannot add cost), in a scratch clone; the 0063 scratch fixture with its hooks path
+  pinned to `.git/hooks` (it had inherited the machine's global AI hook) and a hook that only
+  sleeps. Opened with *Save repository* off, so the maintainer's saved connections are unchanged.
+  * Results and decision: MADR Amendment 0068.4 — spinner 69.7% at a constant 120 fps against 0.0%
+    idle; B2 becomes a separately approved follow-up. A focused message field measured 62.1%
+    (macos_ui's animated caret), recorded as a finding for the maintainer to scope.
+  * A measurement error, caught: the first spinner reading (69.5%) straddled the preview's
+    timeout, so part of it was the focused field; it was retaken inside the timeout (69.7%), and
+    the field measured on its own.
+  * AC8 met.
+* **D4 (2026-09-23, deviation, Phase 4): the Phase 1 cleanup does not hold in the running app.**
+  * **Evidence.** MADR Amendment 0068.5: three of four in-app timed-out previews left their
+    scratch file (`MAGICGIT_MSG_PREVIEW.*`, created by the new script — the command line in the
+    process table is the shipped one), and one left the hook's shell running under launchd; the
+    same script, killed the executor's way from a harness, cleaned up in 5 of 5 variants.
+    `commit_message_preview_test.dart` starts `sh` itself rather than going through
+    `LocalCommandExecutor`, which is why it passes. AC2's device half fails.
+  * **Resolutions offered:** (1) diagnose in the app first — a scratch probe build that traces the
+    preview shell and the signals it receives — then a root-cause fix and a test through the real
+    executor; (2) fold it into 0069's process-group change.
+  * **Decision (maintainer, 2026-09-23): option 1.** The fix, once the cause is known, comes back
+    as its own proposal before any code changes; this plan stays `in-progress`.
