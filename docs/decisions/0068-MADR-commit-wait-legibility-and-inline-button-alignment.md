@@ -312,3 +312,28 @@ or a silent one logs nothing. No marker, no NUL escape, no parser. Found before 
 was written (0068-PLAN, deviation D2).
 
 The spinner's measurement becomes Amendment 0068.3.
+
+## Amendment 0068.3 (2026-09-22): four more buttons move, each to where its code asks
+
+§C says every caller in a `Row` is unaffected and the back bar's `centerLeft` "starts working, with
+no change there" — implying the back bar is the only visible change. Classifying all 61 call sites
+(a scratch script reading each one's slot and enclosing widgets) contradicts that: 53 are list
+elements, whose width was already content-sized; 8 sit in single-child slots, and the effect depends
+on the width constraint they receive.
+
+| Call site | Parent asks for | Width | Effect |
+|---|---|---|---|
+| `common/adaptive_workspace_layout.dart:558` (the back bar) | `centerLeft` | loose | moves left — the fix §C intends |
+| `common/async_views.dart:105` | `Column(stretch)` | tight | unchanged |
+| `common/image_diff_view.dart:204` | `Expanded` in a `Row` | tight | unchanged |
+| `common/repository_workspace_scaffold.dart:116` | `Column` in `Center` | loose | unchanged visually |
+| `connection/connection_form.dart:370` | `Align(centerLeft)` | loose | **moves left** |
+| `forge/forge_create_sheet_widgets.dart:284` | `Align(centerLeft)` | loose | **moves left** |
+| `forge/forge_widgets.dart:231` | `Column(crossAxisAlignment: start)` | loose | **moves left** |
+| `switcher/edit_entry_sheets.dart:203` | `Align(centerLeft)` | loose | **moves left** |
+
+Under a tight width a `Center` — with or without `widthFactor` — must fill it, so the two tight
+callers render as before. The four marked callers each *ask* for left or start alignment that the
+button was silently overriding: the same defect as the back bar, on surfaces none of the 48
+workspace goldens renders. The maintainer accepted all four as corrected (0068-PLAN, deviation D3);
+Phase 5's device checklist names them so each is seen.

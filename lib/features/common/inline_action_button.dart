@@ -132,7 +132,13 @@ class _InlineActionButtonState extends State<InlineActionButton> {
       onTap: widget.onPressed,
       child: ConstrainedBox(
         constraints: BoxConstraints(minHeight: minimumTarget),
+        // Centres the capsule VERTICALLY within the minimum target height.
+        // Without `widthFactor: 1` a Center also fills the width, which put
+        // the capsule in the middle of any wide slot and overrode the
+        // parent's alignment — the compact back bar's centerLeft (MADR 0068
+        // §C; inline_button_alignment_test.dart).
         child: Center(
+          widthFactor: 1,
           child: AnimatedContainer(
             duration: MediaQuery.disableAnimationsOf(context)
                 ? Duration.zero

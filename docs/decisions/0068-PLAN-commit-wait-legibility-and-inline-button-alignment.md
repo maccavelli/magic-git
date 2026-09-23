@@ -167,7 +167,7 @@ Each phase ends with `flutter analyze`, the phase's tests, and one commit
      * the probe's `fps=` heartbeat while the spinner is visible, and
      * `top -l 5 -pid <pid>` (instantaneous CPU, **not** `ps %cpu`),
      each against a control: the same surface with the spinner absent.
-4.3. **Decide from the numbers**, and record the decision as MADR Amendment ~~0068.1~~ ~~0068.2~~ 0068.3 (D1, D2) either way:
+4.3. **Decide from the numbers**, and record the decision as ~~MADR Amendment 0068.1~~ ~~0068.2~~ ~~0068.3~~ **the MADR's next free amendment number when this phase runs** (D1–D3 each took one; it is no longer pre-numbered) either way:
      * if the spinner's presence costs less than ~5% of a core, the answer is "no change", and
        the report's Finding 2 is closed as measured-and-acceptable;
      * if it costs materially more, option B2 (an elapsed-seconds line in place of the spinner,
@@ -185,6 +185,7 @@ Each phase ends with `flutter analyze`, the phase's tests, and one commit
      | Preview cleanup | Stage a change; start a commit; cancel or let the hook stall past the timeout. Then inspect the repository's git dir. | No `MAGICGIT_MSG_PREVIEW.*` remains. |
      | Wait legibility | Repeat with a hook that prints to stderr. | The Output view carries the hook's lines while the wait is on. |
      | Back bar | At a compact width, open any list's detail. | The "‹ …" control sits at the left edge of its bar, not centred. |
+     | The four other buttons that move (D3) | Look at each: the connection form's button (Connections → add/edit), the Forge create sheet's, a Forge list error's retry, and the switcher's edit-entry sheet's. | Each sits at the left of its row, as its code asks, and looks right there. |
      | Dropped first click (open observation, 0064 D4) | With the app **not** frontmost, click once on a control with a real mouse. | The click acts. A FAIL here opens a new record; it is not fixed under this plan. |
 5.3. Update this plan's status, the MADR's status, `docs/README.md`, and
      `0067-REPORT`'s Findings 1 and 2 with pointers to what was done.
@@ -220,9 +221,9 @@ Each phase ends with `flutter analyze`, the phase's tests, and one commit
 * AC6 — The 48 workspace goldens and `inline_button_canon_test.dart` pass unchanged; no golden is
   regenerated.
 * AC7 — Full suite green, 0 `[E]`, after every phase.
-* AC8 — The spinner's cost is measured against a control and recorded as Amendment ~~0068.1~~ ~~0068.2~~ 0068.3, with
+* AC8 — The spinner's cost is measured against a control and recorded as ~~Amendment 0068.1~~ ~~0068.2~~ ~~0068.3~~ the MADR's next free amendment, with
   either "no change" or a named follow-up.
-* AC9 — Phase 5's four device rows are recorded, including the dropped-first-click observation as
+* AC9 — Phase 5's ~~four~~ five (D3) device rows are recorded, including the dropped-first-click observation as
   PASS, FAIL-with-new-record, or explicitly not-run.
 
 ## Rollout and Rollback
@@ -327,3 +328,36 @@ nothing to undo.
     output-log, output-log-stream, git-service, commit-dialog and keyboard-shortcut files: `00:04
     +124: All tests passed!`, 0 `[E]`.
   * AC4 met — its "marker text in stderr" clause no longer applies: there is no marker (D2).
+* **D3 (2026-09-22, deviation, Phase 3): the button fix moves four more buttons than the
+  MADR said.**
+  * **Evidence.** A scratch script classified all 61 `InlineActionButton` call sites: 53 are
+    list elements (already content-sized, unaffected); 8 sit in single-child slots. Reading each
+    one's parent: two receive a tight width (`async_views.dart:105`, `image_diff_view.dart:204`)
+    and render as before; one is a `Column` inside a `Center`
+    (`repository_workspace_scaffold.dart:116`) and looks the same; the back bar moves left as
+    intended; and **four move from centred to left** — `connection_form.dart:370`,
+    `forge_create_sheet_widgets.dart:284` and `edit_entry_sheets.dart:203` (each an
+    `Align(centerLeft)`) and `forge_widgets.dart:231` (a `Column` with `crossAxisAlignment:
+    start`). In every one the parent asks for exactly the new position. None of the 48 goldens
+    renders those surfaces, which is why no golden moved and step 3.3's stop condition never
+    fired. MADR §C implied the back bar was the only visible change.
+  * **Resolutions offered:** (1) accept all four — they now obey their code; (2) make any that
+    should stay centred say `center` explicitly.
+  * **Decision (maintainer, 2026-09-22): option 1.** MADR Amendment 0068.3 lists all eight
+    single-slot callers and their effect; Phase 5's checklist names the four so each is seen.
+    The spinner's amendment is no longer pre-numbered — it takes the next free number when
+    Phase 4 runs (D1–D3 each consumed one).
+* **Phase 3 (2026-09-22).** `inline_action_button.dart`: the `Center` inside the minimum-target
+  `ConstrainedBox` gains `widthFactor: 1`, with a comment saying why (it centres vertically only;
+  without the factor it filled the width and overrode the parent's alignment).
+  * **Seen to fail first** (Phase 0, unmodified tree): the back-bar case at `Actual:
+    <256.04999923706055>` against `<= 20`, the bare-button case at `Actual: <158.25>` against
+    `<= 1`. Both pass now.
+  * Guards: `flutter test` on the inline-button canon, compact navigation, the 48 workspace goldens
+    and workspace accessibility — `00:05 +87: All tests passed!`, 0 `[E]`, **0 golden files
+    changed**, so step 3.3's stop condition did not fire. The visible changes it could not see are
+    D3's.
+  * `flutter analyze`: `No issues found! (ran in 4.9s)`. Full suite (AC7): `02:46 +4338 ~3: All
+    tests passed!`.
+  * AC5, AC6 and AC7 met for this phase. The four surfaces D3 found are Phase 5's to see on the
+    device.
