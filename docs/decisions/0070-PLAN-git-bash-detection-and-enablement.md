@@ -462,3 +462,54 @@ setting is machine-wide.
     and `settings_sheet.dart` is not in this phase's files.
   * `flutter analyze`: No issues found (after sorting one import block the new test added). Full
     suite: `03:00 +4366 ~3: All tests passed!`, 0 `[E]`.
+* **Phase 3 (2026-09-23).**
+  * `app_providers.dart`:
+    * `WindowsShellPromptKind`, `WindowsShellPrompt` (message, current shell, enable command,
+      `enabling`, `enableError`), `WindowsShellSetupRequired`;
+    * `ConnectionState.windowsShellPrompt` with `clearWindowsShellPrompt`;
+    * `_checkWindowsShell` before `_resolveEnvironment`, with the D-a fallback on
+      `CmdExeShellDetected`;
+    * a catch branch that stops **without dropping the transport**, so Enable can run over it.
+      Step 3.1 said "cleared on every new connect like `hostKeyPrompt`", which holds because every
+      connect replaces the state;
+    * `enableGitBashShell()`, `retryConnect()` and `dismissWindowsShellPrompt()`. Dismissal
+      releases the transport.
+  * `environment_probe.dart`: `CmdExeShellDetected`, raised only when a failed probe's stderr
+    matches `looksLikeCmdExe`. `_resolveEnvironment` rethrows it only on the connect path
+    (`attempt != null`); `reprobeBinaries` still logs.
+  * `windows_host_probe.dart`: `enableGitBashScript`, which wraps the displayed command
+    byte-for-byte in `try`/`catch` so the exit code distinguishes set (0) from denied (1, reason on
+    stderr). It is a new host-script builder, so under D2's rule it is run: under `pwsh` on a Mac
+    it exits 1 with the reason, the denied path for real. It is registered in
+    `host_script_coverage_test.dart`.
+  * **Tests** (`connection_env_reset_test.dart`), 8 cases with a fake Windows host:
+    * the three D-c outcomes;
+    * a POSIX host never probed;
+    * Enable succeeding (reconnects, connected on the POSIX layer, `os` = `windows`);
+    * Enable denied (the host's words kept);
+    * the `cmd.exe` fallback behind a non-Windows banner;
+    * dismissal releasing the transport.
+
+    Two first drafts asserted exact event lists and failed, because a background read after
+    `connected` adds a `validate`. They now assert order, as the file's existing test does.
+  * **Seen to fail** (`mutate_p3.py`), 10 of 10 caught, each by its intended test:
+    * the banner ignored (also breaks three existing connect tests, whose fakes have no raw path);
+    * bash-as-shell not accepted;
+    * the two kinds swapped;
+    * the prompt dropping the transport;
+    * no `cmd.exe` fallback;
+    * the `cmd.exe` signal swallowed;
+    * Enable not reconnecting;
+    * an Enable failure dropped;
+    * dismissal keeping the transport;
+    * the enable script always exiting 0.
+
+    **A first run of this was invalid and is superseded.** The scratch clone's `git pull` had failed
+    silently, the tree did not compile, and "caught" meant only a compile error. The runner now
+    re-clones fresh and refuses to mutate unless the baseline passes. The Phase 1 and 2 runs had
+    passing baselines (`+14`, `+62`, `+21`, `+46`), so they stand.
+  * **D3's guard, checked** (`mutate_d3.py`, fresh clone):
+    * an allowlist entry removed fails, naming `#remoteTagsProvider`;
+    * 50 lines inserted above everything passes, which is the point;
+    * a new provider using `ref` after `await` fails, naming `#mutantProbeProvider`.
+  * `flutter analyze`: No issues found. Full suite: `03:08 +4375 ~3: All tests passed!`, 0 `[E]`.
