@@ -1878,7 +1878,6 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
                 status,
                 preferences: workspacePreferences,
                 onPreferencesChanged: saveWorkspacePreferences,
-                supplement: supplement,
               ),
             ),
           );
@@ -2224,14 +2223,12 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
     GitStatus status, {
     required RepositoryWorkspacePrefs preferences,
     required ValueChanged<RepositoryWorkspacePrefs>? onPreferencesChanged,
-    required RepositoryContextSupplement? supplement,
   }) {
     final list = _fileList(
       context,
       status,
       preferences: preferences,
       onPreferencesChanged: onPreferencesChanged,
-      supplement: supplement,
     );
     // Popped out: the diff moved into the floating window, so the file list
     // gets its full width back instead of splitting the row with it.
@@ -2632,7 +2629,6 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
     GitStatus status, {
     required RepositoryWorkspacePrefs preferences,
     required ValueChanged<RepositoryWorkspacePrefs>? onPreferencesChanged,
-    required RepositoryContextSupplement? supplement,
   }) {
     final canonical = _statusRows(status);
     final effectiveFilter = _changeFilter.copyWith(
@@ -2660,7 +2656,6 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
             branchLabel: status.branch.isDetached
                 ? 'Detached HEAD'
                 : status.branch.head ?? 'Unborn branch',
-            supplement: supplement,
           )
         : Focus(
             focusNode: _listFocus,

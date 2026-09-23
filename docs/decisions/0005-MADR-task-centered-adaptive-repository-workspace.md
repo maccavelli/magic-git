@@ -662,3 +662,21 @@ Research was captured on 2026-08-13.
   and [disclosure controls](https://developer.apple.com/design/human-interface-guidelines/disclosure-controls)
   — native navigation, adjacent panes, contextual actions, personalization, and
   progressive disclosure.
+
+### Amendment 0005.2 — 2026-09-23: the clean state is the check and its headline, nothing else
+
+(The 2026-08-15 amendment above is 0005.1.)
+
+**Decision (maintainer).** The Repository panel's clean working tree shows the green check and
+**Working tree clean**, and nothing else. This withdraws the "useful calm state" bullet above for this
+surface: no last sync time, ahead/behind, PR/MR, recent commit or actions there.
+
+**Why.** After a commit, the line beneath the headline showed that commit's subject, which the Output
+panel had just shown; the branch name beneath it repeats the repository bar. On a clean tree, the
+panel's job is to say "clean", and a second line only competes with that.
+
+**What changed.**
+* `RepositoryCleanState` loses its `supplement` parameter and its branch and enrichment lines.
+* The branch stays in the accessibility label ("Working tree clean on main").
+* `repo_status_view.dart` no longer passes the context supplement down to it. Other panels still
+  publish into and read that supplement; only this consumer is gone.

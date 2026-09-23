@@ -1240,3 +1240,24 @@ Before approving this plan, confirm:
 * [x] Phase 10 and Phase 11 remain post-core gates rather than blockers.
 * [x] Code Owners, submodules, LFS, and stacked branches remain separate
       decisions.
+
+## Post-execution change (2026-09-23): the clean state shows only the check, MADR Amendment 0005.2
+
+A maintainer-requested change, made without a new plan. Step 8 of the implementation steps ("Render
+local facts immediately and only cached enrichment") no longer applies to the clean state: it now
+renders the green check and **Working tree clean** only, with the branch kept in its accessibility
+label. `RepositoryCleanState` loses its `supplement` parameter. The status view's `_body` and
+`_fileList` stop passing it; the view still uses the supplement for the commit-policy advisory.
+
+**Test.** `test/repository_clean_state_test.dart` (new) expects:
+* the check icon, green;
+* one `Text`, reading "Working tree clean";
+* no branch name;
+* the semantics label "Working tree clean on main".
+
+**Red first:** on the old widget it failed with `Found 1 widget with text "main"`.
+
+**After:**
+* `flutter analyze`: No issues found.
+* The new test with the workspace async-view, golden and accessibility suites: `+58`, all passed.
+* No golden image changed: the golden suite's clean fixture is synthetic.
