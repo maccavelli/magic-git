@@ -43,8 +43,8 @@ In scope, by file:
 | `test/connection_env_reset_test.dart` | 4 |
 | `docs/README.md`, this plan, the MADR | records |
 
-Out of scope: the MADR's "More Information" list (wording and palette items), and option 4B
-(folding `$HOME` into the environment probe).
+Out of scope: the MADR's "More Information" list (wording and palette items). ~~And option 4B
+(folding `$HOME` into the environment probe).~~ **4B is in scope by D2 (Phase 6).**
 
 ## Facts established before writing this plan (2026-09-24)
 
@@ -160,6 +160,26 @@ Out of scope: the MADR's "More Information" list (wording and palette items), an
 3. Records: this plan `complete`, with the execution record; the MADR stays `accepted`.
 4. Commit.
 
+### Phase 6 — `$HOME` from the environment probe (D2; MADR Amendment 0071.1)
+
+1. `lib/core/ssh/environment_probe.dart`: the probe script prints `HOME=$HOME`;
+   `RemoteEnvironment` gains `home` (absolute, else null), carried by `withVersions`;
+   `resolve` runs from `/` and no longer takes a path.
+2. `lib/core/providers/app_providers.dart`: `_resolveEnvironment` takes no path and returns the
+   environment it installed (the cache on a same-host reconnect), or null when detection
+   failed. `connect` runs it first inside the cmd.exe handler, then expands `~` paths from
+   its `home`, throwing `HomePathUnresolved` when `home` is null. `_remoteHome` is removed.
+   The provisioning and `reprobeBinaries` callers drop their path argument.
+3. Tests, `test/connection_env_reset_test.dart`: the fake probe reports `HOME=`. The `~` group
+   asserts one POSIX command before validation (the probe, from `/`), no separate `$HOME`
+   lookup, expansion from the probe's `home`, and the honest failure when `home` is empty.
+   The Phase 4 Windows case must still pass unchanged. Any other test that pinned the
+   probe's directory is updated to `/`, and listed in the execution record.
+4. Mutations: the probe without `HOME=` → the `~` tests; `~` expansion before the probe →
+   the Windows `~` case; the probe run from the repository path → the from-`/` assertion.
+5. `flutter analyze`, the full suite, the records check; the plan back to `complete`.
+6. Commit, then push everything (the maintainer asked for both).
+
 ## Verification
 
 ```sh
@@ -201,6 +221,11 @@ No settings, storage or wire formats change.
   maintainer chose: each phase commits its fix with its own test; Phases 2 and 3 share one
   commit because their tests share `test/gitlab_panel_test.dart`. No file is added to scope;
   the MADR is unaffected.
+
+* **D2 (2026-09-24), option 4B brought into scope.** After Phase 5, the maintainer asked for
+  the `$HOME` lookup to move into the environment probe. It changes defect 4's decision, so
+  the MADR carries Amendment 0071.1, and Phase 6 is added. The plan returns to `in-progress`
+  until Phase 6 lands. Files added to scope: `lib/core/ssh/environment_probe.dart`.
 
 ### Phase 0 (2026-09-24)
 
@@ -271,3 +296,37 @@ No settings, storage or wire formats change.
 * At `7847808`: `flutter analyze` No issues found; full suite `03:00 +4407 ~3: All tests
   passed!`; `dart run scripts/tools/records.dart check` 0 findings.
 * Every acceptance criterion is met. Plan `complete`; MADR 0071 stays `accepted`.
+
+### Phase 6 (2026-09-24), `$HOME` from the environment probe (D2; Amendment 0071.1)
+
+* `environment_probe.dart`: the script prints `HOME=$HOME`; `RemoteEnvironment.home` holds it
+  when absolute, else null; `withVersions` keeps it, and a new `withPath` replaces the
+  hand-written copy in `app_providers.dart` that would have dropped it. `resolve` takes no path
+  and runs from `/`.
+* `app_providers.dart`: `_resolveEnvironment` takes no path and returns what it installed (the
+  cache on a same-host reconnect) or null. `connect` runs it first, inside the cmd.exe handler,
+  then expands `~` from its `home`, else `HomePathUnresolved`. `_remoteHome` is gone. The local
+  backend, provisioning and `reprobeBinaries` callers drop their path argument.
+* Tests: `environment_probe_test` (HOME parsed from `/`, only absolute, kept by `withVersions`
+  and `withPath`; the script prints it) and `connection_env_reset_test` (one POSIX command
+  before validation, the probe from `/`; no separate lookup; the empty-HOME failure). Four more
+  files only drop the argument `resolve` no longer takes: `create_repo_wire_live_test`,
+  `namespace_recency_live_test`, `project_issue_wire_live_test` (live-forge; compiled by
+  `flutter analyze`, not run) and `ssh_live_transport_test`. No other test pinned the probe's
+  directory.
+* Mutations, in a scratch clone of `7f013e4` plus this phase's files; baseline `+35: All tests
+  passed!`. Each caught on an assertion, none on a compile error:
+
+  | Mutation | Failed |
+  |---|---|
+  | P1 the script without `HOME=` | the probe script prints HOME |
+  | P2 the parser ignores `HOME=` | HOME parsed; `~` expanded from the probe |
+  | P3 a separate `$HOME` lookup comes back | the `~` group (3) and both Windows cases |
+  | P4 the probe runs from `.` | HOME from `/`; `~` expanded; probe from `/` |
+  | P5 `withPath` drops `home` | HOME kept by `withPath` |
+
+  The Phase 5 mutations M8 and M9 targeted code this phase removed; P3 now guards the same
+  ordering.
+* `flutter analyze`: No issues found. Full suite: `03:08 +4409 ~3: All tests passed!`. Records
+  check: 0 findings.
+* Plan `complete` again.

@@ -278,9 +278,9 @@ class _HomeHostExecutor extends SSHCommandExecutor {
     }
     if (script.contains('uname')) {
       calls.add((repoPath: repoPath, what: 'probe'));
-      return const SSHCommandResult(
+      return SSHCommandResult(
         exitCode: 0,
-        stdout: 'OS=Linux\nPATH=/usr/bin\n',
+        stdout: 'OS=Linux\nPATH=/usr/bin\nHOME=$home\n',
         stderr: '',
       );
     }
@@ -710,46 +710,44 @@ void main() {
       return container;
     }
 
-    test(
-      'is expanded against the host HOME before any command uses it',
-      () async {
-        final exec = _HomeHostExecutor('/home/u');
-        final container = containerFor(exec);
-        await container
-            .read(connectionProvider.notifier)
-            .connect(
-              profile: host,
-              repoPath: '~/src/app',
-              repoPaths: const ['~/src/app', '/srv/other', '~/dots'],
-              scopedGitDirs: const {'~/dots': '~/.dots.git'},
-            );
+    test('is expanded from the HOME the environment probe reports, before any '
+        'command uses it', () async {
+      final exec = _HomeHostExecutor('/home/u');
+      final container = containerFor(exec);
+      await container
+          .read(connectionProvider.notifier)
+          .connect(
+            profile: host,
+            repoPath: '~/src/app',
+            repoPaths: const ['~/src/app', '/srv/other', '~/dots'],
+            scopedGitDirs: const {'~/dots': '~/.dots.git'},
+          );
 
-        final state = container.read(connectionProvider);
-        expect(
-          state.phase,
-          ConnectionPhase.connected,
-          reason: '${state.error}',
-        );
-        expect(state.repoPath, '/home/u/src/app');
-        expect(state.repoPaths, containsAll(['/home/u/src/app', '/srv/other']));
-        expect(state.repoPaths.where((p) => p.startsWith('~')), isEmpty);
-        expect(state.scopedGitDirs, {'/home/u/dots': '/home/u/.dots.git'});
-        expect(exec.calls.first, (repoPath: '/', what: 'home'));
-        expect(
-          exec.calls.where((c) => c.what != 'home').map((c) => c.repoPath),
-          everyElement(isNot(startsWith('~'))),
-          reason: 'no command may cd into an unexpanded ~ path',
-        );
-      },
-    );
+      final state = container.read(connectionProvider);
+      expect(state.phase, ConnectionPhase.connected, reason: '${state.error}');
+      expect(state.repoPath, '/home/u/src/app');
+      expect(state.repoPaths, containsAll(['/home/u/src/app', '/srv/other']));
+      expect(state.repoPaths.where((p) => p.startsWith('~')), isEmpty);
+      expect(state.scopedGitDirs, {'/home/u/dots': '/home/u/.dots.git'});
+      // One POSIX command before validation: the probe, from `/`. No
+      // separate $HOME lookup (0071.1).
+      expect(exec.calls.first, (repoPath: '/', what: 'probe'));
+      expect(exec.calls.map((c) => c.what), isNot(contains('home')));
+      expect(
+        exec.calls.map((c) => c.repoPath),
+        everyElement(isNot(startsWith('~'))),
+        reason: 'no command may cd into an unexpanded ~ path',
+      );
+    });
 
-    test('costs nothing when no path starts with ~', () async {
+    test('the probe runs from /, whatever the repository path', () async {
       final exec = _HomeHostExecutor('/home/u');
       final container = containerFor(exec);
       await container
           .read(connectionProvider.notifier)
           .connect(profile: host, repoPath: '/srv/app');
 
+      expect(exec.calls.first, (repoPath: '/', what: 'probe'));
       expect(exec.calls.map((c) => c.what), isNot(contains('home')));
       expect(container.read(connectionProvider).repoPath, '/srv/app');
     });
@@ -765,7 +763,7 @@ void main() {
       expect(state.phase, ConnectionPhase.error);
       expect(state.error, contains('Could not resolve "~" on the host'));
       expect(state.error, isNot(contains('not a git repository')));
-      expect(exec.calls.map((c) => c.what), ['home']);
+      expect(exec.calls.map((c) => c.what), ['probe']);
     });
   });
 }

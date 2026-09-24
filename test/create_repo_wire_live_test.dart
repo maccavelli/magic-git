@@ -83,7 +83,7 @@ void main() {
     // The app always probes before This-Mac work (localEnvironmentProvider
     // .ensure()) — replicate that so argv rewriting and the augmented PATH
     // behave exactly as in the GUI app, not as in this terminal.
-    final env = await EnvironmentResolver(executor).resolve(tempDir.path);
+    final env = await EnvironmentResolver(executor).resolve();
     executor.configureEnvironment(path: env.path, binaries: env.found);
   });
 

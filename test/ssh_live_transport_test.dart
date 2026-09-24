@@ -767,7 +767,7 @@ void main() {
       oldMs.add(oldSw.elapsedMicroseconds);
 
       final newSw = Stopwatch()..start();
-      env = await EnvironmentResolver(executor).resolve(repo);
+      env = await EnvironmentResolver(executor).resolve();
       newSw.stop();
       newMs.add(newSw.elapsedMicroseconds);
     }

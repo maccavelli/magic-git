@@ -39,12 +39,18 @@ class RemoteEnvironment {
   /// found but printed nothing version-shaped (e.g. some inotifywait builds).
   final Map<String, String> versions;
 
+  /// The account's home directory on the host, as the probe's `$HOME`
+  /// reported it: absolute, or null when the probe reported none. What a
+  /// `~` repository path expands against (0071.1).
+  final String? home;
+
   const RemoteEnvironment({
     required this.os,
     required this.path,
     required this.found,
     this.overridden = const {},
     this.versions = const {},
+    this.home,
   });
 
   static const RemoteEnvironment empty = RemoteEnvironment(
@@ -72,7 +78,19 @@ class RemoteEnvironment {
           for (final e in versions.entries)
             if (found.containsKey(e.key)) e.key: e.value,
         },
+        home: home,
       );
+
+  /// This environment with its PATH replaced — every other field kept, so
+  /// a copy cannot drop one it was not written to know about.
+  RemoteEnvironment withPath(String path) => RemoteEnvironment(
+    os: os,
+    path: path,
+    found: found,
+    overridden: overridden,
+    versions: versions,
+    home: home,
+  );
 
   /// Human label for the detected OS.
   String get osLabel => switch (os) {
@@ -118,13 +136,17 @@ class EnvironmentResolver {
   /// spawns up to seven extra processes — two of which (`gh`, `glab`) run
   /// update checks that can block on the network. Versions come from
   /// [probeVersions], run in the background once the session is already up.
-  Future<RemoteEnvironment> resolve(
-    String repoPath, {
+  ///
+  /// Runs from `/`: nothing it reports depends on the directory, and a
+  /// repository path is exactly what may not be usable yet (a `~` path to
+  /// expand from this probe's own `HOME=`, or a wrong path for validation
+  /// to report).
+  Future<RemoteEnvironment> resolve({
     Map<String, String> overrides = const {},
   }) async {
     final script = _probeScript;
     final result = await _executor.execute(
-      repoPath: repoPath,
+      repoPath: '/',
       gitArgs: ['sh', '-c', script],
       timeout: const Duration(seconds: 20),
       lane: ExecLane.read,
@@ -140,6 +162,7 @@ class EnvironmentResolver {
 
     var os = 'unknown';
     var aug = '';
+    String? home;
     final discovered = <String, String>{};
     for (final line in result.stdout.split('\n')) {
       if (line.startsWith('OS=')) {
@@ -157,6 +180,9 @@ class EnvironmentResolver {
         };
       } else if (line.startsWith('PATH=')) {
         aug = line.substring(5).trim();
+      } else if (line.startsWith('HOME=')) {
+        final reported = line.substring(5).trim();
+        home = reported.startsWith('/') ? reported : null;
       } else if (line.startsWith('BIN=')) {
         final rest = line.substring(4);
         final eq = rest.indexOf('=');
@@ -167,7 +193,7 @@ class EnvironmentResolver {
         }
       }
     }
-    return _fromParts(os, aug, discovered, const {}, overrides);
+    return _fromParts(os, aug, discovered, const {}, overrides, home: home);
   }
 
   /// Version-checks the given resolved binaries (name → absolute path) in one
@@ -233,8 +259,9 @@ class EnvironmentResolver {
     String aug,
     Map<String, String> discovered,
     Map<String, String> versions,
-    Map<String, String> overrides,
-  ) {
+    Map<String, String> overrides, {
+    String? home,
+  }) {
     // Clean overrides (drop blanks) and merge over discovery — overrides win.
     final ov = <String, String>{
       for (final e in overrides.entries)
@@ -260,6 +287,7 @@ class EnvironmentResolver {
     return RemoteEnvironment(
       os: os,
       path: path,
+      home: home,
       found: found,
       overridden: ov.keys.toSet(),
       // Only report versions for tools we actually resolved (an override may
@@ -409,6 +437,7 @@ class EnvironmentResolver {
       'aug="\$u:\$c:\$PATH:/usr/bin:/bin:/usr/sbin:/sbin"; '
       'echo "OS=\$os"; '
       'echo "PATH=\$aug"; '
+      'echo "HOME=\$HOME"; '
       // Bare names, unquoted, in a `for` list: safe because every entry is a
       // catalog binary name (a plain identifier), never user input.
       'for b in ${kProbedBinaries.join(' ')}; do '

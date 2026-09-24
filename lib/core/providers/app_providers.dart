@@ -212,7 +212,7 @@ class LocalEnvironmentGuard {
     try {
       final env = await EnvironmentResolver(
         executor,
-      ).resolve('/', overrides: overrides);
+      ).resolve(overrides: overrides);
       executor.configureEnvironment(path: env.path, binaries: env.found);
       executor.setForgeTokenNeutralization(
         _ref.read(connectionProvider.notifier)._forgeTokenVarsToNeutralize(),
@@ -1324,7 +1324,11 @@ class ConnectionController extends Notifier<ConnectionState> {
       ...CommandFormatter.githubTokenVars,
   ];
 
-  Future<void> _resolveEnvironment(String repoPath, {int? attempt}) async {
+  /// Detects the host's environment and installs it on the executor.
+  /// Returns what it installed — the cached environment on a same-host
+  /// reconnect — or null when detection failed or the attempt was
+  /// superseded. Rethrows [CmdExeShellDetected] for a connect.
+  Future<RemoteEnvironment?> _resolveEnvironment({int? attempt}) async {
     try {
       final executor = _activeExecutor;
       final profile = _lastProfile;
@@ -1333,7 +1337,7 @@ class ConnectionController extends Notifier<ConnectionState> {
           profile != null &&
           _envCache != null &&
           _envCacheKey == _envKey(profile)) {
-        if (attempt != null && attempt != _attempt) return;
+        if (attempt != null && attempt != _attempt) return null;
         final cached = _envCache!;
         executor.configureEnvironment(
           path: cached.path,
@@ -1341,19 +1345,19 @@ class ConnectionController extends Notifier<ConnectionState> {
         );
         executor.setForgeTokenNeutralization(_forgeTokenVarsToNeutralize());
         ref.read(binaryEnvironmentProvider.notifier).set(cached);
-        return;
+        return cached;
       }
       final overrides = ref.read(appSettingsProvider).binaryOverrides;
       final env = await EnvironmentResolver(
         executor,
-      ).resolve(repoPath, overrides: overrides);
+      ).resolve(overrides: overrides);
       // A superseded connect's env probe can still be running on the old client
       // when a newer connect has already reset the shared executor; re-check the
       // attempt token immediately before touching it, so a stale probe can't
       // reconfigure the executor (or republish the environment) with the old
       // host's PATH/binaries. Mirrors connect()'s attempt-token checks. A null
       // attempt (reprobeBinaries, run while connected) is always current.
-      if (attempt != null && attempt != _attempt) return;
+      if (attempt != null && attempt != _attempt) return null;
       executor.configureEnvironment(path: env.path, binaries: env.found);
       executor.setForgeTokenNeutralization(_forgeTokenVarsToNeutralize());
       ref.read(binaryEnvironmentProvider.notifier).set(env);
@@ -1361,21 +1365,23 @@ class ConnectionController extends Notifier<ConnectionState> {
         _envCache = env;
         _envCacheKey = _envKey(profile);
       }
+      return env;
     } catch (e) {
       // Same supersession check as the success path above: a probe left
       // running on a since-abandoned attempt must not log its failure as if
       // it were the *current* connection's problem.
-      if (attempt != null && attempt != _attempt) return;
+      if (attempt != null && attempt != _attempt) return null;
       // A connect (attempt != null) must hear that the shell is cmd.exe:
       // it is the cause of every later failure (0070-PLAN D-a).
       if (e is CmdExeShellDetected && attempt != null) rethrow;
-      if (!ref.mounted) return;
+      if (!ref.mounted) return null;
       // Leave the executor unconfigured; commands use the inherited PATH.
       // Still surfaced so a persistently failing probe is discoverable
       // instead of silently leaving every command unconfigured all session.
       ref
           .read(outputLogProvider.notifier)
           .logError('environment detection', e.toString());
+      return null;
     }
   }
 
@@ -1386,7 +1392,7 @@ class ConnectionController extends Notifier<ConnectionState> {
   Future<void> reprobeBinaries() async {
     final repoPath = state.repoPath;
     if (!state.isConnected || repoPath == null) return;
-    await _resolveEnvironment(repoPath);
+    await _resolveEnvironment();
     await _refreshToolVersions(_attempt, repoPath);
   }
 
@@ -1585,42 +1591,44 @@ class ConnectionController extends Notifier<ConnectionState> {
       // [WindowsShellSetupRequired] when they cannot run.
       await _checkWindowsShell(attempt);
       if (attempt != _attempt || !ref.mounted) return;
-      // The POSIX preamble: every command here runs through the host's SSH
-      // shell before anything has proven it POSIX. One handler covers them
-      // all, so whichever runs first is the one that finds cmd.exe (0071).
+      // The POSIX preamble is one command: the environment probe, run from
+      // `/`, which also reports $HOME. It is the first command to reach the
+      // host's SSH shell, so a cmd.exe rejection surfaces here (0071.1).
+      final RemoteEnvironment? probed;
       try {
-        // A `~` path is never expanded inside the quotes every command puts
-        // it in, so resolve it against the host's own $HOME before anything
-        // — the environment probe included — `cd`s into it. The values kept
-        // for a reconnect stay as typed; each connect expands them afresh.
-        if ([
-          repoPath,
-          ...?repoPaths,
-          ...fsmonitorPaths,
-          ...scopedGitDirs.keys,
-          ...scopedGitDirs.values,
-        ].any(hasHomePrefix)) {
-          final home = await _remoteHome();
-          if (attempt != _attempt || !ref.mounted) return;
-          String expand(String path) => expandHomePath(path, home);
-          repoPath = expand(repoPath);
-          repoPaths = repoPaths?.map(expand).toList();
-          fsmonitorPaths = [for (final p in fsmonitorPaths) expand(p)];
-          scopedGitDirs = {
-            for (final e in scopedGitDirs.entries)
-              expand(e.key): expand(e.value),
-          };
-        }
-        await _resolveEnvironment(repoPath, attempt: attempt);
+        probed = await _resolveEnvironment(attempt: attempt);
       } on CmdExeShellDetected {
-        // The banner did not name Windows, but cmd.exe rejected a POSIX
-        // command (the $HOME lookup or the environment probe): D-a's
-        // fallback. Throws the prompt when it can name the cause; otherwise
-        // the rejection itself is the error.
+        // The banner did not name Windows, but cmd.exe rejected the probe:
+        // D-a's fallback. Throws the prompt when it can name the cause;
+        // otherwise the rejection itself is the error.
         await _checkWindowsShell(attempt, force: true);
         rethrow;
       }
       if (attempt != _attempt || !ref.mounted) return;
+      // A `~` path is never expanded inside the quotes every command puts it
+      // in, so expand it from the $HOME the probe reported before any command
+      // `cd`s into it. The values kept for a reconnect stay as typed; each
+      // connect expands them afresh (a same-host reconnect from the cached
+      // environment, with no command at all).
+      if ([
+        repoPath,
+        ...?repoPaths,
+        ...fsmonitorPaths,
+        ...scopedGitDirs.keys,
+        ...scopedGitDirs.values,
+      ].any(hasHomePrefix)) {
+        final home = probed?.home;
+        if (home == null) {
+          throw const HomePathUnresolved('the environment probe returned none');
+        }
+        String expand(String path) => expandHomePath(path, home);
+        repoPath = expand(repoPath);
+        repoPaths = repoPaths?.map(expand).toList();
+        fsmonitorPaths = [for (final p in fsmonitorPaths) expand(p)];
+        scopedGitDirs = {
+          for (final e in scopedGitDirs.entries) expand(e.key): expand(e.value),
+        };
+      }
       final envMs = timings.elapsedMilliseconds;
 
       // Drop any scopes left in the singleton GitService's registry by a prior
@@ -1937,17 +1945,7 @@ class ConnectionController extends Notifier<ConnectionState> {
       final merged = EnvironmentResolver.mergeLoginShellPath(env.path, extra);
       if (merged == env.path) return;
       executor.configureEnvironment(path: merged, binaries: env.found);
-      ref
-          .read(binaryEnvironmentProvider.notifier)
-          .set(
-            RemoteEnvironment(
-              os: env.os,
-              path: merged,
-              found: env.found,
-              overridden: env.overridden,
-              versions: env.versions,
-            ),
-          );
+      ref.read(binaryEnvironmentProvider.notifier).set(env.withPath(merged));
     } catch (_) {
       // Best-effort by design.
     }
@@ -2150,7 +2148,7 @@ class ConnectionController extends Notifier<ConnectionState> {
       // is in place before any git runs. A Finder-launched app inherits a bare
       // PATH; without this, a Homebrew-only git (/opt/homebrew/bin) would make
       // the validations below fail as a misleading "not a git repository".
-      await _resolveEnvironment(repoPath, attempt: attempt);
+      await _resolveEnvironment(attempt: attempt);
       if (attempt != _attempt || !ref.mounted) return;
 
       // Drop scopes a prior session registered on the singleton GitService, so
@@ -2529,33 +2527,6 @@ class ConnectionController extends Notifier<ConnectionState> {
   }
 
   static const Duration _windowsProbeTimeout = Duration(seconds: 30);
-
-  /// The connected host's `$HOME`, for expanding a `~` repository path.
-  /// Run from `/`, since the repository path is the thing not yet known to
-  /// be usable. Throws [HomePathUnresolved] unless it is absolute.
-  Future<String> _remoteHome() async {
-    final result = await ref
-        .read(executorProvider)
-        .execute(
-          repoPath: '/',
-          gitArgs: const ['sh', '-c', r'printf %s "$HOME"'],
-          timeout: const Duration(seconds: 20),
-          lane: ExecLane.read,
-        );
-    // cmd.exe as the SSH shell rejects this like any POSIX command. Say so,
-    // so the connect's handler can show the Windows prompt (0071).
-    if (!result.isSuccess && looksLikeCmdExe(result.stderr)) {
-      throw CmdExeShellDetected(result.stderr);
-    }
-    final home = result.stdout.trim();
-    if (!result.isSuccess || !home.startsWith('/')) {
-      final said = result.stderr.trim();
-      throw HomePathUnresolved(
-        said.isNotEmpty ? said : 'exit ${result.exitCode}, "$home"',
-      );
-    }
-    return home;
-  }
 
   /// Enable, from the Windows shell prompt (0070-PLAN D-d): sets the
   /// discovered Git Bash as the host's SSH default shell over the session
@@ -3047,8 +3018,8 @@ class ConnectionController extends Notifier<ConnectionState> {
           );
       if (attempt != _attempt || !ref.mounted) return null;
 
-      // Probe from the login home dir (`cd '.'`) — no repo to validate yet.
-      await _resolveEnvironment('.', attempt: attempt);
+      // No repository to validate yet; the probe needs none.
+      await _resolveEnvironment(attempt: attempt);
       if (attempt != _attempt || !ref.mounted) return null;
 
       return attempt;

@@ -11,6 +11,7 @@ class _FakeExecutor extends SSHCommandExecutor {
   final String _out;
   final int exitCode;
   final List<List<String>> calls = [];
+  final List<String> repoPaths = [];
 
   @override
   Future<SSHCommandResult> execute({
@@ -28,6 +29,7 @@ class _FakeExecutor extends SSHCommandExecutor {
     CommandOutputCallback? onOutput,
   }) async {
     calls.add(gitArgs);
+    repoPaths.add(repoPath);
     return SSHCommandResult(exitCode: exitCode, stdout: _out, stderr: '');
   }
 }
@@ -42,7 +44,7 @@ void main() {
         'BIN=fswatch=\n'
         'BIN=inotifywait=\n'
         'BIN=stdbuf=/usr/bin/stdbuf\n';
-    final env = await EnvironmentResolver(_FakeExecutor(out)).resolve('/repo');
+    final env = await EnvironmentResolver(_FakeExecutor(out)).resolve();
 
     expect(env.os, 'macos');
     expect(env.osLabel, 'macOS');
@@ -53,6 +55,35 @@ void main() {
     expect(env.path, '/opt/homebrew/bin:/usr/bin:/bin');
   });
 
+  test(
+    'reports the account HOME, from /, and only an absolute one (0071.1)',
+    () async {
+      final exec = _FakeExecutor('OS=Linux\nPATH=/usr/bin\nHOME=/home/u\n');
+      final env = await EnvironmentResolver(exec).resolve();
+      expect(env.home, '/home/u');
+      // Nothing it reports depends on the directory; a repository path may
+      // not be usable yet (a ~ path to expand from this very HOME).
+      expect(exec.repoPaths, ['/']);
+      // withVersions and withPath keep it.
+      expect(env.withVersions(const {}).home, '/home/u');
+      expect(env.withPath('/bin').home, '/home/u');
+
+      for (final bad in ['', 'relative/home', '~']) {
+        final none = await EnvironmentResolver(
+          _FakeExecutor('OS=Linux\nPATH=/usr/bin\nHOME=$bad\n'),
+        ).resolve();
+        expect(none.home, isNull, reason: bad);
+      }
+    },
+  );
+
+  test('the probe script prints HOME', () {
+    expect(
+      EnvironmentResolver.probeScriptForTest,
+      contains(r'echo "HOME=$HOME"'),
+    );
+  });
+
   test('a Git Bash shell on Windows reports windows (MADR 0070)', () async {
     for (final uname in [
       'MINGW64_NT-10.0-26100',
@@ -61,7 +92,7 @@ void main() {
     ]) {
       final env = await EnvironmentResolver(
         _FakeExecutor('OS=$uname\nPATH=/usr/bin\n'),
-      ).resolve('/c/repo');
+      ).resolve();
       expect(env.os, 'windows', reason: uname);
       expect(env.osLabel, 'Windows');
     }
@@ -151,7 +182,7 @@ void main() {
         'BIN=glab=/usr/bin/glab\n';
     final env = await EnvironmentResolver(
       _FakeExecutor(out),
-    ).resolve('/repo', overrides: {'glab': '/custom/tools/glab'});
+    ).resolve(overrides: {'glab': '/custom/tools/glab'});
 
     expect(env.os, 'linux');
     expect(env.pathOf('glab'), '/custom/tools/glab'); // override wins
@@ -162,7 +193,7 @@ void main() {
   test('probe failure falls back to overrides only', () async {
     final env = await EnvironmentResolver(
       _FakeExecutor('', exitCode: 1),
-    ).resolve('/repo', overrides: {'git': '/x/git'});
+    ).resolve(overrides: {'git': '/x/git'});
 
     expect(env.os, 'unknown');
     expect(env.pathOf('git'), '/x/git');

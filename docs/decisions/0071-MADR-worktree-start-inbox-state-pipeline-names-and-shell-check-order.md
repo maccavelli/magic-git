@@ -157,7 +157,8 @@ Chosen options: **1B, 2A, 3A, 4A, 5A**.
   requests for the same data. The Inbox is defined as open work, so the rule belongs where the
   Inbox is assembled.
 * **3A**: one name for one thing, wherever it appears.
-* **4A**, because it fixes the cause (the check was attached to a command) at the size of the
+* ~~**4A**~~ **4B, by Amendment 0071.1.** 4A was chosen first, and shipped in `7847808`:
+  **4A**, because it fixes the cause (the check was attached to a command) at the size of the
   bug. 4B is the tidier end state, one round trip instead of two, but it changes the environment
   probe, its cache and `RemoteEnvironment`, which is more than this regression warrants. It
   remains open as a later improvement.
@@ -171,7 +172,8 @@ Chosen options: **1B, 2A, 3A, 4A, 5A**.
 * Good, because the Add Worktree sheet works at the app's smallest window.
 * Neutral, because dropping a remote branch on Worktrees now prefills a new local branch named
   after it. If that local branch already exists, git refuses and the sheet shows git's message.
-* Bad, because the `~` lookup and the environment probe stay two round trips (4B deferred).
+* ~~Bad, because the `~` lookup and the environment probe stay two round trips (4B deferred).~~
+  Resolved by Amendment 0071.1: one round trip.
 
 ### Confirmation
 
@@ -232,3 +234,25 @@ Chosen options: **1B, 2A, 3A, 4A, 5A**.
 * Out of scope, listed with these in the same audit: the ⌘B shortcut label, leftover
   "Connections Manager" and "Connections list" wording, the "Absolute path" hints, the palette's
   missing Toggle Navigator, and a ShellCheck warning in `build_macos.sh`.
+
+## Amendment 0071.1 (2026-09-24): `$HOME` from the environment probe (4B)
+
+The maintainer brought option 4B into scope after 4A shipped. It supersedes 4A as the decision for
+defect 4; 4A's code (`7847808`) is replaced, not kept alongside.
+
+* **Fact re-checked.** The Pros and Cons above say the probe "runs from the repository path",
+  which is why 4B looked costly. The probe's output does not depend on that path: it prints
+  `uname -s`, an augmented PATH built from `$HOME` and fixed directories, and `command -v` results,
+  all the same from any directory. It ran from the repository only because
+  `CommandExecutor.execute` always changes into the path it is given. The local backend already
+  probes from `/` (`lib/core/providers/app_providers.dart:215`), and provisioning from `.`.
+* **Decision.** The probe runs from `/` and also reports `HOME=`. `RemoteEnvironment` carries it,
+  absolute or null. The connect runs the probe first, inside the one cmd.exe handler, and expands
+  `~` paths from the probe's `home`; `_remoteHome` and its round trip are removed. A same-host
+  reconnect reuses the cached environment, `home` included, and runs no command at all to
+  resolve `~`.
+* **Consequences.** Good: one round trip, not two, before validation. Good: there is one POSIX
+  command before validation, so the ordering question behind defect 4 cannot come back. Good: a
+  wrong repository path can no longer fail the probe itself; validation reports it. Neutral:
+  when the probe fails for a reason other than cmd.exe, a `~` path is reported as unresolved, and
+  the probe's own error is in Output, as before.

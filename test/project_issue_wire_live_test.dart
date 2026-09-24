@@ -85,7 +85,7 @@ void main() {
     executor = LocalCommandExecutor();
     // Replicate the app's probe (localEnvironmentProvider.ensure()) so argv
     // rewriting and the augmented PATH behave exactly as in the GUI app.
-    final env = await EnvironmentResolver(executor).resolve(tempDir.path);
+    final env = await EnvironmentResolver(executor).resolve();
     executor.configureEnvironment(path: env.path, binaries: env.found);
   });
 

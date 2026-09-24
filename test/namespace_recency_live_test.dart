@@ -69,7 +69,7 @@ void main() {
   setUp(() async {
     tempDir = Directory.systemTemp.createTempSync('ns_recency_live_');
     executor = LocalCommandExecutor();
-    final env = await EnvironmentResolver(executor).resolve(tempDir.path);
+    final env = await EnvironmentResolver(executor).resolve();
     executor.configureEnvironment(path: env.path, binaries: env.found);
   });
 
