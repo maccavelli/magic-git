@@ -429,6 +429,31 @@ setting is machine-wide.
     intended topic. **Red first:** the updated test failed on the old book in "every locked topic id
     exists in its category, in order" and "quoted UI labels exist in their topic and in source".
     After the change: `help_book_json_test.dart` `+16`, all pass.
+* **Phase 5 (2026-09-23), device gate on the maintainer's Windows 11 laptop.**
+  * 5.1: `./build_macos.sh --unsigned --install` (1.9.3.8), at the maintainer's request. The
+    running copy was quit with ⌘Q and confirmed, and the installed build launched.
+  * 5.2, row by row:
+
+    | Item | Result | Evidence |
+    |---|---|---|
+    | A1 banner | **PASS** | The host's identification string, read from its port 22 with no login: `SSH-2.0-OpenSSH_for_Windows_9.5`. |
+    | Not active | **PASS** (maintainer) | Earlier the same day, the prompt appeared on connect, with no "not a git repository". |
+    | Enable | **PASS** (maintainer) | Pressed from an administrator account; the connection then worked. The host now runs commands through `/usr/bin/bash` (seen in the Output view). This also answers **A10**: the changed shell applied to the next connection with no `sshd` restart, per the maintainer's account. |
+    | Git Bash active | **PASS** | The installed build, driven: connected in 1.0 s (ssh 298 ms, environment 648 ms, repo check 88 ms); Status (2 changed, ahead 1) and the file tree load; History lists commits; a commit's detail and diff render. |
+    | Copy | **not run** | Byte-for-byte copy is covered by `copyable_command_block_test.dart`; the paste into an elevated PowerShell was not done. |
+    | Denied | **not run** | Needs a standard (non-administrator) account on the host. The same path, exit 1 with the reason, runs for real under `pwsh` in `windows_host_probe_test.dart`. |
+    | Settings path | **not run** | Its effect is visible only while the prompt is showing, and the host's shell is now Git Bash. |
+
+  * **Found at the gate, not fixed here** (input to the next 0070 plan):
+    * **Windows paths are named by the whole path.** The tab, window title, sidebar and Recent
+      Repositories show `C:\Users\<user>\gitrepos\<repo>` where POSIX repositories show the
+      folder name: the label takes the text after the last `/`. This is MADR 0070's `HostPath`
+      work.
+    * **Live refresh polls:** `arm unavailable: noTool`, as designed. MADR 0070's PowerShell
+      watcher is the fix.
+    * **A watcher sweep fails on a quoted `~`:** `watcher sweep skipped ~/gitrepos/<repo>: … cd:
+      ~/gitrepos/<repo>: No such file or directory`. That path is not the open repository, and a
+      quoted `~` is never expanded. It is not specific to Windows; it is traced separately.
 * **Phase 0 (2026-09-23).** Records: MADR 0070 `accepted`, this plan `in-progress`, the index row.
   The negative rehearsal ran per phase, not up front: each new check was run against deliberately
   broken code in a scratch clone (`p1-clone`) before the phase was committed, which is the stronger

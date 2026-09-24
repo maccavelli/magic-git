@@ -519,3 +519,20 @@ record; the prompt says so before Enable, and gives the inverse command. The bri
 **Implementation.** [0070-PLAN-git-bash-detection-and-enablement.md](0070-PLAN-git-bash-detection-and-enablement.md),
 `proposed`. The plan's Phase 5 checks A1 on the maintainer's host, and adds A10: `sshd` applies a
 changed `DefaultShell` to the next session without a service restart.
+
+## Amendment 0070.2 (2026-09-23): the first slice on a real Windows host
+
+The Git Bash slice (0070-PLAN) was checked on the maintainer's Windows 11 laptop.
+
+* **A1 confirmed.** The host identifies as `SSH-2.0-OpenSSH_for_Windows_9.5`.
+* **A10 confirmed, per the maintainer.** Enable, from an administrator account, set
+  `DefaultShell`, and the next connection ran through Git Bash with no `sshd` restart.
+* **O2's premise holds for reading.** With Git Bash as the shell, the existing POSIX layer works
+  unchanged: Status, the file tree, History, and a commit's diff.
+
+**Found at the gate:**
+* repository names show the whole `C:\…` path, which is `HostPath`'s job (§5 of the decision);
+* live refresh falls back to polling, which the `FileSystemWatcher` service (§7) replaces;
+* a watcher sweep fails on a quoted `~` path, which is not specific to Windows.
+
+A2 to A9 remain open for the layered-dialect work.

@@ -50,7 +50,11 @@ capability is added at the service layer, never per backend.
 The remote backend is `dartssh2` 3.3.0, pinned exactly
 ([0012-MADR](decisions/0012-MADR-adopt-dartssh2-v3.md),
 [0013-MADR](decisions/0013-MADR-prefer-dartssh2-v3-over-dartssh3.md)). It supports POSIX
-remotes only. `ShellEscaper` is the injection defence on every interpolated value, and
+remotes, and Windows hosts whose OpenSSH default shell is Git Bash: after the handshake, a
+Windows host (by its identification string, or by `cmd.exe` rejecting the environment
+probe) gets one PowerShell probe, and a shell other than Git Bash stops the connect at a
+prompt that offers to set it
+([0070-MADR](decisions/0070-MADR-native-windows-hosts-over-ssh.md)). `ShellEscaper` is the injection defence on every interpolated value, and
 every script sent through `sh -c` must be dash-clean, because Debian-family hosts run
 `sh` as dash.
 
