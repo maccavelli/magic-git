@@ -71,7 +71,7 @@ class _RemoteDirectoryBrowserSheetState
       return;
     }
     try {
-      final home = await _fs.homeDir();
+      final home = await _fs.homeDir(style: ref.read(hostPathStyleProvider));
       if (!mounted) return;
       await _navigateTo(home);
     } catch (e) {

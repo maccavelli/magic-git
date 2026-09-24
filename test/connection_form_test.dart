@@ -39,9 +39,13 @@ Future<void> _pump(WidgetTester tester) async {
 /// real connect does, and stamps the saved profile the way a real successful
 /// connect does (lastConnectedAt).
 class _ScriptedConnect extends ConnectionController {
-  _ScriptedConnect(this.store, this.works);
+  _ScriptedConnect(this.store, this.works, {this.onSuccess});
   final ConnectionStore store;
   final Set<String> works;
+
+  /// Runs before a successful connect is published, as a real connect's
+  /// own store writes do (0070.3, D3: the saved paths rewritten).
+  final Future<void> Function()? onSuccess;
 
   /// Every repository path connect() was asked for, in order.
   final attempts = <String>[];
@@ -74,6 +78,7 @@ class _ScriptedConnect extends ConnectionController {
       return;
     }
     if (connectionId != null) await store.touch(connectionId);
+    await onSuccess?.call();
     state = ConnectionState(
       phase: ConnectionPhase.connected,
       repoPath: resolved,
@@ -141,6 +146,7 @@ Future<(ConnectionStore, ProviderContainer)> _pumpSaving(
   WidgetTester tester, {
   required Set<String> works,
   SavedConnection? existing,
+  Future<void> Function(ConnectionStore store)? onSuccess,
 }) async {
   // Seeded straight into preferences, as connection_edit_test does: the
   // store's write queue belongs to the zone it was built in, so a seed run
@@ -159,7 +165,13 @@ Future<(ConnectionStore, ProviderContainer)> _pumpSaving(
   final container = ProviderContainer(
     overrides: [
       connectionStoreProvider.overrideWithValue(store),
-      connectionProvider.overrideWith(() => _ScriptedConnect(store, works)),
+      connectionProvider.overrideWith(
+        () => _ScriptedConnect(
+          store,
+          works,
+          onSuccess: onSuccess == null ? null : () => onSuccess(store),
+        ),
+      ),
     ],
   );
   addTearDown(container.dispose);
@@ -318,6 +330,26 @@ void main() {
       await _submit(tester, container, '/srv/good');
 
       expect((await _saved()).allRepoPaths, ['/srv/good']);
+    });
+
+    testWidgets('the save merges the stored paths the connect rewrote, not '
+        'the pre-connect copy (0070.3, D3)', (tester) async {
+      // A Windows connect rewrites the saved paths in git's C:/ form. The
+      // form's own save must not put the old /c/… spelling back.
+      final (store, container) = await _pumpSaving(
+        tester,
+        works: {'C:/b'},
+        existing: known.copyWith(repoPath: '/c/a', repoPaths: ['/c/a']),
+        onSuccess: (store) async {
+          final stored = (await store.list()).single;
+          await store.updateMetadata(
+            stored.copyWith(repoPath: 'C:/a', repoPaths: ['C:/a']),
+          );
+        },
+      );
+      await _submit(tester, container, 'C:/b');
+
+      expect((await _saved()).allRepoPaths, ['C:/b', 'C:/a']);
     });
 
     testWidgets('a ~ path is saved as the connection resolved it', (

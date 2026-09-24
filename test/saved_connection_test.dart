@@ -1,7 +1,45 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:remote_magic_git/core/storage/saved_connection.dart';
+import 'package:remote_magic_git/core/utils/host_path.dart';
 
 void main() {
+  group('canonicalPaths (0070.3, D3)', () {
+    const conn = SavedConnection(
+      id: 'w',
+      label: '',
+      host: 'h',
+      port: 22,
+      username: 'u',
+      repoPath: '/c/Users/u/r',
+      repoPaths: ['/c/Users/u/r', r'C:\Users\u\o', '/C/USERS/u/R'],
+      fsmonitorPaths: [r'C:\Users\u\o'],
+      repoLabels: {'/c/Users/u/r': 'R'},
+      scopedGitDirs: {r'C:\Users\u\o': '/c/Users/u/o.git'},
+    );
+
+    test('merges spellings into git\'s form, every map included', () {
+      final c = conn.canonicalPaths(HostPathStyle.windows);
+      expect(c.repoPath, 'C:/Users/u/r');
+      expect(c.repoPaths, ['C:/Users/u/r', 'C:/Users/u/o']);
+      expect(c.fsmonitorPaths, ['C:/Users/u/o']);
+      expect(c.repoLabels, {'C:/Users/u/r': 'R'});
+      expect(c.scopedGitDirs, {'C:/Users/u/o': 'C:/Users/u/o.git'});
+    });
+
+    test('takes git\'s case where the connect learned it', () {
+      final c = conn.canonicalPaths(
+        HostPathStyle.windows,
+        caseOf: const {'C:/Users/u/r': 'C:/Users/u/R'},
+      );
+      expect(c.repoPath, 'C:/Users/u/R');
+      expect(c.repoPaths.first, 'C:/Users/u/R');
+    });
+
+    test('POSIX returns the connection unchanged', () {
+      expect(identical(conn.canonicalPaths(HostPathStyle.posix), conn), isTrue);
+    });
+  });
+
   group('SavedConnection', () {
     test('round-trips through JSON', () {
       const conn = SavedConnection(

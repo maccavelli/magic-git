@@ -326,7 +326,14 @@ class _ConnectionFormState extends ConsumerState<ConnectionForm> {
           .where((c) => c.id == saved.id)
           .firstOrNull;
       if (stored == null) return;
-      final scopes = Map<String, String>.from(known?.scopedGitDirs ?? const {});
+      // Merge the STORED entry, re-read after the connect, not the
+      // pre-connect snapshot: a Windows connect rewrites saved paths in
+      // their canonical form (0070.3, D3), and the snapshot would put the
+      // old spelling back beside the new. A profile that never connected
+      // keeps no paths but this one (0071).
+      final scopes = Map<String, String>.from(
+        known == null ? const {} : stored.scopedGitDirs,
+      );
       final scope = state.scopedGitDirFor(resolved);
       if (scope != null && scope.isNotEmpty) {
         scopes[resolved] = scope;
@@ -338,7 +345,7 @@ class _ConnectionFormState extends ConsumerState<ConnectionForm> {
           repoPath: resolved,
           repoPaths: SavedConnection.dedupePaths([
             resolved,
-            ...?known?.allRepoPaths,
+            if (known != null) ...stored.allRepoPaths,
           ]),
           scopedGitDirs: scopes,
         ),

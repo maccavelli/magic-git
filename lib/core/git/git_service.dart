@@ -1305,6 +1305,22 @@ class GitService {
     }
   }
 
+  /// The repository's top level as git spells it — on a Windows host,
+  /// `C:/…` in the folder's true case, whatever case the path was typed in
+  /// (0070.3, D2) — or null when [repoPath] is not in a work tree. Runs
+  /// without a repository scope, so a scoped repository is not found here.
+  Future<String?> topLevel(String repoPath) async {
+    final result = await _executor.execute(
+      repoPath: repoPath,
+      gitArgs: ['git', 'rev-parse', '--show-toplevel'],
+      timeout: const Duration(seconds: 20),
+      retries: _readRetries,
+      lane: ExecLane.read,
+    );
+    final top = result.stdout.trim();
+    return result.isSuccess && top.isNotEmpty ? top : null;
+  }
+
   /// Shown when a `git` invocation exits 127 (binary not found). Points the
   /// user at the two ways to fix it.
   static const String _gitNotFoundMessage =

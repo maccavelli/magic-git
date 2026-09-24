@@ -165,12 +165,20 @@ abstract final class HostPath {
 1. **Connect** (`app_providers.dart`, after the probe and the `~` expansion): on `windows`, pass
    `repoPath`, `repoPaths`, `fsmonitorPaths` and both sides of `scopedGitDirs` through
    `HostPath.canonical`.
-2. **Case from git.** `validateRepoPath` runs `git rev-parse --is-inside-work-tree --show-toplevel`
-   (one call, as now) and returns the top level. On `windows`, when `HostPath.same(top, repoPath)`,
-   the connect adopts `top`. A scoped repository, whose top level is its work tree, is compared the
-   same way and adopts it only when equal. The post-connect save
+2. **Case from git.** ~~`validateRepoPath` runs `git rev-parse --is-inside-work-tree --show-toplevel`
+   (one call, as now) and returns the top level.~~ **D2:** `validateRepoPath` is unchanged; a new
+   `GitService.topLevel(repoPath)` runs `git rev-parse --show-toplevel`, called only on `windows`,
+   before validation. When `HostPath.same(top, repoPath)`,
+   the connect adopts `top`. ~~A scoped repository, whose top level is its work tree, is compared the
+   same way and adopts it only when equal.~~ A scoped repository is not looked up (it needs its
+   scope to be found); it is canonicalized but keeps its typed case. ~~The post-connect save
    (`connection_form.dart` `_saveValidatedPath`) already stores `state.repoPath`, so saved entries
-   become canonical on their next connect.
+   become canonical on their next connect.~~ **D3:** when a Windows connect's canonical form
+   differs from what a saved connection holds, the connect rewrites that connection's metadata
+   (repoPath, repoPaths de-duplicated by `HostPath.same`, fsmonitorPaths, the keys of repoLabels
+   and scopedGitDirs, and git-dir values), as `_healSavedScopedGitDir` does for a git-dir. The
+   form's `_saveValidatedPath` merges the **stored** list re-read after the connect, not its
+   pre-connect snapshot.
 3. **Folder browser.** `HostFsService.homeDir()` returns `HostPath.canonical(pwd, style)`; the
    service takes the style from its caller (`remote_directory_browser.dart`, via the provider).
    Browsing then produces `C:/Users/<user>/…` from the first listing.
@@ -296,6 +304,27 @@ Phase 2 alone would bring back F15.
   `test/scoped_forge_executor_test.dart`, `test/git_cat_file_batch_test.dart`. The MADR is
   unaffected.
 
+* **D2 (2026-09-24), how the connect takes git's case.** Step 3.2 had `validateRepoPath`
+  return the top level from its one `rev-parse`. That changes its return type, and seven test
+  fakes override it with `Future<void>` (`auto_fetch_test`, `watch_transport_release_test`,
+  `auto_reconnect_test`, `local_backend_test`, `namespace_open_recording_test`,
+  `connection_race_test` twice), none in the plan. The maintainer chose a separate,
+  Windows-only `GitService.topLevel`: one extra round trip on Windows connects, no change for
+  POSIX hosts or the fakes. A scoped repository is not looked up, so it keeps its typed case
+  (still canonical). No file is added to scope.
+
+* **D3 (2026-09-24), saved Windows paths.** Step 3.2 claimed the form's post-connect save
+  makes saved entries canonical. The code contradicts it: a connect from the Workspaces sheet
+  never runs that save, and the save merges the pre-connect snapshot (`known.allRepoPaths`), so
+  `/c/…` would stay beside `C:/…`. The maintainer chose to rewrite the saved metadata at
+  connect, and to have the form merge the stored list. Files added:
+  `lib/features/connection/connection_form.dart`, `test/connection_form_test.dart`.
+
+* **D4 (2026-09-24), the browser test's fake.** Giving `HostFsService.homeDir` the planned
+  `style` parameter made the fake's override in `test/remote_directory_browser_test.dart`
+  (line 34) invalid; that file was not in the plan. The maintainer chose to update the fake's
+  signature, keeping the planned API. File added: `test/remote_directory_browser_test.dart`.
+
 ### Phase 0 (2026-09-24)
 
 * The maintainer approved the plan and Amendment 0070.3, accepting the hook trade-off. Records:
@@ -335,3 +364,29 @@ Phase 2 alone would bring back F15.
   and a reset executor do not) and `connection_env_reset_test` (the Git Bash connect sets
   `windows` on the executor and the provider; the Linux connect stays `posix`). Together with
   `provider_retry_policy_test`: `+39: All tests passed!`. `flutter analyze`: No issues found.
+* Commit `2cf175f`.
+
+### Phase 3 (2026-09-24), with D2, D3, D4
+
+* Connect (`app_providers.dart`): on `windows`, `repoPath`, `repoPaths`, `fsmonitorPaths` and
+  `scopedGitDirs` pass through `HostPath.canonical` after the probe. For an unscoped repository,
+  `GitService.topLevel` (D2) supplies git's case when `HostPath.same`. After `touch`, awaited,
+  `_canonicalizeSavedPaths` rewrites the saved connection with `SavedConnection.canonicalPaths`
+  (D3), reading the store itself.
+* `connection_form.dart` `_saveValidatedPath` merges the stored list re-read after the connect,
+  for a connection that has connected before (D3).
+* `HostFsService.homeDir({style})` returns the canonical form; the folder browser passes
+  `hostPathStyleProvider` (the browser test's fake gained the parameter, D4).
+* Tests:
+  * `connection_env_reset_test`: `/c/users/u/repo` → git's `C:/Users/u/Repo`, and the typed
+    `C:\` path canonical; the saved connection rewritten, three spellings to two entries, its
+    label rekeyed, `lastConnectedAt` kept; a Linux `/c/data` unchanged.
+  * `host_fs_service_test`: Windows `homeDir` is `C:/Users/u`, POSIX unchanged.
+  * `saved_connection_test`: `canonicalPaths` merges every map, takes `caseOf`, and is the
+    identity under POSIX.
+  * `connection_form_test`: the save merges the stored list, not the pre-connect copy.
+* `flutter analyze`: No issues found. Those five files with `remote_directory_browser_test`:
+  `+65: All tests passed!`. They are seen to fail in Phase 8's mutations.
+* `no_real_identifiers_scan_test` caught my first test data: a capital `U` in the account
+  segment (`/C/USERS/U/R`) reads as an account name. The account segment is now the `u`
+  placeholder, with the case varied elsewhere. Full suite: only the three Phase 0 tests fail.

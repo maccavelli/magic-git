@@ -31,7 +31,8 @@ class _FakeFs extends HostFsService {
   final Map<String, Completer<List<String>>> gates = {};
 
   @override
-  Future<String> homeDir() async => '/home/testuser';
+  Future<String> homeDir({HostPathStyle style = HostPathStyle.posix}) async =>
+      '/home/testuser';
 
   @override
   Future<List<String>> listDirectories(String path) async {

@@ -1,3 +1,4 @@
+import '../utils/host_path.dart';
 import '../utils/posix_path.dart';
 
 /// Non-secret connection profile metadata, persisted in shared_preferences.
@@ -168,6 +169,47 @@ class SavedConnection {
     namespaceHistoryTimes: namespaceHistoryTimes ?? this.namespaceHistoryTimes,
     lastConnectedAt: lastConnectedAt ?? this.lastConnectedAt,
   );
+
+  /// This connection with every path in [style]'s canonical form (MADR 0070,
+  /// Amendment 0070.3, D3): spellings of one folder merge (the first kept),
+  /// and a path takes [caseOf]'s spelling where the connect learned git's
+  /// case (keyed by the canonical form). POSIX returns this connection.
+  SavedConnection canonicalPaths(
+    HostPathStyle style, {
+    Map<String, String> caseOf = const {},
+  }) {
+    if (style == HostPathStyle.posix) return this;
+    String spell(String path) {
+      final canonical = HostPath.canonical(path, style);
+      return caseOf[canonical] ?? canonical;
+    }
+
+    List<String> merged(Iterable<String> paths) {
+      final out = <String>[];
+      for (final p in paths.map(spell)) {
+        if (!out.any((q) => HostPath.same(q, p, style))) out.add(p);
+      }
+      return out;
+    }
+
+    Map<String, String> rekeyed(Map<String, String> map, {bool paths = false}) {
+      final out = <String, String>{};
+      for (final e in map.entries) {
+        final key = spell(e.key);
+        if (out.keys.any((q) => HostPath.same(q, key, style))) continue;
+        out[key] = paths ? HostPath.canonical(e.value, style) : e.value;
+      }
+      return out;
+    }
+
+    return copyWith(
+      repoPath: spell(repoPath),
+      repoPaths: merged(repoPaths),
+      fsmonitorPaths: merged(fsmonitorPaths),
+      repoLabels: rekeyed(repoLabels),
+      scopedGitDirs: rekeyed(scopedGitDirs, paths: true),
+    );
+  }
 
   /// Namespaces recently created into for [forgeHostKey], most recent first.
   List<String> namespacesFor(String forgeHostKey) =>

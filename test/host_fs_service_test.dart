@@ -60,6 +60,13 @@ void main() {
       expect(exec.repoPaths.single, '.');
     });
 
+    test('a Windows host gives git\'s C:/ form (0070.3)', () async {
+      exec.next = _ok('/c/Users/u\n');
+      expect(await fs.homeDir(style: HostPathStyle.windows), 'C:/Users/u');
+      exec.next = _ok('/c/Users/u\n');
+      expect(await fs.homeDir(), '/c/Users/u', reason: 'POSIX is unchanged');
+    });
+
     test('throws on failure', () async {
       exec.next = const SSHCommandResult(exitCode: 1, stdout: '', stderr: 'no');
       await expectLater(fs.homeDir(), throwsA(isA<HostFsException>()));

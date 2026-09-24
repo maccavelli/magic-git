@@ -5,6 +5,7 @@
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -14,6 +15,10 @@ import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 import 'package:remote_magic_git/core/ssh/windows_host_probe.dart';
+import 'package:remote_magic_git/core/storage/connection_store.dart';
+import 'package:remote_magic_git/core/storage/saved_connection.dart';
+import 'package:riverpod/misc.dart' show Override;
+import 'package:shared_preferences/shared_preferences.dart';
 
 class _OkManager extends SSHClientManager {
   @override
@@ -166,6 +171,10 @@ class _WindowsHostExecutor extends SSHCommandExecutor {
   int enableExit = 0;
   String enableStderr = '';
   bool posixRejected = false;
+
+  /// What `git rev-parse --show-toplevel` reports: git's own spelling of
+  /// the repository folder. Null: not a work tree.
+  String? topLevel;
   final List<String> events = [];
   final List<String> rawScripts = [];
 
@@ -226,6 +235,17 @@ class _WindowsHostExecutor extends SSHCommandExecutor {
         stdout: '',
         stderr: cmdExeError,
       );
+    }
+    if (gitArgs.contains('--show-toplevel')) {
+      events.add('top');
+      final top = topLevel;
+      return top == null
+          ? const SSHCommandResult(
+              exitCode: 128,
+              stdout: '',
+              stderr: 'fatal: not a git repository',
+            )
+          : SSHCommandResult(exitCode: 0, stdout: '$top\n', stderr: '');
     }
     if (gitArgs.contains('rev-parse')) {
       events.add('validate');
@@ -311,14 +331,16 @@ const _factsBashActive =
     'MGW_ADMIN=1\n';
 
 ({ProviderContainer container, _CountingManager manager}) _windowsContainer(
-  _WindowsHostExecutor exec,
-) {
+  _WindowsHostExecutor exec, {
+  List<Override> extra = const [],
+}) {
   final manager = _CountingManager();
   final container = ProviderContainer(
     overrides: [
       sshClientManagerProvider.overrideWithValue(manager),
       executorProvider.overrideWithValue(exec),
       gitServiceProvider.overrideWithValue(GitService(exec)),
+      ...extra,
     ],
   );
   addTearDown(container.dispose);
@@ -577,6 +599,93 @@ void main() {
       expect(container.read(hostPathStyleProvider), HostPathStyle.windows);
     });
 
+    test(
+      'a Windows path is kept in git\'s C:/ form and case (0070.3)',
+      () async {
+        final exec = _WindowsHostExecutor(
+          banner: _windowsBanner,
+          facts: _factsBashActive,
+        )..topLevel = 'C:/Users/u/Repo';
+        final (:container, manager: _) = _windowsContainer(exec);
+        await container
+            .read(connectionProvider.notifier)
+            .connect(
+              profile: winProfile,
+              repoPath: '/c/users/u/repo',
+              repoPaths: const ['/c/users/u/repo', r'C:\Users\u\other'],
+            );
+
+        final state = container.read(connectionProvider);
+        expect(
+          state.phase,
+          ConnectionPhase.connected,
+          reason: '${state.error}',
+        );
+        // The browser's /c/… in git's case; the typed C:\… canonical.
+        expect(state.repoPath, 'C:/Users/u/Repo');
+        expect(
+          state.repoPaths,
+          containsAll(['C:/Users/u/Repo', 'C:/Users/u/other']),
+        );
+        expect(
+          state.repoPaths.where((p) => p.startsWith('/c/') || p.contains(r'\')),
+          isEmpty,
+        );
+      },
+    );
+
+    test(
+      'a Windows connect rewrites the saved connection\'s paths (D3)',
+      () async {
+        const saved = SavedConnection(
+          id: 'w1',
+          label: 'Laptop',
+          host: 'winbox',
+          port: 22,
+          username: 'u',
+          repoPath: '/c/Users/u/r',
+          repoPaths: ['/c/Users/u/r', r'C:\Users\u\other', '/C/USERS/u/R'],
+          repoLabels: {r'C:\Users\u\other': 'Other'},
+        );
+        SharedPreferences.setMockInitialValues({
+          'saved_connections': jsonEncode([saved.toJson()]),
+        });
+        final tmp = Directory.systemTemp.createTempSync('mg_d3_');
+        addTearDown(() => tmp.deleteSync(recursive: true));
+        final store = ConnectionStore(
+          dotfilePath: '${tmp.path}/credentials.json',
+        );
+        final exec = _WindowsHostExecutor(
+          banner: _windowsBanner,
+          facts: _factsBashActive,
+        )..topLevel = 'C:/Users/u/r';
+        final (:container, manager: _) = _windowsContainer(
+          exec,
+          extra: [connectionStoreProvider.overrideWithValue(store)],
+        );
+        await container
+            .read(connectionProvider.notifier)
+            .connect(
+              profile: winProfile,
+              repoPath: saved.repoPath,
+              repoPaths: saved.repoPaths,
+              connectionId: saved.id,
+            );
+        expect(
+          container.read(connectionProvider).phase,
+          ConnectionPhase.connected,
+        );
+
+        final stored = (await store.list()).single;
+        expect(stored.repoPath, 'C:/Users/u/r');
+        // Three spellings, two folders: one entry each, in git's form.
+        expect(stored.repoPaths, ['C:/Users/u/r', 'C:/Users/u/other']);
+        expect(stored.repoLabels, {'C:/Users/u/other': 'Other'});
+        // Written over the entry the connect stamped, not a stale copy.
+        expect(stored.lastConnectedAt, isNotNull);
+      },
+    );
+
     test('a POSIX host is never sent the Windows probe', () async {
       final exec = _WindowsHostExecutor(
         banner: 'SSH-2.0-OpenSSH_9.6p1 Ubuntu-3ubuntu13',
@@ -743,6 +852,18 @@ void main() {
         reason: 'no command may cd into an unexpanded ~ path',
       );
     });
+
+    test(
+      'a Linux path shaped like an MSYS drive stays as typed (0070.3)',
+      () async {
+        final exec = _HomeHostExecutor('/home/u');
+        final container = containerFor(exec);
+        await container
+            .read(connectionProvider.notifier)
+            .connect(profile: host, repoPath: '/c/data');
+        expect(container.read(connectionProvider).repoPath, '/c/data');
+      },
+    );
 
     test('the probe runs from /, whatever the repository path', () async {
       final exec = _HomeHostExecutor('/home/u');

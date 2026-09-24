@@ -1,5 +1,6 @@
 import '../ssh/shell_escaper.dart';
 import '../ssh/ssh_command_executor.dart';
+import '../utils/host_path.dart';
 import '../utils/posix_path.dart';
 
 /// A host filesystem operation failed (permission denied, missing directory,
@@ -48,7 +49,11 @@ class HostFsService {
   /// channel resolves to the login home. (On the local backend this is the
   /// process cwd — the local UI uses the native folder picker instead, so this
   /// is only ever a fallback there.)
-  Future<String> homeDir() async {
+  ///
+  /// In [style]'s canonical form: on a Windows host Git Bash's `pwd` prints
+  /// `/c/Users/<user>`, and the browser then builds `C:/Users/<user>/…`,
+  /// the form git prints (0070.3).
+  Future<String> homeDir({HostPathStyle style = HostPathStyle.posix}) async {
     final result = await _executor.execute(
       repoPath: '.',
       gitArgs: const ['pwd'],
@@ -59,7 +64,7 @@ class HostFsService {
     if (!result.isSuccess || home.isEmpty) {
       throw HostFsException('could not resolve the home directory', result);
     }
-    return home;
+    return HostPath.canonical(home, style);
   }
 
   /// The names of the sub*directories* of [path] (symlinks-to-directories

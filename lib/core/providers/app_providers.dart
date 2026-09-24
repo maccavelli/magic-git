@@ -69,6 +69,7 @@ import '../storage/saved_workspace_store.dart';
 import '../undo/undo_journal.dart';
 import '../utils/display_error.dart';
 import '../utils/git_porcelain_parser.dart';
+import '../utils/host_path.dart';
 import 'keep_alive_lru.dart';
 import 'provider_retry_policy.dart';
 import 'session_scope.dart';
@@ -1639,6 +1640,39 @@ class ConnectionController extends Notifier<ConnectionState> {
       // the non-scoped `validateRepoPath` below (it injects `_scopeEnvFor`).
       ref.read(gitServiceProvider).clearAllRepoScopes();
 
+      // A Windows host's paths in their one canonical form, git's own `C:/…`
+      // (0070.3): the folder browser gives `/c/…`, a typed path may be
+      // `C:\…`, and every comparison with a path git prints must match.
+      final pathStyle = hostPathStyleFor(state.backend, probed?.os ?? '');
+      final caseOf = <String, String>{};
+      if (pathStyle == HostPathStyle.windows) {
+        String canon(String p) => HostPath.canonical(p, pathStyle);
+        repoPath = canon(repoPath);
+        repoPaths = repoPaths?.map(canon).toList();
+        fsmonitorPaths = [for (final p in fsmonitorPaths) canon(p)];
+        scopedGitDirs = {
+          for (final e in scopedGitDirs.entries) canon(e.key): canon(e.value),
+        };
+        // And in git's case: the shell echoes the case typed, git reports the
+        // folder's own (D2). A scoped repository needs its scope to be found,
+        // so it keeps the typed case.
+        if (scopedGitDirs[repoPath] == null) {
+          final top = await ref.read(gitServiceProvider).topLevel(repoPath);
+          if (attempt != _attempt || !ref.mounted) return;
+          if (top != null &&
+              top != repoPath &&
+              HostPath.same(top, repoPath, pathStyle)) {
+            final typed = repoPath;
+            caseOf[typed] = top;
+            repoPath = top;
+            repoPaths = repoPaths?.map((p) => p == typed ? top : p).toList();
+            fsmonitorPaths = [
+              for (final p in fsmonitorPaths) p == typed ? top : p,
+            ];
+          }
+        }
+      }
+
       final scopedGitDir = scopedGitDirs[repoPath];
       if (scopedGitDir != null && scopedGitDir.isNotEmpty) {
         // Scoped (dotfiles) repo: validate the SAVED git-dir by probing the
@@ -1755,6 +1789,9 @@ class ConnectionController extends Notifier<ConnectionState> {
           await ref.read(connectionStoreProvider).touch(connectionId);
           ref.invalidate(savedConnectionsProvider);
         } catch (_) {}
+        // D3: the saved paths in the form this connect used. After the
+        // touch, and awaited, so it writes over the stamped entry.
+        await _canonicalizeSavedPaths(connectionId, pathStyle, caseOf);
         // Per-repo recency: record the *specific* repo opened, not just the
         // connection, so the recent list ranks this repo — not all the
         // connection's known repos — by when it was actually used.
@@ -2900,6 +2937,34 @@ class ConnectionController extends Notifier<ConnectionState> {
       ref.invalidate(savedConnectionsProvider);
     } catch (_) {
       // Store unreadable/unwritable — the in-session heal already applied.
+    }
+  }
+
+  /// Rewrites saved connection [connectionId]'s paths in [style]'s canonical
+  /// form when any differ (0070.3, D3): a connection saved with `/c/…` or
+  /// `C:\…` spellings, or with several spellings of one folder, becomes one
+  /// `C:/…` list. Reads the store itself, not the cached provider, so it
+  /// writes over the entry `touch` just stamped. Best-effort, like
+  /// [_healSavedScopedGitDir].
+  Future<void> _canonicalizeSavedPaths(
+    String connectionId,
+    HostPathStyle style,
+    Map<String, String> caseOf,
+  ) async {
+    if (style == HostPathStyle.posix) return;
+    try {
+      final store = ref.read(connectionStoreProvider);
+      final conn = (await store.list())
+          .where((c) => c.id == connectionId)
+          .firstOrNull;
+      if (conn == null) return;
+      final next = conn.canonicalPaths(style, caseOf: caseOf);
+      if (jsonEncode(next.toJson()) == jsonEncode(conn.toJson())) return;
+      await store.updateMetadata(next);
+      if (!ref.mounted) return;
+      ref.invalidate(savedConnectionsProvider);
+    } catch (_) {
+      // Store unreadable/unwritable — the in-session paths are canonical.
     }
   }
 
