@@ -54,7 +54,13 @@ remotes, and Windows hosts whose OpenSSH default shell is Git Bash: after the ha
 Windows host (by its identification string, or by `cmd.exe` rejecting the environment
 probe) gets one PowerShell probe, and a shell other than Git Bash stops the connect at a
 prompt that offers to set it
-([0070-MADR](decisions/0070-MADR-native-windows-hosts-over-ssh.md)). `ShellEscaper` is the injection defence on every interpolated value, and
+([0070-MADR](decisions/0070-MADR-native-windows-hosts-over-ssh.md)). On a Windows host
+every path has one canonical form, git's own `C:/…` (`HostPath`,
+`lib/core/utils/host_path.dart`): the connect converts what was typed or browsed and takes
+git's case, saved connections are rewritten to it, and Windows paths compare
+case-insensitively. Every command to such a host exports `MSYS_NO_PATHCONV=1`, so Git
+Bash never rewrites an argument that starts with `/` (user text included) on its way into
+git (Amendment 0070.3). `ShellEscaper` is the injection defence on every interpolated value, and
 every script sent through `sh -c` must be dash-clean, because Debian-family hosts run
 `sh` as dash.
 

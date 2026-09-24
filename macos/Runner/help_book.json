@@ -251,7 +251,10 @@
             "cmd",
             "openssh",
             "default shell",
-            "git for windows"
+            "git for windows",
+            "path",
+            "c:/",
+            "msys"
           ],
           "sections": [
             {
@@ -303,13 +306,23 @@
             },
             {
               "type": "paragraph",
-              "text": "Enter the Repository path as Windows shows it, for example C:\\Users\\you\\src\\app, or start it with ~ for your home folder. Status, the file tree, history, and diffs work as on any host."
+              "text": "Enter the Repository path in any form Windows or Git Bash uses — C:\\Users\\you\\src\\app, C:/Users/you/src/app, or /c/Users/you/src/app — or start it with ~ for your home folder. Magic Git keeps it the way git prints it, C:/Users/you/src/app, in the folder's own case, and names the tab after the folder. Status, the file tree, history, and diffs work as on any host."
+            },
+            {
+              "type": "paragraph",
+              "text": "Text you type that starts with / — a commit, tag or stash message, or a History filter — reaches git exactly as typed. Git Bash would otherwise rewrite it into a Windows path, so Magic Git turns that conversion off for its commands."
+            },
+            {
+              "type": "callout",
+              "style": "warning",
+              "title": "Hooks see paths unconverted",
+              "text": "A repository's hooks inherit that setting. A hook that passes a /c/… or /tmp path to a Windows program gets it as written, not converted as it would be in your own Git Bash window. Paths from git rev-parse are already C:/…, so hooks that use them are unaffected."
             },
             {
               "type": "callout",
               "style": "info",
               "title": "Not yet on Windows",
-              "text": "Live refresh polls instead of watching, so the change-detection dot is orange and changes appear within a few seconds. Tabs and the window title show the full C:\\… path rather than the folder name."
+              "text": "Live refresh polls instead of watching, so the change-detection dot is orange and changes appear within a few seconds."
             }
           ]
         },

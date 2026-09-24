@@ -44,8 +44,9 @@ The app itself runs on macOS only.
 - **Windows hosts.** When you connect, Magic Git checks that Git Bash is the
   OpenSSH default shell, and offers to set it. That needs an administrator
   account, and the setting applies to the whole machine. Status, history and
-  diffs are verified on a real Windows host. Live refresh polls, and tabs show
-  the full `C:\…` path.
+  diffs are verified on a real Windows host. Paths are shown as git prints them,
+  `C:/…`, whichever form you type, tabs name the folder, and text that starts
+  with `/` reaches git as typed. Live refresh polls.
 - **Safety.** ⌘Z undoes the last git operation and ⇧⌘Z redoes it. A Recovery
   view reaches the reflog and the snapshots taken before destructive operations
   such as discard, reset, revert and stash pop.

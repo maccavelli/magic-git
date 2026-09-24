@@ -332,6 +332,10 @@ Phase 2 alone would bring back F15.
   the sheet alone would leave Windows clones refused. The maintainer added it. Files added:
   `lib/core/workspace/clone_controller.dart`, `test/clone_controller_test.dart`.
 
+* **D6 (2026-09-24), the root README.** `README.md:48` said Windows tabs "show the full
+  `C:\…` path", which Phase 5 made false. The root README was not in the plan's file list
+  (only `docs/README.md`). The maintainer added it. File added: `README.md`.
+
 ### Phase 0 (2026-09-24)
 
 * The maintainer approved the plan and Amendment 0070.3, accepting the hook trade-off. Records:
@@ -452,3 +456,23 @@ Phase 2 alone would bring back F15.
   `containerForRepo` finds it). My first draft of the tab test opened the tab in the blank landing
   tab, whose container predates the Windows override, so it compared as POSIX; the test now
   starts without a landing tab. `+31: All tests passed!`; `flutter analyze`: No issues found.
+* Commit `8c8f4dd`. Its hook-generated message says "(0070.5)"; it is this plan's Phase 5,
+  under Amendment 0070.3. The commit command also ran after the test run with `;` rather than
+  on its exit status; the suite had passed (`+4444`), and later commits are gated on it.
+
+### Phase 6 (2026-09-24), with D6
+
+* `help_book.json`, `windows_hosts`:
+  * any typed form is accepted, and paths are kept as git prints them, in the folder's case,
+    with the tab named after the folder;
+  * text starting with `/` reaches git as typed;
+  * a warning callout, "Hooks see paths unconverted" (the Amendment 0070.3 trade-off);
+  * the stale "full C:\… path" sentence removed from "Not yet on Windows";
+  * keywords `path`, `c:/`, `msys`.
+* `README.md` (D6): the Windows bullet says the same.
+* `docs/architecture.md`: the canonical form, the saved-path rewrite, case-insensitive
+  comparison, and `MSYS_NO_PATHCONV`.
+* **Step not applicable:** "the help-book label anchors gain the new strings". This plan added no
+  UI label (the error texts it touches already existed), so there was nothing new to anchor.
+* `help_book_json_test`, `docs_records_test`, `no_real_identifiers_scan_test`: `+45: All tests
+  passed!`; records check 0 findings.
