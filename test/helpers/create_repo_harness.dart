@@ -503,9 +503,12 @@ SSHCommandResult? localCreateOk(List<String> args) =>
 /// exactly: `openOrFocus` returns the active tab and never runs `connect`
 /// (`tabs_controller.dart:289-292`).
 class RecordingTabs extends TabsController {
-  RecordingTabs({FakeCreateExecutor? exec, this.tabExecutor})
-    : exec = exec ?? FakeCreateExecutor(),
-      super(containerFactory: _factory);
+  RecordingTabs({
+    FakeCreateExecutor? exec,
+    this.tabExecutor,
+    this.tabOverrides = const [],
+  }) : exec = exec ?? FakeCreateExecutor(),
+       super(containerFactory: _factory);
 
   /// The executor a create routed into a spawned tab runs on — the tab
   /// containers all share it, so a test can queue results and assert argv.
@@ -514,6 +517,11 @@ class RecordingTabs extends TabsController {
   /// A different executor for the spawned tabs, when a test's own double is
   /// the one that must see the work — the clone tests' streaming fake.
   final CommandExecutor? tabExecutor;
+
+  /// Providers every spawned tab overrides — how a test tells the tab a
+  /// sheet dialled from the tab it was opened in (Amendment 0036.1).
+  final List<Override> tabOverrides;
+  static List<Override> _tabOverrides = const [];
 
   static late CommandExecutor _tabExec;
   static int? _spawnedDial = 7;
@@ -538,6 +546,7 @@ class RecordingTabs extends TabsController {
             ),
           ),
           activeExecutorProvider.overrideWithValue(_tabExec),
+          ..._tabOverrides,
           ...overrides,
         ],
       );
@@ -609,6 +618,7 @@ class RecordingTabs extends TabsController {
 /// pair `tabs_host.dart:126` / `:166-167` performs.
 void installTabs(RecordingTabs tabs) {
   RecordingTabs._tabExec = tabs.tabExecutor ?? tabs.exec;
+  RecordingTabs._tabOverrides = tabs.tabOverrides;
   RecordingTabs._spawnedDial = tabs.spawnedDialResult;
   RecordingTabs._spawnedDialGate = tabs.spawnedDialGate;
   TabsController.current = tabs;

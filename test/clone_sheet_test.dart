@@ -9,6 +9,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
 import 'package:remote_magic_git/core/forge/forge.dart';
+import 'package:remote_magic_git/core/forge/forge_repo_summary.dart';
 import 'package:remote_magic_git/core/git/git_service.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
@@ -47,6 +48,7 @@ class _FakeHandle implements SSHStreamHandle {
 class _FakeExecutor extends SSHCommandExecutor {
   final List<List<String>> calls = [];
   final List<List<String>> streamCalls = [];
+  final List<Map<String, String>?> streamEnvs = [];
   final List<SSHCommandResult> results = [];
   _FakeHandle handle = _FakeHandle();
 
@@ -83,6 +85,7 @@ class _FakeExecutor extends SSHCommandExecutor {
     OperationEventCallback? onOperationEvent,
   }) async {
     streamCalls.add(gitArgs);
+    streamEnvs.add(extraEnv);
     return handle;
   }
 }
@@ -185,9 +188,15 @@ const _conn = SavedConnection(
 
 /// [pastDestination] advances off the Destination step the connected wizard
 /// now opens on (MADR 0036, 2A) — see the create harness's twin.
+///
+/// A test that routes work into spawned tabs builds its [RecordingTabs] on
+/// [exec] and installs them BEFORE this pump, as production always has a
+/// `TabsController`: advancing onto Source dials a saved target there
+/// (Amendment 0036.1), so tabs installed afterwards would miss that dial.
 Future<(_StubConnection, _FakeExecutor, _FakeStore)> _pumpConnected(
   WidgetTester tester, {
   bool pastDestination = true,
+  _FakeExecutor? exec,
 }) async {
   final stub = _StubConnection(
     const ConnectionState(
@@ -199,7 +208,7 @@ Future<(_StubConnection, _FakeExecutor, _FakeStore)> _pumpConnected(
       host: 'h',
     ),
   );
-  final exec = _FakeExecutor();
+  exec ??= _FakeExecutor();
   final store = _FakeStore();
   await tester.pumpWidget(
     ProviderScope(
@@ -230,6 +239,50 @@ Finder _urlField() => find.byWidgetPredicate(
       w is MacosTextField &&
       (w.placeholder ?? '').startsWith('https://github.com'),
 );
+
+ForgeRepoSummary _repo(String slug, {Forge forge = Forge.github}) =>
+    ForgeRepoSummary(
+      slug: slug,
+      description: '',
+      isPrivate: false,
+      webUrl: '',
+      sshUrl: '',
+      updatedAt: null,
+      forge: forge,
+    );
+
+/// A landing clone sheet whose saved connection is "Prod" and whose forge
+/// list, wherever it is read, answers `me/app` (Amendment 0036.1).
+Future<_StubConnection> _pumpLandingWithList(WidgetTester tester) async {
+  final stub = _StubConnection(const ConnectionState());
+  await tester.pumpWidget(
+    ProviderScope(
+      overrides: [
+        connectionProvider.overrideWith(() => stub),
+        activeExecutorProvider.overrideWithValue(_FakeExecutor()),
+        savedConnectionsProvider.overrideWith((ref) async => [_conn]),
+        forgeRepoListProvider.overrideWith(
+          (ref, key) async => [_repo('me/app', forge: key.$1)],
+        ),
+        forgeAuthHostProvider.overrideWith((ref, key) async => null),
+      ],
+      child: const MacosApp(
+        debugShowCheckedModeBanner: false,
+        home: CloneRepositorySheet.landing(),
+      ),
+    ),
+  );
+  await tester.pumpAndSettle();
+  return stub;
+}
+
+/// Points the landing sheet's Target at the saved connection "Prod".
+Future<void> _chooseProd(WidgetTester tester) async {
+  await tester.tap(find.byType(MacosPopupButton<WorkspaceDestination>));
+  await tester.pumpAndSettle();
+  await tester.tap(find.text('Prod').last);
+  await tester.pumpAndSettle();
+}
 
 /// Advances the wizard one step (the current step must be valid).
 Future<void> _next(WidgetTester tester) async {
@@ -483,9 +536,10 @@ void main() {
     (tester) async {
       // Deliberately inverted from the Phase 2 pin "lands in the current
       // tab": MADR 0036 decision 3B.
-      final (stub, exec, _) = await _pumpConnected(tester);
+      final exec = _FakeExecutor();
       final tabs = RecordingTabs(tabExecutor: exec);
       installTabs(tabs);
+      final (stub, _, _) = await _pumpConnected(tester, exec: exec);
       await _toReviewViaUrl(tester, 'https://example.com/my-repo.git');
       exec.results.add(_ok('absent')); // probe, on the shared executor
       await tester.tap(_cloneButton());
@@ -520,9 +574,10 @@ void main() {
   testWidgets('a clone refuses at the tab cap and runs nothing', (
     tester,
   ) async {
-    final (stub, exec, _) = await _pumpConnected(tester);
+    final exec = _FakeExecutor();
     final tabs = RecordingTabs(tabExecutor: exec)..capReached = true;
     installTabs(tabs);
+    final (stub, _, _) = await _pumpConnected(tester, exec: exec);
     await _toReviewViaUrl(tester, 'https://example.com/my-repo.git');
 
     expect(tester.widget<AppPushButton>(_cloneButton()).onPressed, isNull);
@@ -535,9 +590,10 @@ void main() {
   testWidgets('cancelling a routed clone reaches the tab running the job', (
     tester,
   ) async {
-    final (_, exec, _) = await _pumpConnected(tester);
+    final exec = _FakeExecutor();
     final tabs = RecordingTabs(tabExecutor: exec);
     installTabs(tabs);
+    await _pumpConnected(tester, exec: exec);
     await _toReviewViaUrl(tester, 'https://example.com/my-repo.git');
     exec.results.add(_ok('absent'));
     exec.results.add(_ok('absent')); // cleanup probe after cancel
@@ -629,6 +685,161 @@ void main() {
     );
   });
 
+  group('Amendment 0036.1: a saved host\'s forge list (issue #5)', () {
+    testWidgets('T1 a saved target dials on the Source step and lists its '
+        'repositories', (tester) async {
+      final stub = await _pumpLandingWithList(tester);
+      await _chooseProd(tester);
+      expect(stub.dialed, isEmpty, reason: 'choosing the host does not dial');
+      await _next(tester); // Target -> Source, on the GitHub tab
+
+      expect(stub.dialed, ['c1'], reason: 'browsing the host dials it');
+      expect(find.text('me/app'), findsOneWidget);
+      await tester.tap(find.text('me/app'));
+      await tester.pumpAndSettle();
+      expect(
+        tester.widget<AppPushButton>(_continueButton()).onPressed,
+        isNotNull,
+        reason: 'a picked repository enables Continue',
+      );
+    });
+
+    testWidgets('T2 the list, the host and the clone all use the dialled tab', (
+      tester,
+    ) async {
+      final exec = _FakeExecutor();
+      final tabs = RecordingTabs(
+        tabExecutor: exec,
+        tabOverrides: [
+          forgeRepoListProvider.overrideWith(
+            (ref, key) async => [_repo('me/app')],
+          ),
+          forgeAuthHostProvider.overrideWith(
+            (ref, key) async => 'ghe.example.com',
+          ),
+          // The finished clone records its namespace in the dialled tab.
+          connectionStoreProvider.overrideWithValue(_FakeStore()),
+        ],
+      );
+      installTabs(tabs);
+      final stub = _StubConnection(
+        const ConnectionState(
+          phase: ConnectionPhase.connected,
+          repoPath: '/srv/repo',
+          repoPaths: ['/srv/repo'],
+          connectionId: 'c1',
+          connectionLabel: 'Prod',
+          host: 'h',
+        ),
+      );
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            connectionProvider.overrideWith(() => stub),
+            activeExecutorProvider.overrideWithValue(exec),
+            connectionStoreProvider.overrideWithValue(_FakeStore()),
+            savedConnectionsProvider.overrideWith((ref) async => [_conn]),
+            gitServiceProvider.overrideWithValue(GitService(_FakeExecutor())),
+            // What THIS tab's session would answer: another host entirely.
+            forgeRepoListProvider.overrideWith(
+              (ref, key) async => [_repo('origin/wrong')],
+            ),
+            forgeAuthHostProvider.overrideWith(
+              (ref, key) async => 'wrong.example.com',
+            ),
+          ],
+          child: const MacosApp(
+            debugShowCheckedModeBanner: false,
+            home: CloneRepositorySheet.connected(),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await _next(tester); // Target -> Source, on the GitHub tab
+
+      expect(tabs.spawned, hasLength(1), reason: 'a tab was claimed to dial');
+      expect(tabs.spawned.single.dialed.single.id, 'c1', reason: 'dialled');
+      expect(stub.dialed, isEmpty, reason: 'not in the tab it was opened from');
+      expect(find.text('origin/wrong'), findsNothing);
+      expect(find.text('me/app'), findsOneWidget);
+      expect(
+        find.byWidgetPredicate(
+          (w) => w is MacosTextField && w.controller?.text == 'ghe.example.com',
+        ),
+        findsOneWidget,
+        reason: 'the host field is prefilled from the dialled tab',
+      );
+
+      await tester.tap(find.text('me/app'));
+      await tester.pumpAndSettle();
+      await _next(tester); // Source -> Location
+      await _next(tester); // Location -> Review
+      exec.results.add(_ok('absent')); // the destination probe
+      await tester.tap(_cloneButton());
+      await tester.pump();
+      await tester.pump();
+      expect(
+        exec.streamEnvs.last?['GH_HOST'],
+        'ghe.example.com',
+        reason: 'the clone targets the host the list was read from',
+      );
+      await exec.handle.finish(0);
+      await tester.pumpAndSettle();
+      expect(tabs.spawned.single.finalized.single.repoPath, '/srv/app');
+      expect(stub.repoPathsSet, isEmpty, reason: 'this tab did not switch');
+      expect(find.byType(CloneRepositorySheet), findsNothing, reason: 'popped');
+    });
+
+    testWidgets('T3 switching to GitLab dials', (tester) async {
+      final stub = await _pumpLandingWithList(tester);
+      await _next(tester); // Target (This Mac) -> Source
+      await tester.tap(find.text('URL'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(AppPushButton, 'Back'));
+      await tester.pumpAndSettle();
+      await _chooseProd(tester);
+      await _next(tester); // Target -> Source, still on the URL tab
+      expect(stub.dialed, isEmpty, reason: 'a URL needs no host session');
+
+      await tester.tap(find.text('GitLab'));
+      await tester.pumpAndSettle();
+      expect(stub.dialed, ['c1']);
+      expect(find.text('me/app'), findsOneWidget);
+    });
+
+    testWidgets('T4 a failed dial offers Connect again', (tester) async {
+      final stub = await _pumpLandingWithList(tester);
+      stub.dialGate = Completer<int?>()..complete(null);
+      await _chooseProd(tester);
+      await _next(tester); // Target -> Source: the dial fails
+      expect(stub.dialed, ['c1']);
+      expect(find.text('me/app'), findsNothing);
+
+      stub.dialGate = null; // the host answers now
+      await tester.tap(find.widgetWithText(AppPushButton, 'Connect'));
+      await tester.pumpAndSettle();
+      expect(stub.dialed, ['c1', 'c1']);
+      expect(find.text('me/app'), findsOneWidget);
+    });
+
+    testWidgets('T5 closing after a Source-step dial hangs it up', (
+      tester,
+    ) async {
+      final stub = await _pumpLandingWithList(tester);
+      await _chooseProd(tester);
+      await _next(tester); // Target -> Source: dialled
+      expect(stub.dialed, ['c1']);
+
+      await tester.tap(
+        find
+            .byWidgetPredicate((w) => w is MacosTooltip && w.message == 'Close')
+            .first,
+      );
+      await tester.pumpAndSettle();
+      expect(stub.aborted, [1], reason: 'the adopted session is hung up');
+    });
+  });
+
   testWidgets('landing mode offers This Mac plus saved connections', (
     tester,
   ) async {
@@ -681,8 +892,9 @@ void main() {
     // backstops, covered in connection_provisioning_test.)
     //
     // Re-pointed for MADR 0036 (6B): selection no longer dials. The dial
-    // starts at the first commitment to the host — Browse… on the Location
-    // step — and the user can walk Back to the Destination step meanwhile.
+    // starts at the first commitment to the host — since Amendment 0036.1,
+    // entering Source on the GitHub tab, whose list needs the host — and
+    // the user can walk Back to the Destination step meanwhile.
     //
     // Note: no pumpAndSettle once the dial starts — the sheet shows an
     // indeterminate "Connecting…" spinner, which never settles.
@@ -724,21 +936,14 @@ void main() {
     await tester.pumpAndSettle();
     expect(stub.dialed, isEmpty, reason: 'selection does not dial');
 
-    // Commit to the host: Browse… on the Location step starts the (gated) dial.
-    await _next(tester); // Destination → Source
-    await tester.tap(find.text('URL'));
-    await tester.pumpAndSettle();
-    await tester.enterText(_urlField(), 'https://example.com/my-repo.git');
-    await tester.pumpAndSettle();
-    await _next(tester); // Source → Location
-    await tester.tap(find.widgetWithText(AppPushButton, 'Browse…').first);
+    // Commit to the host: entering Source on the GitHub tab starts the
+    // (gated) dial.
+    await tester.tap(_continueButton()); // Destination → Source
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 50));
     expect(stub.dialed, ['c1'], reason: 'the dial should have started');
 
     // Walk back to Destination while it dials: the control is inert.
-    await tester.tap(find.widgetWithText(AppPushButton, 'Back'));
-    await tester.pump();
     await tester.tap(find.widgetWithText(AppPushButton, 'Back'));
     await tester.pump();
     expect(
@@ -751,12 +956,6 @@ void main() {
     stub.dialGate!.complete(7);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 50));
-    // The dial's continuation opened the directory browser; dismiss it.
-    await tester.tap(
-      find
-          .byWidgetPredicate((w) => w is MacosTooltip && w.message == 'Close')
-          .last,
-    );
     await tester.pumpAndSettle();
     expect(
       destination().onChanged,
@@ -792,8 +991,9 @@ void main() {
       await tester.pumpAndSettle();
 
       // Adopt a session, so resetProvisioning has a token to hang up. Under
-      // MADR 0036 (6B) selection no longer dials: Browse… on the Location
-      // step is the first commitment to the host.
+      // MADR 0036 (6B) selection no longer dials; since Amendment 0036.1
+      // entering Source on the GitHub tab is the first commitment to the
+      // host, and Browse… reuses the session it adopted.
       await tester.tap(find.byType(MacosPopupButton<WorkspaceDestination>));
       await tester.pumpAndSettle();
       await tester.tap(find.text(_conn.displayName).last);
@@ -806,7 +1006,7 @@ void main() {
       await _next(tester); // Source → Location
       await tester.tap(find.widgetWithText(AppPushButton, 'Browse…').first);
       await tester.pumpAndSettle();
-      expect(stub.dialed, ['c1'], reason: 'Browse… adopted a session');
+      expect(stub.dialed, ['c1'], reason: 'entering Source adopted a session');
       await tester.tap(
         find
             .byWidgetPredicate((w) => w is MacosTooltip && w.message == 'Close')

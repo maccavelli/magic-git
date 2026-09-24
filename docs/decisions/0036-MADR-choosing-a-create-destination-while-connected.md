@@ -4,7 +4,7 @@ date: 2026-09-08
 decision-makers: [Maintainer]
 consulted: []
 informed: [Magic Git contributors]
-verified: 2026-09-08
+verified: 2026-09-24
 ---
 
 # Let a create choose its destination, and open the result in its own tab
@@ -228,7 +228,9 @@ call-site change. The provisioning mixin reads `ref` in exactly three places
 
 ## Decision Outcome
 
-Chosen options: **1C, 2A, 3B, 4A (sequenced), 5B, 6B, 7A.**
+Chosen options: **1C, 2A, 3B, 4A (sequenced), 5B, 6B, 7A.** (For clone, 6B's "first
+commitment" also covers browsing the host's forge repositories, and that list is read from the
+dialled tab. Both by Amendment 0036.1.)
 
 **Together they reduce to one rule:** *a create runs where it can and opens
 where it lands, and the tab the wizard was opened from is never touched.*
@@ -337,7 +339,9 @@ from create — so clone is its own phase rather than a parity sweep.
    session at `phase: connecting`.
 7. The `sshProvision` create is covered end to end, and that coverage lands
    **before** the behaviour change.
-8. Clone behaves identically for 1–6, with progress shown for a routed job.
+8. Clone behaves identically for 1–6, with progress shown for a routed job. *(Not met for a
+   forge source until Amendment 0036.1: clone's GitHub/GitLab list could not load for a saved
+   host.)*
 9. The MADR 0022 H4 (mid-dial switch) and MADR 0034 F4 (mid-hang-up dismiss)
    guards hold, exercised through the new path.
 10. Every new check is seen to fail against a deliberate defect.
@@ -438,3 +442,82 @@ MADR 0034 F4 (the mid-dial and mid-hang-up hazards the routing must not
 reintroduce); MADR 0031/0032 (the forge side of a create — *where the
 repository is created on the forge* — which this record does not touch: it
 concerns only where the working copy lands and which tab shows it).
+
+## Amendment 0036.1 (2026-09-24): clone's forge list dials its host, and reads from that tab
+
+Status: accepted by the maintainer on 2026-09-24. It is implemented by
+[0036-PLAN-clone-forge-list-on-a-saved-host.md](0036-PLAN-clone-forge-list-on-a-saved-host.md).
+It was reported as [issue #5](https://github.com/maccavelli/magic-git/issues/5).
+
+### What went wrong
+
+Cloning to a saved SSH host from the GitHub or GitLab tab could not be done. The list never
+populated, nothing could be selected, and Continue stayed disabled. The URL tab still worked.
+Two defects combine, and both trace to how decision 6B was applied to clone.
+
+1. **Nothing dials on the Source step.**
+   - The browse list waits for a session: `_forgeBrowseReady` (`clone_sheet.dart:306`) is false
+     for `sshProvision` until `provisionToken` is set. Until then the list shows "Pick a
+     destination connection to browse its repositories."
+   - Before `bc0b92c`, `_onDestChanged` dialled on selection. That commit removed the dial, as
+     6B decided, and left only two dials: Browse… on the Location step (`:590`) and Clone
+     (`:389`). Both come after Source, and Source's Continue needs a selected repository.
+   - Decision 6 was weighed for create, where the forge data (namespace suggestions, the
+     host prefill) is optional. Clone's repository list *requires* a live session on the
+     target, and this record never considered that dependency.
+2. **Once dialled, the list asks the wrong host.**
+   - Under 1C the dial runs in the flow's claimed tab (`workspace_provisioning.dart:44`,
+     `flow.container`).
+   - The list and the host prefill were still read through the sheet's own `ref`
+     (`clone_sheet.dart:619`, `:787-790`, and the submit's host at `:417`), which is the tab
+     the wizard was opened from. From a connected tab, that runs the *current* session's
+     `gh`/`glab`, not the target host's.
+
+### Evidence
+
+Each proof below is a widget test run in a scratch clone; the working tree was untouched.
+
+* **Defect 1** — landing clone, saved connection "Prod", GitHub tab, stubbed repository list:
+  * at `b7857ea` it fails with `Found 0 widgets with text "me/app"`;
+  * at `ee0c4a6`, the parent of `bc0b92c`, the same test passes.
+* **Defect 2** — connected clone, the target dialled through Browse… in a new tab, then Back to
+  Source and GitHub. The origin container's list returns `origin/wrong`; the dialled tab's
+  returns `me/app`.
+  * At `b7857ea` the dial was confirmed in the spawned tab, and the list then showed
+    `origin/wrong` (`Found 1 widget with text "origin/wrong"`).
+* **Why nothing caught it:** every existing saved-connection clone test switches to the URL
+  tab before it advances.
+
+### Decision
+
+* **For clone, browsing the host's forge repositories is a commitment to that host, like
+  Browse… and Clone.** It dials, in the flow's tab, when the Source step shows GitHub or
+  GitLab for a saved-connection target. That covers entering the step and switching to
+  either tab. If the dial fails, the list offers to connect again.
+  * 6B's reasoning is kept: the tab is opened only once the user acts toward the host.
+  * 6B's cost is unchanged: a sheet closed or retargeted after the dial abandons the tab
+    through the existing teardown (`_abandonProvisionTab`).
+* **Every forge read the clone makes runs in the flow's container** (`_flow.container`):
+  * the browse list;
+  * the signed-in host that prefills the host field;
+  * the host the submit clones from.
+
+  That container is the claimed tab when there is one, and the sheet's own otherwise, so This
+  Mac and the active session are unaffected.
+
+Rejected: listing through the Mac's own `gh`/`glab`. It would show the Mac's account, not the
+account the clone will use on the host. Rejected: asking the user to press a separate
+"Connect" before any list appears. It adds a step to the common path, while the list is the
+step's default view.
+
+### Consequences
+
+* Good, because a GitHub/GitLab clone to a saved host works again. The list names the
+  repositories the host's own sign-in can see, which is what the clone will use.
+* Good, because the create sheet is untouched. Its forge data remains optional, and the
+  sheet has no step that a missing dial blocks.
+* Neutral, because entering the Source step for a saved host now dials. The user has already
+  chosen the host and moved on to browse it, so this is the earliest point the list can exist.
+* Bad, because a user who opens Source and then cancels has paid for a dial. The existing
+  teardown hangs it up, as it does after Browse….
+

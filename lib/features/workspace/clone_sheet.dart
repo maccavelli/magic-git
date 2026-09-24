@@ -202,6 +202,7 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet>
       _stepIndex++;
       _error = null;
     });
+    if (steps[_stepIndex].id == 'source') unawaited(_connectForBrowse());
   }
 
   @override
@@ -305,6 +306,29 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet>
   /// active SSH session; for a landing connection, only once provisioned.
   bool get _forgeBrowseReady =>
       _target != WorkspaceTarget.sshProvision || provisionToken != null;
+
+  /// Where every forge read of this clone runs (Amendment 0036.1): the tab
+  /// the flow claimed and dialled, else this sheet's own container — This
+  /// Mac and the active session. Read through the sheet's `ref`, the list
+  /// and the host came from the tab the wizard was opened from, so a
+  /// connected clone to another host listed THIS host's repositories.
+  ProviderContainer get _browseContainer => _flow.container;
+
+  /// Dials a saved target so its forge list can load (Amendment 0036.1).
+  /// Browsing the host's repositories is a commitment to it, like Browse…
+  /// and Clone: without this, nothing before Clone could dial, and the
+  /// list — which Continue needs a pick from — never loaded (issue #5).
+  /// A no-op for any other target, a URL source, once dialled, or mid-dial.
+  Future<void> _connectForBrowse() async {
+    if (_target != WorkspaceTarget.sshProvision || _forge == null) return;
+    if (provisionToken != null || provisioning) return;
+    if (!await _flow.ensureTab()) {
+      if (mounted) setState(() => _error = CloneRepositorySheet.capMessage);
+      return;
+    }
+    if (!mounted) return;
+    await ensureProvisioned();
+  }
 
   Future<void> _onDestChanged(WorkspaceDestination dest) async {
     // Switching destination abandons any in-flight provisioning, and the tab
@@ -414,7 +438,9 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet>
               forge: _forge!,
               host:
                   _effectiveForgeHost(
-                    ref.read(forgeAuthHostProvider((_forge!, _isLocalTarget))),
+                    _browseContainer.read(
+                      forgeAuthHostProvider((_forge!, _isLocalTarget)),
+                    ),
                   ) ??
                   _defaultHost,
               slug: _selected!.slug,
@@ -609,23 +635,6 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet>
         : _jobContainer!.read(cloneJobProvider);
     final running = job.isRunning || _submitting;
     final forge = _forge;
-    if (forge != null) {
-      // Prefill the host with the instance the target's gh/glab is actually
-      // signed in to (e.g. a self-hosted GitLab) the moment it resolves —
-      // but never overwrite a host the user typed themselves. Registered
-      // here (not in the step body) because ref.listen must run in this
-      // ConsumerState's own build; the setState also re-keys the browse
-      // list onto the resolved host.
-      ref.listen(forgeAuthHostProvider((forge, _isLocalTarget)), (
-        previous,
-        next,
-      ) {
-        final resolved = next.value;
-        if (resolved != null && resolved.isNotEmpty && !_hostEdited) {
-          setState(() => _host.text = resolved);
-        }
-      });
-    }
     final steps = _activeSteps;
     final stepIndex = _stepIndex.clamp(0, steps.length - 1);
 
@@ -659,6 +668,8 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet>
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
+                    if (forge != null && _forgeBrowseReady)
+                      _forgeHostListener(forge),
                     WizardStepIntro(steps[stepIndex].intro),
                     const SizedBox(height: 14),
                     steps[stepIndex].body(typography),
@@ -765,18 +776,75 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet>
     return typed.isNotEmpty ? typed : _defaultHost;
   }
 
+  /// Prefills the host field with the instance the target's gh/glab is
+  /// signed in to (e.g. a self-hosted GitLab) the moment it resolves — but
+  /// never over a host the user typed; the setState also re-keys the browse
+  /// list onto the resolved host. Listens in [_browseContainer], and is
+  /// mounted only once the target can be asked, so an undialled host is
+  /// never probed through another tab's session (Amendment 0036.1). It
+  /// stays mounted on every step, which keeps the resolved host alive for
+  /// [_submit].
+  Widget _forgeHostListener(Forge forge) => UncontrolledProviderScope(
+    container: _browseContainer,
+    child: Consumer(
+      builder: (context, ref, _) {
+        ref.listen(forgeAuthHostProvider((forge, _isLocalTarget)), (
+          previous,
+          next,
+        ) {
+          final resolved = next.value;
+          if (resolved != null && resolved.isNotEmpty && !_hostEdited) {
+            setState(() => _host.text = resolved);
+          }
+        });
+        return const SizedBox.shrink();
+      },
+    ),
+  );
+
   Widget _forgeBrowse(MacosTypography typography) {
     if (!_forgeBrowseReady) {
+      final caption = typography.caption1.copyWith(
+        color: MacosColors.systemGrayColor,
+      );
       return Padding(
         padding: const EdgeInsets.symmetric(vertical: 16),
-        child: Text(
-          'Pick a destination connection to browse its repositories.',
-          style: typography.caption1.copyWith(
-            color: MacosColors.systemGrayColor,
-          ),
-        ),
+        child: provisioning
+            ? Row(
+                children: [
+                  const ProgressCircle(radius: 8),
+                  const SizedBox(width: 8),
+                  Text('Connecting to the host…', style: caption),
+                ],
+              )
+            : Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Connect to the host to list the repositories its '
+                    'own gh/glab sign-in can see.',
+                    style: caption,
+                  ),
+                  const SizedBox(height: 8),
+                  AppPushButton(
+                    controlSize: ControlSize.regular,
+                    onPressed: _submitting ? null : _connectForBrowse,
+                    child: const Text('Connect'),
+                  ),
+                ],
+              ),
       );
     }
+    // The dialled tab's providers, not this sheet's (Amendment 0036.1).
+    return UncontrolledProviderScope(
+      container: _browseContainer,
+      child: Consumer(
+        builder: (context, ref, _) => _forgeBrowseList(typography, ref),
+      ),
+    );
+  }
+
+  Widget _forgeBrowseList(MacosTypography typography, WidgetRef ref) {
     // One shared derivation with _submit (see _effectiveForgeHost) — the
     // browse list and the eventual clone must target the same host. While
     // the signed-in host is still resolving (a network probe, up to 10s) and
@@ -1195,17 +1263,20 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet>
     return AppPushButton(
       controlSize: ControlSize.regular,
       secondary: !active,
-      onPressed: () => setState(() {
-        _tab = tab;
-        _selected = null;
-        if (tab != _SourceTab.url) {
-          final h = _host.text.trim();
-          if (h.isEmpty || h == 'github.com' || h == 'gitlab.com') {
-            _host.text = _defaultHost;
-            _hostEdited = false;
+      onPressed: () {
+        setState(() {
+          _tab = tab;
+          _selected = null;
+          if (tab != _SourceTab.url) {
+            final h = _host.text.trim();
+            if (h.isEmpty || h == 'github.com' || h == 'gitlab.com') {
+              _host.text = _defaultHost;
+              _hostEdited = false;
+            }
           }
-        }
-      }),
+        });
+        if (tab != _SourceTab.url) unawaited(_connectForBrowse());
+      },
       child: Text(label),
     );
   }

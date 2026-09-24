@@ -259,5 +259,59 @@
     "tests": [
       "test/add_existing_repo_sheet_test.dart"
     ]
+  },
+  {
+    "label": "0036.1: entering Source does not dial a saved target",
+    "file": "lib/features/workspace/clone_sheet.dart",
+    "find": "    if (steps[_stepIndex].id == 'source') unawaited(_connectForBrowse());\n",
+    "replace": "",
+    "tests": [
+      "test/clone_sheet_test.dart"
+    ]
+  },
+  {
+    "label": "0036.1: switching to GitHub/GitLab does not dial",
+    "file": "lib/features/workspace/clone_sheet.dart",
+    "find": "        if (tab != _SourceTab.url) unawaited(_connectForBrowse());\n",
+    "replace": "",
+    "tests": [
+      "test/clone_sheet_test.dart"
+    ]
+  },
+  {
+    "label": "0036.1: Connect does nothing",
+    "file": "lib/features/workspace/clone_sheet.dart",
+    "find": "                    onPressed: _submitting ? null : _connectForBrowse,\n",
+    "replace": "                    onPressed: _submitting ? null : () {},\n",
+    "tests": [
+      "test/clone_sheet_test.dart"
+    ]
+  },
+  {
+    "label": "0036.1: the list reads the sheet's own container",
+    "file": "lib/features/workspace/clone_sheet.dart",
+    "find": "    return UncontrolledProviderScope(\n      container: _browseContainer,\n",
+    "replace": "    return UncontrolledProviderScope(\n      container: _flow.origin,\n",
+    "tests": [
+      "test/clone_sheet_test.dart"
+    ]
+  },
+  {
+    "label": "0036.1: the host prefill listens in the sheet's own container",
+    "file": "lib/features/workspace/clone_sheet.dart",
+    "find": "  Widget _forgeHostListener(Forge forge) => UncontrolledProviderScope(\n    container: _browseContainer,\n",
+    "replace": "  Widget _forgeHostListener(Forge forge) => UncontrolledProviderScope(\n    container: _flow.origin,\n",
+    "tests": [
+      "test/clone_sheet_test.dart"
+    ]
+  },
+  {
+    "label": "0036.1: the submit reads the host through the sheet's ref",
+    "file": "lib/features/workspace/clone_sheet.dart",
+    "find": "                    _browseContainer.read(\n                      forgeAuthHostProvider((_forge!, _isLocalTarget)),\n                    ),\n",
+    "replace": "                    ref.read(\n                      forgeAuthHostProvider((_forge!, _isLocalTarget)),\n                    ),\n",
+    "tests": [
+      "test/clone_sheet_test.dart"
+    ]
   }
 ]
