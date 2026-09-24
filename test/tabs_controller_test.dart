@@ -9,6 +9,7 @@ import 'package:remote_magic_git/core/providers/app_providers.dart';
 import 'package:remote_magic_git/core/storage/saved_connection.dart';
 import 'package:remote_magic_git/core/storage/saved_workspace_set.dart';
 import 'package:remote_magic_git/core/storage/saved_workspace_store.dart';
+import 'package:remote_magic_git/core/utils/host_path.dart';
 import 'package:remote_magic_git/features/tabs/tab_ui_providers.dart';
 import 'package:remote_magic_git/features/tabs/tabs_controller.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -101,6 +102,35 @@ void main() {
       expect(c.activeId, t2.id);
     },
   );
+
+  test('a Windows tab name is its folder, and a case variant focuses it '
+      '(0070.3)', () {
+    expect(repositoryDisplayName(r'C:\Users\u\repo'), 'repo');
+    expect(repositoryDisplayName('/srv/repo'), 'repo');
+
+    final c = makeController();
+    addTearDown(c.dispose);
+    // No blank landing tab: openOrFocus would reuse its container, and the
+    // Windows override applies only to a container this call creates.
+    final windows = [
+      hostPathStyleProvider.overrideWithValue(HostPathStyle.windows),
+    ];
+    final t1 = c.openOrFocus(
+      connectionId: 'c1',
+      repoPath: 'C:/Users/u/a',
+      overrides: windows,
+      connect: (cont) => connectSaved(cont, 'C:/Users/u/a'),
+    );
+    var connectCalled = false;
+    final again = c.openOrFocus(
+      connectionId: 'c1',
+      repoPath: 'c:/users/u/A',
+      connect: (_) => connectCalled = true,
+    );
+    expect(again.id, t1.id);
+    expect(connectCalled, isFalse);
+    expect(c.containerForRepo('c:/users/u/A'), same(t1.container));
+  });
 
   test('dedupe focuses an already-open (connectionId, repoPath) tab', () {
     final c = makeController();

@@ -42,6 +42,7 @@ import '../../core/settings/keymap.dart';
 import '../../core/settings/pane_layout.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/git_porcelain_parser.dart' show GitStatus;
+import '../../core/utils/host_path.dart';
 import '../../core/window/window_channels.dart';
 import '../../core/window/window_kind.dart';
 import '../common/actions.dart';
@@ -673,7 +674,8 @@ class _SecondaryWindowShellState extends ConsumerState<SecondaryWindowShell>
       // stale refs under a new title.
       ref.read(recoveryVisibleProvider.notifier).setVisible(false);
     }
-    final repoName = session.repoPath?.split('/').last;
+    final path = session.repoPath;
+    final repoName = path == null ? null : HostPath.basename(path);
     // Detached windows are status-only (not a full workspace shell) — M12.
     final prefix = _kind == WindowKind.history ? 'History' : 'Status';
     _native(

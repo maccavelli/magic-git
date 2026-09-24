@@ -1,5 +1,4 @@
 import '../utils/host_path.dart';
-import '../utils/posix_path.dart';
 
 /// Non-secret connection profile metadata, persisted in shared_preferences.
 /// The secret (SSH password/passphrase) is stored separately in the Keychain,
@@ -138,7 +137,9 @@ class SavedConnection {
   /// directory basename. The remote analogue of [SavedLocalRepo.displayName].
   String repoDisplayName(String path) {
     final label = repoLabels[path];
-    return (label != null && label.isNotEmpty) ? label : basename(path);
+    return (label != null && label.isNotEmpty)
+        ? label
+        : HostPath.basename(path);
   }
 
   SavedConnection copyWith({

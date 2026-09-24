@@ -3,6 +3,26 @@ import 'package:remote_magic_git/core/storage/saved_connection.dart';
 import 'package:remote_magic_git/core/utils/host_path.dart';
 
 void main() {
+  test(
+    'a repository labels as its folder, a legacy C:\\ entry too (0070.3)',
+    () {
+      const conn = SavedConnection(
+        id: 'w',
+        label: '',
+        host: 'h',
+        port: 22,
+        username: 'u',
+        repoPath: '/srv/git/repo',
+      );
+      expect(
+        conn.repoDisplayName(r'C:\Users\u\magic-cli-remote'),
+        'magic-cli-remote',
+      );
+      expect(conn.repoDisplayName('C:/Users/u/repo'), 'repo');
+      expect(conn.repoDisplayName('/srv/git/repo'), 'repo');
+    },
+  );
+
   group('canonicalPaths (0070.3, D3)', () {
     const conn = SavedConnection(
       id: 'w',

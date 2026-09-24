@@ -431,3 +431,24 @@ Phase 2 alone would bring back F15.
   * `remote_directory_browser_test`: Up lists `C:/Users/u`, `C:/Users`, `C:/`, and stops.
 * The touched files' suites: `+202` (with the Phase 0 tests), then `+67` for the five with new
   cases. `flutter analyze`: No issues found.
+* Commit `c0398a5`.
+
+### Phase 5 (2026-09-24)
+
+* Labels use `HostPath.basename` at every site listed:
+  * `saved_connection.dart` `repoDisplayName`;
+  * `tab_ui_providers.dart` `repositoryDisplayName`;
+  * `connection_switcher.dart` (two);
+  * `saved_workspaces_sheet.dart` (three);
+  * `app_providers.dart` `_pathBasename`;
+  * `command_palette.dart` `_repoBasename`;
+  * `window_manager_bridge.dart` and `secondary_window_main.dart` (window titles).
+
+  Four files dropped the `posix_path` import they no longer used.
+* `tabs_controller.dart`: `_holds` compares a tab's repository by the tab's own
+  `hostPathStyleProvider`, in `_find` (dedupe) and `containerForRepo`.
+* Tests: `saved_connection_test` (a legacy `C:\` entry labels as its folder; POSIX unchanged)
+  and `tabs_controller_test` (the tab name; a case variant focuses the open Windows tab, and
+  `containerForRepo` finds it). My first draft of the tab test opened the tab in the blank landing
+  tab, whose container predates the Windows override, so it compared as POSIX; the test now
+  starts without a landing tab. `+31: All tests passed!`; `flutter analyze`: No issues found.

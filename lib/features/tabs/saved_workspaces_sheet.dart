@@ -4,7 +4,7 @@ import 'package:macos_ui/macos_ui.dart';
 
 import '../../core/providers/app_providers.dart';
 import '../../core/storage/saved_workspace_set.dart';
-import '../../core/utils/posix_path.dart';
+import '../../core/utils/host_path.dart';
 import '../common/actions.dart';
 import '../common/prompt_text_sheet.dart';
 import '../common/sized_sheet.dart';
@@ -130,7 +130,7 @@ class _SavedWorkspacesSheetState extends ConsumerState<SavedWorkspacesSheet> {
     final typography = MacosTheme.of(context).typography;
     final aliases = [
       for (final repository in set.repositories)
-        repository.tabAlias ?? basename(repository.repoPath),
+        repository.tabAlias ?? HostPath.basename(repository.repoPath),
     ];
     return Padding(
       padding: const EdgeInsets.fromLTRB(18, 10, 10, 10),
@@ -230,7 +230,7 @@ class _SavedWorkspacesSheetState extends ConsumerState<SavedWorkspacesSheet> {
       context,
       'Rename Tab',
       initial: tabs.aliasFor(tab) ?? '',
-      placeholder: basename(tab.repoPath ?? ''),
+      placeholder: HostPath.basename(tab.repoPath ?? ''),
       confirmLabel: 'Rename',
       // A confirmed blank means "clear the alias" — distinct from Cancel.
       allowEmpty: true,
@@ -254,7 +254,7 @@ class _SavedWorkspacesSheetState extends ConsumerState<SavedWorkspacesSheet> {
       }
       final details = [
         for (final failure in report.failures)
-          '${failure.repository.tabAlias ?? basename(failure.repository.repoPath)}: '
+          '${failure.repository.tabAlias ?? HostPath.basename(failure.repository.repoPath)}: '
               '${failure.reason}',
       ];
       _status =

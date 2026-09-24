@@ -11,6 +11,7 @@ import '../../core/providers/app_providers.dart';
 import '../../core/settings/keymap.dart';
 import '../../core/storage/saved_connection.dart';
 import '../../core/storage/saved_workspace_set.dart';
+import '../../core/utils/host_path.dart';
 import '../tabs/tabs_controller.dart';
 import '../worktrees/worktree_tabs.dart';
 import 'field_styles.dart';
@@ -328,10 +329,8 @@ class _CommandPaletteState extends ConsumerState<CommandPalette> {
     return bindings.first.label;
   }
 
-  static String _repoBasename(String path) {
-    final parts = path.split('/').where((s) => s.isNotEmpty).toList();
-    return parts.isEmpty ? path : parts.last;
-  }
+  /// The folder a command names, a Windows `C:\…` path included (0070.3).
+  static String _repoBasename(String path) => HostPath.basename(path);
 
   List<PaletteCommand> _allCommands() {
     // Captured up front so the closures don't touch a torn-down ref/context

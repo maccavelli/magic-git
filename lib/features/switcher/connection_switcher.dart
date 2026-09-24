@@ -7,7 +7,7 @@ import '../../core/providers/app_providers.dart';
 import '../../core/storage/saved_connection.dart';
 import '../../core/storage/saved_local_repo.dart';
 import '../../core/storage/saved_workspace_set.dart';
-import '../../core/utils/posix_path.dart';
+import '../../core/utils/host_path.dart';
 import '../common/actions.dart';
 import '../common/buttons.dart';
 import '../common/escape_dismissible.dart';
@@ -615,7 +615,12 @@ class _ConnectionsPanelState extends ConsumerState<ConnectionsPanel> {
                         : MacosColors.systemGrayColor,
                   ),
                   const SizedBox(width: 8),
-                  Expanded(child: Text(basename(repo), style: typography.body)),
+                  Expanded(
+                    child: Text(
+                      HostPath.basename(repo),
+                      style: typography.body,
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -648,7 +653,7 @@ class _ConnectionsPanelState extends ConsumerState<ConnectionsPanel> {
           const SizedBox(width: 8),
           Expanded(
             child: Text(
-              '${connection.connectionLabel ?? (repo == null ? 'Current' : basename(repo))} (unsaved)',
+              '${connection.connectionLabel ?? (repo == null ? 'Current' : HostPath.basename(repo))} (unsaved)',
               style: typography.body,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,

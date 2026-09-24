@@ -12,6 +12,7 @@ import '../../core/providers/window_manager_bridge.dart';
 import '../../core/storage/saved_workspace_set.dart';
 import '../../core/storage/saved_workspace_store.dart';
 import '../../core/storage/store_bus.dart';
+import '../../core/utils/host_path.dart';
 import 'tab_ui_providers.dart';
 
 /// One open repository tab: a stable id and its OWN root [ProviderContainer].
@@ -134,9 +135,21 @@ class TabsController extends ChangeNotifier {
   /// commands to the session that actually owns the repo being operated on —
   /// robust across a History pop-out following the active tab, where the window
   /// briefly still requests the previous repo while the target tab switches.
+  /// Whether tab [t] is on [repoPath], compared as the tab's host compares
+  /// paths (0070.3): a case variant of a Windows path is the same folder.
+  static bool _holds(RepoTab t, String? repoPath) {
+    final own = t.repoPath;
+    if (own == null || repoPath == null) return own == repoPath;
+    return HostPath.same(
+      own,
+      repoPath,
+      t.container.read(hostPathStyleProvider),
+    );
+  }
+
   ProviderContainer? containerForRepo(String repoPath) {
     for (final t in _tabs) {
-      if (t.repoPath == repoPath) return t.container;
+      if (_holds(t, repoPath)) return t.container;
     }
     return null;
   }
@@ -446,9 +459,7 @@ class TabsController extends ChangeNotifier {
     for (final t in _tabs) {
       final sameKind =
           savedKind == null || t.savedKind == null || t.savedKind == savedKind;
-      if (sameKind &&
-          t.connectionId == connectionId &&
-          t.repoPath == repoPath) {
+      if (sameKind && t.connectionId == connectionId && _holds(t, repoPath)) {
         return t;
       }
     }

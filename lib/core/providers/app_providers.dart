@@ -652,10 +652,9 @@ class RecentLocalRepoEntry extends RecentRepo {
   String get id => 'local\u0000${repo.id}';
 }
 
-String _pathBasename(String path) {
-  final parts = path.split('/').where((s) => s.isNotEmpty).toList();
-  return parts.isEmpty ? path : parts.last;
-}
+/// A recent repository's label: its folder, a Windows `C:\…` path included
+/// (0070.3).
+String _pathBasename(String path) => HostPath.basename(path);
 
 String _pathParent(String path) {
   final parts = path.split('/').where((s) => s.isNotEmpty).toList();

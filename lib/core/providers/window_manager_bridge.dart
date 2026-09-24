@@ -10,6 +10,7 @@ import '../settings/app_settings.dart';
 import '../undo/undo_controller.dart';
 import '../undo/undo_journal.dart';
 import '../undo/undo_types.dart';
+import '../utils/host_path.dart';
 import '../window/window_channels.dart';
 import '../window/window_kind.dart';
 import 'app_providers.dart';
@@ -539,7 +540,8 @@ class WindowManagerBridge extends Notifier<List<WindowHandle>> {
   /// A detached repo window is status-only, not a full workspace, hence
   /// "Status" rather than "Repo".
   String _titleFor(WindowHandle handle, ConnectionState c) {
-    final repoName = handle.repoPath?.split('/').last;
+    final path = handle.repoPath;
+    final repoName = path == null ? null : HostPath.basename(path);
     final prefix = handle.kind == WindowKind.history ? 'History' : 'Status';
     if (repoName == null) return prefix;
     final label = c.connectionLabel == null ? '' : ' (${c.connectionLabel})';
