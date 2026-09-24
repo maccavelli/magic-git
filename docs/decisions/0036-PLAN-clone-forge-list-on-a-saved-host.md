@@ -245,3 +245,36 @@ clone goes back to URL-only for saved hosts, which is the current behaviour.
 
 * Working tree: `flutter analyze` clean; `flutter test` `+4453 ~3: All tests passed!`;
   `records.dart check` 0 findings.
+* The commit's own tree (`HEAD` plus the seven staged files, in a detached scratch worktree):
+  `flutter analyze` clean, `flutter test` `+4450 ~3: All tests passed!`. Committed as `4ee7534`.
+
+### Phase 4 (2026-09-24), device check
+
+The build was made from `4ee7534` and installed. The app process was started after the install.
+The binary holds the new placeholder text ("Connect to the host to list the repositories…"),
+and does not hold the old one. Workspaces → Clone repository was run from the landing page twice:
+
+* **A Linux host (saved SSH connection):**
+  * Continue from Target dialled the host. Source opened on GitHub, with the host prefilled as
+    `github.com` and the account's repositories listed. Picking one enabled Continue.
+  * Switching to GitLab prefilled the host's own signed-in GitLab instance and listed its
+    projects after a few seconds. Picking one enabled Continue.
+  * Cancel returned to the landing page with no extra tab and no "Connecting…" session left.
+* **A Windows laptop (saved SSH connection, key-authenticated):**
+  * The dial reached the host, and both tabs then showed the forge CLI's own error rather than
+    an empty card:
+    * GitHub: `gh repo list failed — HTTP 401: Requires authentication`;
+    * GitLab: `failed to read "token" from the operating system keyring … A specified logon
+      session does not exist`. The host prefill fell back to `gitlab.com`, because the probe for
+      the signed-in instance fails in the same way.
+  * Run outside the app, over plain `ssh <laptop> "gh auth status & glab auth status"`, gives
+    the same result: gh reports the stored token as invalid, and glab cannot read its token from
+    the keyring. Both CLIs keep their tokens in the Windows credential store, which a
+    key-authenticated SSH logon session cannot open.
+  * This is a property of the host's CLI setup, not of this fix. The sheet dials the right host
+    and reports that host's answer. Listing on that laptop needs its CLIs to keep their tokens
+    somewhere an SSH session can read. That is outside this plan, and is reported to the
+    maintainer with issue #5.
+  * Cancel was clean here too.
+
+No clone was run. A full clone to a host remains the maintainer's check.
