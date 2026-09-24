@@ -1652,23 +1652,21 @@ class ConnectionController extends Notifier<ConnectionState> {
         scopedGitDirs = {
           for (final e in scopedGitDirs.entries) canon(e.key): canon(e.value),
         };
-        // And in git's case: the shell echoes the case typed, git reports the
-        // folder's own (D2). A scoped repository needs its scope to be found,
-        // so it keeps the typed case.
-        if (scopedGitDirs[repoPath] == null) {
-          final top = await ref.read(gitServiceProvider).topLevel(repoPath);
-          if (attempt != _attempt || !ref.mounted) return;
-          if (top != null &&
-              top != repoPath &&
-              HostPath.same(top, repoPath, pathStyle)) {
-            final typed = repoPath;
-            caseOf[typed] = top;
-            repoPath = top;
-            repoPaths = repoPaths?.map((p) => p == typed ? top : p).toList();
-            fsmonitorPaths = [
-              for (final p in fsmonitorPaths) p == typed ? top : p,
-            ];
-          }
+        // And in git's case (D2), by the rule finalizeProvisioned shares (D7).
+        final spelled = await _hostSpelling(
+          repoPath,
+          pathStyle,
+          scoped: scopedGitDirs[repoPath] != null,
+        );
+        if (attempt != _attempt || !ref.mounted) return;
+        if (spelled != repoPath) {
+          final typed = repoPath;
+          caseOf[typed] = spelled;
+          repoPath = spelled;
+          repoPaths = repoPaths?.map((p) => p == typed ? spelled : p).toList();
+          fsmonitorPaths = [
+            for (final p in fsmonitorPaths) p == typed ? spelled : p,
+          ];
         }
       }
 
@@ -2939,6 +2937,25 @@ class ConnectionController extends Notifier<ConnectionState> {
     }
   }
 
+  /// [repoPath] as a Windows host spells it (0070.3): the canonical `C:/…`, in
+  /// the folder's own case when git finds the repository (D2). A scoped
+  /// repository needs its scope to be found, so it keeps the typed case.
+  /// POSIX returns [repoPath] unchanged. One rule for [connect] and
+  /// [finalizeProvisioned] (D7).
+  Future<String> _hostSpelling(
+    String repoPath,
+    HostPathStyle style, {
+    required bool scoped,
+  }) async {
+    if (style == HostPathStyle.posix) return repoPath;
+    final canonical = HostPath.canonical(repoPath, style);
+    if (scoped) return canonical;
+    final top = await ref.read(gitServiceProvider).topLevel(canonical);
+    return top != null && HostPath.same(top, canonical, style)
+        ? top
+        : canonical;
+  }
+
   /// Rewrites saved connection [connectionId]'s paths in [style]'s canonical
   /// form when any differ (0070.3, D3): a connection saved with `/c/…` or
   /// `C:\…` spellings, or with several spellings of one folder, becomes one
@@ -3142,6 +3159,24 @@ class ConnectionController extends Notifier<ConnectionState> {
     // unrepresentable for every caller, present and future.
     if (token != _attempt || conn.id != _lastConnectionId || !ref.mounted) {
       return false;
+    }
+
+    // A Windows host's path in its one spelling before anything validates,
+    // registers or saves it (0070.3, D7): Add Existing Repository, a clone and
+    // a create all land here, and a typed `C:\…` must not outlive the session
+    // as the live path.
+    final pathStyle = hostPathStyleFor(
+      state.backend,
+      ref.read(binaryEnvironmentProvider).os,
+    );
+    if (pathStyle == HostPathStyle.windows) {
+      if (gitDir.isNotEmpty) gitDir = HostPath.canonical(gitDir, pathStyle);
+      repoPath = await _hostSpelling(
+        repoPath,
+        pathStyle,
+        scoped: gitDir.isNotEmpty,
+      );
+      if (token != _attempt || !ref.mounted) return false;
     }
 
     // Clear any scope a prior session left on the singleton registry before

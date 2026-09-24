@@ -336,6 +336,22 @@ Phase 2 alone would bring back F15.
   `C:\…` path", which Phase 5 made false. The root README was not in the plan's file list
   (only `docs/README.md`). The maintainer added it. File added: `README.md`.
 
+* **D7 (2026-09-24), found at the device gate: the provisioning route.** Adding the scratch
+  repository through Add Existing Repository with a typed `C:\…` path left the live path as
+  typed; the app's Output read `watcher: polling C:\Users\<user>\…\mg-gate`. That route, and
+  a finished clone or create, goes through `finalizeProvisioned` (`app_providers.dart:3122`),
+  which Phase 3 did not cover: it canonicalized only in `connect()`. The maintainer chose to
+  canonicalize there too, sharing one helper (`_hostSpelling`) with `connect()`. Files added:
+  `test/connection_provisioning_test.dart`. Then the gate's add step is redone.
+  Executed: `_hostSpelling` canonicalizes and, for an unscoped repository, adopts git's
+  case, and `connect()` and `finalizeProvisioned()` now both call it. The new test types
+  `C:\Users\u\temp\new` at a fake MINGW host, whose git reports `C:/Users/u/Temp/New`. Both
+  mutations were run in a scratch clone of the working tree:
+  - skipping the call in `finalizeProvisioned` failed the test (`Actual: 'C:\\Users\\u\\temp\\new'`);
+  - returning the canonical form without git's case failed it (`Actual: 'C:/Users/u/temp/new'`),
+    and also failed the `connect()` test in `test/connection_env_reset_test.dart`.
+  The baseline was green first.
+
 ### Phase 0 (2026-09-24)
 
 * The maintainer approved the plan and Amendment 0070.3, accepting the hook trade-off. Records:

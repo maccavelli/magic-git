@@ -203,12 +203,13 @@ void main() {
         log,
         _request(
           existing: true,
-          existingFolder: '/c/Users/u/app',
+          // Browsed as /c/…, in another case than git reports.
+          existingFolder: '/c/users/u/APP',
           pathStyle: HostPathStyle.windows,
         ),
       );
       expect(outcome.error, isNull);
-      expect(outcome.dest, 'C:/Users/u/app');
+      expect(outcome.dest, 'C:/users/u/APP');
       expect(_joined(exec), isNot(contains(startsWith('git init'))));
     });
 

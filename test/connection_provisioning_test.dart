@@ -87,6 +87,44 @@ class _RecordingExecutor extends SSHCommandExecutor {
       .length;
 }
 
+/// A Windows host through Git Bash (0070.3, D7): the environment probe
+/// reports MINGW and `$HOME`, and git spells the repository's top level its
+/// own way.
+class _WindowsProvExecutor extends _RecordingExecutor {
+  @override
+  Future<SSHCommandResult> execute({
+    required String repoPath,
+    required List<String> gitArgs,
+    Map<String, String>? extraEnv,
+    String? stdin,
+    Duration timeout = SSHCommandExecutor.defaultTimeout,
+    int retries = 0,
+    ExecLane lane = ExecLane.exclusive,
+    bool compress = false,
+    Duration? activityIdle,
+    OperationDescriptor? operation,
+    OperationEventCallback? onOperationEvent,
+    CommandOutputCallback? onOutput,
+  }) async {
+    final joined = gitArgs.join(' ');
+    if (joined.contains('uname')) {
+      return const SSHCommandResult(
+        exitCode: 0,
+        stdout: 'OS=MINGW64_NT-10.0-26200\nPATH=/usr/bin\nHOME=/c/Users/u\n',
+        stderr: '',
+      );
+    }
+    if (gitArgs.contains('--show-toplevel')) {
+      return const SSHCommandResult(
+        exitCode: 0,
+        stdout: 'C:/Users/u/Temp/New\n',
+        stderr: '',
+      );
+    }
+    return super.execute(repoPath: repoPath, gitArgs: gitArgs);
+  }
+}
+
 /// A store that yields fixed secrets and records updateMetadata/touch.
 class _FakeStore extends ConnectionStore {
   _FakeStore({this.ghToken});
@@ -312,6 +350,43 @@ void main() {
         container.read(outputLogProvider).lines.length,
         linesBefore,
         reason: 'the clone transcript must survive finalize',
+      );
+    },
+  );
+
+  test(
+    'on a Windows host, finalize keeps git\'s C:/ spelling (0070.3, D7)',
+    () async {
+      manager = _GatedManager();
+      final win = _WindowsProvExecutor();
+      store = _FakeStore();
+      container = ProviderContainer(
+        overrides: [
+          sshClientManagerProvider.overrideWithValue(manager),
+          executorProvider.overrideWithValue(win),
+          gitServiceProvider.overrideWithValue(GitService(win)),
+          connectionStoreProvider.overrideWithValue(store),
+        ],
+      );
+      addTearDown(container.dispose);
+      controller = container.read(connectionProvider.notifier);
+      final token = await begin();
+
+      // Typed as Windows shows it, in another case than git reports.
+      final ok = await controller.finalizeProvisioned(
+        token: token,
+        conn: _conn(),
+        repoPath: r'C:\Users\u\temp\new',
+      );
+      expect(ok, isTrue);
+      expect(state().repoPath, 'C:/Users/u/Temp/New');
+      expect(
+        store.updated.single.allRepoPaths,
+        contains('C:/Users/u/Temp/New'),
+      );
+      expect(
+        store.updated.single.allRepoPaths.where((p) => p.contains(r'\')),
+        isEmpty,
       );
     },
   );
