@@ -70,7 +70,7 @@ Future<void> _dragOnto(
   await tester.pumpAndSettle();
 }
 
-Future<void> _pump(WidgetTester tester) async {
+Future<void> _pump(WidgetTester tester, {DragItem item = _commit}) async {
   await tester.pumpWidget(
     ProviderScope(
       overrides: [connectionProvider.overrideWith(_FakeConnection.new)],
@@ -79,10 +79,10 @@ Future<void> _pump(WidgetTester tester) async {
         home: Row(
           children: [
             // The drag source — stands in for a history commit row.
-            const DragItemDraggable(
-              item: _commit,
+            DragItemDraggable(
+              item: item,
               immediate: true,
-              child: SizedBox(
+              child: const SizedBox(
                 width: 120,
                 height: 44,
                 child: Center(child: Text('SOURCE')),
@@ -127,6 +127,57 @@ void main() {
     // A destructive drop confirms first (no git runs until Continue is tapped).
     expect(find.textContaining('onto the current branch'), findsOneWidget);
     expect(find.text('Continue'), findsOneWidget);
+  });
+
+  testWidgets('dropping a commit on Worktrees opens Add Worktree on a new '
+      'branch that starts at the commit', (tester) async {
+    await _pump(tester);
+    await _dragOnto(tester, find.text('SOURCE'), find.text('Worktrees'));
+
+    expect(find.text('Add Worktree'), findsOneWidget);
+    // A commit is a start point, not a branch to check out: the sheet asks
+    // for the new branch's name rather than posing as Existing branch.
+    expect(find.text('New branch name'), findsOneWidget);
+  });
+
+  testWidgets('dropping a remote branch on Worktrees starts a local branch of '
+      'the same name', (tester) async {
+    await _pump(
+      tester,
+      item: const DragRef(
+        GitRef(
+          name: 'refs/remotes/origin/feat/login',
+          oid: 'f00d',
+          isHead: false,
+          subject: '',
+        ),
+      ),
+    );
+    await _dragOnto(tester, find.text('SOURCE'), find.text('Worktrees'));
+
+    // Not Existing branch: git would check out origin/feat/login detached.
+    expect(find.text('New branch name'), findsOneWidget);
+    expect(find.text('feat/login'), findsOneWidget);
+  });
+
+  testWidgets('dropping a local branch on Worktrees checks that branch out', (
+    tester,
+  ) async {
+    await _pump(
+      tester,
+      item: const DragRef(
+        GitRef(
+          name: 'refs/heads/feat/login',
+          oid: 'f00d',
+          isHead: false,
+          subject: '',
+        ),
+      ),
+    );
+    await _dragOnto(tester, find.text('SOURCE'), find.text('Worktrees'));
+
+    expect(find.text('Add Worktree'), findsOneWidget);
+    expect(find.text('New branch name'), findsNothing);
   });
 
   testWidgets('ESC cancels the drag: releasing on a zone dispatches nothing', (

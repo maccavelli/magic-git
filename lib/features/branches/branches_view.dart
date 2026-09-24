@@ -1125,7 +1125,7 @@ class _BranchesViewState extends ConsumerState<BranchesView>
     await showMacosSheet<void>(
       context: context,
       builder: (_) =>
-          AddWorktreeSheet(repoPath: repoPath, initialCommitish: branch),
+          AddWorktreeSheet(repoPath: repoPath, start: CheckOutBranch(branch)),
     );
     if (mounted) _refresh();
   }
@@ -1226,8 +1226,10 @@ class _BranchesViewState extends ConsumerState<BranchesView>
         context: context,
         builder: (ctx) => AddWorktreeSheet(
           repoPath: repoPath,
-          initialCommitish: start == 'HEAD' ? null : start,
-          initialBranchName: name,
+          start: NewBranchAt(
+            startPoint: start == 'HEAD' ? null : start,
+            name: name,
+          ),
         ),
       );
       if (created == true) _refresh();

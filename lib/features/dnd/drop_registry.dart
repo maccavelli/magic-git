@@ -4,6 +4,7 @@ import 'package:macos_ui/macos_ui.dart' show MacosColors, showMacosSheet;
 
 import '../../core/git/git_service.dart';
 import '../../core/providers/app_providers.dart';
+import '../branches/branch_navigator.dart' show remoteLocalName;
 import '../common/actions.dart';
 import '../common/context_menu.dart';
 import '../common/prompt_text_sheet.dart';
@@ -102,7 +103,7 @@ List<DropAction> _actionsFor(DragItem item, DropZoneId zone) {
             label: 'New worktree for $branch',
             verb: 'New worktree',
             icon: kWorktreeIcon,
-            run: (ctx) => _newWorktreeFrom(ctx, branch),
+            run: (ctx) => _newWorktreeFrom(ctx, _worktreeStartFor(item.ref)),
           ),
         ];
       }
@@ -113,7 +114,8 @@ List<DropAction> _actionsFor(DragItem item, DropZoneId zone) {
             label: 'New worktree from ${commit.shortHash}',
             verb: 'New worktree',
             icon: kWorktreeIcon,
-            run: (ctx) => _newWorktreeFrom(ctx, commit.hash),
+            run: (ctx) =>
+                _newWorktreeFrom(ctx, NewBranchAt(startPoint: commit.hash)),
           ),
         ];
       }
@@ -301,14 +303,26 @@ Future<void> _newBranchFromCommit(DropContext ctx, GitCommit commit) async {
   ctx.selectPage(DropZoneId.branches.pageIndex);
 }
 
-Future<void> _newWorktreeFrom(DropContext ctx, String commitish) async {
+/// What a ref dropped on Worktrees means to Add Worktree: a local branch is
+/// checked out; a remote branch starts a local branch of the same name; any
+/// other ref is a start point for a branch the user names.
+WorktreeStart _worktreeStartFor(GitRef ref) {
+  if (ref.isLocalBranch) return CheckOutBranch(ref.shortName);
+  if (ref.isRemote) {
+    return NewBranchAt(
+      startPoint: ref.shortName,
+      name: remoteLocalName(ref.shortName),
+    );
+  }
+  return NewBranchAt(startPoint: ref.shortName);
+}
+
+Future<void> _newWorktreeFrom(DropContext ctx, WorktreeStart start) async {
   // Reuse the exact sheet the Branches/History panels open for "checkout/branch
-  // in a new worktree" — pre-seeded with the dropped branch or commit as the
-  // start point. The sheet lets the user pick new-branch vs detached.
+  // in a new worktree", told what the drop means.
   await showMacosSheet<void>(
     context: ctx.context,
-    builder: (_) =>
-        AddWorktreeSheet(repoPath: ctx.repoPath, initialCommitish: commitish),
+    builder: (_) => AddWorktreeSheet(repoPath: ctx.repoPath, start: start),
   );
   if (!ctx.context.mounted) return;
   ctx.refresh();

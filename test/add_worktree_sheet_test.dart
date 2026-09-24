@@ -51,11 +51,11 @@ const _refs = [
 
 Future<void> pump(
   WidgetTester tester, {
-  String? initialCommitish,
-  String? initialBranchName,
+  WorktreeStart? start,
   bool localBackend = false,
+  Size size = const Size(1400, 1400),
 }) async {
-  tester.view.physicalSize = const Size(1400, 1400);
+  tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1.0;
   addTearDown(tester.view.reset);
 
@@ -77,11 +77,7 @@ Future<void> pump(
       container: container,
       child: MacosApp(
         debugShowCheckedModeBanner: false,
-        home: AddWorktreeSheet(
-          repoPath: _repo,
-          initialCommitish: initialCommitish,
-          initialBranchName: initialBranchName,
-        ),
+        home: AddWorktreeSheet(repoPath: _repo, start: start),
       ),
     ),
   );
@@ -192,7 +188,7 @@ void main() {
   ) async {
     // Opened from a branch/commit context ("Checkout in New Worktree…"), then
     // switched to Detached: the starting point carries over as the revision.
-    await pump(tester, initialCommitish: 'hotfix/login');
+    await pump(tester, start: const CheckOutBranch('hotfix/login'));
 
     await tester.tap(find.text('Detached'));
     await tester.pumpAndSettle();
@@ -247,10 +243,25 @@ void main() {
       // The popup only offers branches no worktree holds, but the initial
       // value arrives from a caller — a value the popup does not offer used
       // to trip MacosPopupButton's exactly-one-item assertion.
-      await pump(tester, initialCommitish: 'feature/auth');
+      await pump(tester, start: const CheckOutBranch('feature/auth'));
       expect(tester.takeException(), isNull);
       // The guarded popup falls back to its hint instead.
       expect(find.text('Choose a branch'), findsOneWidget);
+      // And a branch the popup does not show is not a choice: Create stays
+      // disabled rather than submitting what the user cannot see (0071).
+      expect(createButton(tester).onPressed, isNull);
     },
   );
+
+  testWidgets('at the smallest window the fields scroll and the buttons stay '
+      'in view', (tester) async {
+    // 640x480 is the app's floor (WindowBoundsStore). As one unscrolled
+    // column the sheet overflowed there, and Create Worktree fell off the
+    // bottom of the window.
+    await pump(tester, size: const Size(640, 480));
+    expect(tester.takeException(), isNull);
+    final create = tester.getRect(find.text('Create Worktree'));
+    expect(create.bottom, lessThanOrEqualTo(480));
+    expect(create.top, greaterThanOrEqualTo(0));
+  });
 }

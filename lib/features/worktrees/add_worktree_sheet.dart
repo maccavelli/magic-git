@@ -48,20 +48,39 @@ enum _Basis {
 class AddWorktreeSheet extends ConsumerStatefulWidget {
   final String repoPath;
 
-  /// Pre-selects a starting point — set when this is opened from "Checkout in
-  /// New Worktree…" on a branch, or "Branch from here…" on a commit.
-  final String? initialCommitish;
-  final String? initialBranchName;
+  /// Where the new worktree starts, as the opener means it. Null is the
+  /// blank sheet: a new branch at HEAD.
+  final WorktreeStart? start;
 
-  const AddWorktreeSheet({
-    super.key,
-    required this.repoPath,
-    this.initialCommitish,
-    this.initialBranchName,
-  });
+  const AddWorktreeSheet({super.key, required this.repoPath, this.start});
 
   @override
   ConsumerState<AddWorktreeSheet> createState() => _AddWorktreeSheetState();
+}
+
+/// Where a new worktree starts. Stated by the caller rather than read from
+/// which of two strings is null: that encoding took a dropped commit for a
+/// branch to check out, and the sheet then created a detached worktree
+/// under an "Existing branch" label (0071).
+sealed class WorktreeStart {
+  const WorktreeStart();
+}
+
+/// Check out an existing local branch in the new worktree.
+final class CheckOutBranch extends WorktreeStart {
+  const CheckOutBranch(this.branch);
+
+  /// The branch's short name, e.g. `feature/auth`.
+  final String branch;
+}
+
+/// A new branch at [startPoint] — a commit, tag or branch; null is HEAD —
+/// named [name], which is empty when the user is to type it.
+final class NewBranchAt extends WorktreeStart {
+  const NewBranchAt({this.startPoint, this.name = ''});
+
+  final String? startPoint;
+  final String name;
 }
 
 class _AddWorktreeSheetState extends ConsumerState<AddWorktreeSheet> {
@@ -91,6 +110,11 @@ class _AddWorktreeSheetState extends ConsumerState<AddWorktreeSheet> {
 
   _Basis _basis = _Basis.newBranch;
   String? _existingBranch;
+
+  /// The branches Existing branch offers, by short name — set each build
+  /// from the same list the popup shows, so [_valid] and [_submit] can only
+  /// accept a branch the user can see selected.
+  Set<String> _offered = const {};
   String? _commitish;
   late bool _copyIgnored;
   late bool _runPostCreate;
@@ -114,14 +138,20 @@ class _AddWorktreeSheetState extends ConsumerState<AddWorktreeSheet> {
     _postCreate.text = settings.worktreePostCreate;
     _runPostCreate = settings.worktreePostCreateEnabled;
 
-    _commitish = widget.initialCommitish;
-    _revision.text = widget.initialCommitish ?? '';
-    if (widget.initialBranchName != null) {
-      _branch.text = widget.initialBranchName!;
-    }
-    if (widget.initialCommitish != null && widget.initialBranchName == null) {
-      _basis = _Basis.existingBranch;
-      _existingBranch = widget.initialCommitish;
+    switch (widget.start) {
+      case CheckOutBranch(:final branch):
+        _basis = _Basis.existingBranch;
+        _existingBranch = branch;
+        // Also the start point should the user switch to New branch or
+        // Detached: a branch's worktree starts from that branch.
+        _commitish = branch;
+        _revision.text = branch;
+      case NewBranchAt(:final startPoint, :final name):
+        _commitish = startPoint;
+        _revision.text = startPoint ?? '';
+        _branch.text = name;
+      case null:
+        break;
     }
     _parent.text = _defaultParent();
     _syncFolderName();
@@ -187,7 +217,7 @@ class _AddWorktreeSheetState extends ConsumerState<AddWorktreeSheet> {
     if (_destination.isEmpty) return false;
     return switch (_basis) {
       _Basis.newBranch => _branch.text.trim().isNotEmpty,
-      _Basis.existingBranch => _existingBranch != null,
+      _Basis.existingBranch => _offered.contains(_existingBranch),
       _Basis.detached => _revision.text.trim().isNotEmpty,
     };
   }
@@ -381,6 +411,7 @@ class _AddWorktreeSheetState extends ConsumerState<AddWorktreeSheet> {
     final typography = MacosTheme.of(context).typography;
     final refs = ref.watch(refsProvider(widget.repoPath)).value ?? const [];
     final locals = refs.where((r) => r.isLocalBranch).toList();
+    _offered = {for (final b in _offerable(locals)) b.shortName};
     final problem = _locationProblem;
 
     return SizedSheet(
@@ -391,48 +422,62 @@ class _AddWorktreeSheetState extends ConsumerState<AddWorktreeSheet> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Text('Add Worktree', style: typography.title2),
-            const SheetDescription(
-              'A worktree is another checkout of this repository in its own '
-              'folder, with its own branch — so you can work on two things at '
-              'once without stashing.',
-            ),
-            const SizedBox(height: 16),
+            // The fields scroll; Cancel and Create Worktree do not. As one
+            // unscrolled column the sheet needed ~610 px of window, and the
+            // app allows 480: below that the buttons were simply not
+            // visible (0071; the same fix as local_repo_form.dart).
+            Flexible(
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Text('Add Worktree', style: typography.title2),
+                    const SheetDescription(
+                      'A worktree is another checkout of this repository in its own '
+                      'folder, with its own branch — so you can work on two things at '
+                      'once without stashing.',
+                    ),
+                    const SizedBox(height: 16),
 
-            _basisPicker(context, locals),
-            const SizedBox(height: 12),
+                    _basisPicker(context, locals),
+                    const SizedBox(height: 12),
 
-            if (_basis == _Basis.newBranch)
-              LabeledTextField(
-                label: 'New branch name',
-                controller: _branch,
-                placeholder: 'feature/auth',
-                onChanged: () => setState(_syncFolderName),
+                    if (_basis == _Basis.newBranch)
+                      LabeledTextField(
+                        label: 'New branch name',
+                        controller: _branch,
+                        placeholder: 'feature/auth',
+                        onChanged: () => setState(_syncFolderName),
+                      ),
+                    if (_basis == _Basis.detached)
+                      LabeledTextField(
+                        label: 'Revision',
+                        controller: _revision,
+                        placeholder: 'a commit, tag, or branch',
+                        onChanged: () => setState(_syncFolderName),
+                      ),
+
+                    const SizedBox(height: 12),
+                    _locationField(context, problem),
+
+                    const SizedBox(height: 14),
+                    Container(height: 1, color: MacosColors.separatorColor),
+                    const SizedBox(height: 12),
+
+                    _copyIgnoredField(context),
+                    const SizedBox(height: 10),
+                    _postCreateField(context),
+
+                    const SizedBox(height: 12),
+                    LabeledCheckbox(
+                      label: 'Open it when done',
+                      value: _openAfter,
+                      onChanged: (v) => setState(() => _openAfter = v),
+                    ),
+                  ],
+                ),
               ),
-            if (_basis == _Basis.detached)
-              LabeledTextField(
-                label: 'Revision',
-                controller: _revision,
-                placeholder: 'a commit, tag, or branch',
-                onChanged: () => setState(_syncFolderName),
-              ),
-
-            const SizedBox(height: 12),
-            _locationField(context, problem),
-
-            const SizedBox(height: 14),
-            Container(height: 1, color: MacosColors.separatorColor),
-            const SizedBox(height: 12),
-
-            _copyIgnoredField(context),
-            const SizedBox(height: 10),
-            _postCreateField(context),
-
-            const SizedBox(height: 12),
-            LabeledCheckbox(
-              label: 'Open it when done',
-              value: _openAfter,
-              onChanged: (v) => setState(() => _openAfter = v),
             ),
 
             const SizedBox(height: 20),
@@ -463,11 +508,15 @@ class _AddWorktreeSheetState extends ConsumerState<AddWorktreeSheet> {
     );
   }
 
+  /// Local branches a new worktree can check out: those no worktree holds.
+  static List<GitRef> _offerable(List<GitRef> locals) =>
+      locals.where((b) => b.worktreePath == null).toList();
+
   Widget _basisPicker(BuildContext context, List<GitRef> locals) {
     // A branch already checked out somewhere cannot be checked out again — git
     // refuses, and there is no override. Rather than let the user pick it and
     // then hand them git's error, take it off the menu and say why.
-    final available = locals.where((b) => b.worktreePath == null).toList();
+    final available = _offerable(locals);
     final taken = locals.where((b) => b.worktreePath != null).length;
 
     return Column(

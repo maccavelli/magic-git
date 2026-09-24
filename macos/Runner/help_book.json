@@ -1908,7 +1908,7 @@
                 "A commit onto Branches = New branch from that commit, checked out.",
                 "A commit onto History = Show it in History. A branch onto History = Show history of that branch.",
                 "A local branch onto Forge = create a pull or merge request (opens the form with the branch filled in).",
-                "A commit or branch onto Worktrees = the Add Worktree sheet.",
+                "A local branch onto Worktrees = Add Worktree, checking that branch out. A commit or a remote branch = Add Worktree on a new branch that starts there (a remote branch prefills its name).",
                 "A branch onto a History commit = merge, rebase, or move that branch here.",
                 "A commit onto a branch row = cherry-pick onto that branch; a branch onto HEAD = merge or rebase.",
                 "While you drag, each sidebar panel that accepts the item shows what a drop there does — for example New branch, Cherry-pick, or Stash files. Over a place that accepts it, the dragged item shrinks to a small chip beside the pointer, and the sidebar row under the pointer gets a ring.",

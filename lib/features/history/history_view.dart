@@ -861,10 +861,7 @@ class _HistoryViewState extends ConsumerState<HistoryView>
       context: context,
       builder: (_) => AddWorktreeSheet(
         repoPath: repoPath,
-        initialCommitish: hash,
-        // Non-null so the sheet opens on "new branch" (the commit is the start
-        // point, not a branch to check out) with the name left for the user.
-        initialBranchName: '',
+        start: NewBranchAt(startPoint: hash),
       ),
     );
     if (mounted) _refresh();
