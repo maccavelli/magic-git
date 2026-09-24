@@ -1,8 +1,8 @@
 // The History panel's per-commit actions menu: it appears once a commit is
-// selected, and "Amend last commit" is offered only for HEAD (the first log
-// row). Also the multi-selection machinery (⌘/⇧-click, compare-two pane,
-// right-click menu, bulk cherry-pick/revert). Uses a fake GitService so no
-// SSH is touched.
+// selected, and "Amend last commit" is offered only on the commit git status
+// reports as HEAD. Also the multi-selection machinery (⌘/⇧-click, compare-two
+// pane, right-click menu, bulk cherry-pick/revert). Uses a fake GitService so
+// no SSH is touched.
 
 import 'package:flutter/cupertino.dart' hide ConnectionState;
 import 'package:flutter/gestures.dart'
@@ -23,6 +23,8 @@ import 'package:remote_magic_git/features/common/panel_shortcuts.dart';
 import 'package:remote_magic_git/features/common/sheet_chrome.dart';
 import 'package:remote_magic_git/features/common/workspace_focus.dart';
 import 'package:remote_magic_git/features/common/workspace_navigation.dart';
+import 'package:remote_magic_git/features/forge/forge_prefs.dart'
+    show historyNavigationIntentProvider;
 import 'package:remote_magic_git/features/history/commit_graph_view.dart'
     show kGraphRowHeight;
 import 'package:remote_magic_git/features/history/history_minimap.dart';
@@ -176,6 +178,8 @@ Future<ProviderContainer> _pump(
   // Gives the panel a live session so workspace-navigation restores apply.
   bool connected = false,
   bool isActive = true,
+  // The commit git status reports as HEAD; null is "not reported yet".
+  String? headOid,
 }) async {
   // The zoom setter persists through SharedPreferences — back it with the
   // in-memory mock so writes don't hit a missing platform channel.
@@ -184,6 +188,12 @@ Future<ProviderContainer> _pump(
     overrides: [
       gitServiceProvider.overrideWithValue(git ?? _FakeGit(commits)),
       repoWatchProvider.overrideWith((ref, repoPath) => const Stream.empty()),
+      statusProvider(_repo).overrideWith(
+        (ref) async => GitStatus(
+          branch: GitBranchInfo(oid: headOid, head: 'main'),
+          files: const [],
+        ),
+      ),
       if (connected)
         connectionProvider.overrideWith(
           () => _StubConnection(
@@ -272,11 +282,11 @@ void main() {
     expect(extents, contains(kGraphRowHeight));
   });
 
-  testWidgets('HEAD commit offers Amend when not filtering by all-branches', (
+  testWidgets('HEAD commit offers Amend with Show all branches off', (
     tester,
   ) async {
-    await _pump(tester, [head, older]);
-    // Turn off all-branches filter so history is strictly `git log HEAD`.
+    await _pump(tester, [head, older], headOid: head.hash);
+    // Turn off all-branches so history is strictly `git log HEAD`.
     await tester.tap(
       find.byWidgetPredicate(
         (w) =>
@@ -301,7 +311,7 @@ void main() {
   });
 
   testWidgets('non-HEAD commit hides Amend', (tester) async {
-    await _pump(tester, [head, older]);
+    await _pump(tester, [head, older], headOid: head.hash);
     await tester.tap(find.text('old commit'));
     await tester.pumpAndSettle();
 
@@ -312,19 +322,82 @@ void main() {
     expect(find.text('Amend last commit'), findsNothing);
   });
 
-  testWidgets('an active all-branches filter hides Amend on the top row', (
+  testWidgets('the HEAD row offers Amend in the default all-branches view', (
     tester,
   ) async {
+    // All branches is on by default. HEAD is recognised by git's own
+    // report, not by position, so its row keeps Amend in this view too.
+    await _pump(tester, [head, older], headOid: head.hash);
+    await tester.tap(find.text('head commit'));
+    await tester.pumpAndSettle();
+    expect(_historyHandler(tester, 'history.amend'), isNotNull);
+    await tester.tap(_actionsMenu);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Amend last commit'), findsOneWidget);
+  });
+
+  testWidgets('a top row that is not HEAD never offers Amend', (tester) async {
+    // All branches: the newest commit is another branch's, and HEAD sits
+    // lower down. Amend rewrites HEAD, so it belongs on HEAD's row only.
+    await _pump(tester, [head, older], headOid: older.hash);
+    await tester.tap(find.text('head commit'));
+    await tester.pumpAndSettle();
+    expect(_historyHandler(tester, 'history.amend'), isNull);
+    await tester.tap(_actionsMenu);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Revert aaaaaaa'), findsOneWidget);
+    expect(find.text('Amend last commit'), findsNothing);
+  });
+
+  testWidgets('Amend waits for git status to report HEAD', (tester) async {
+    // Unknown HEAD offers nothing rather than guessing from the list.
     await _pump(tester, [head, older]);
-    // Under all-branches (default true), the shown list isn't `git log HEAD`,
-    // so its first row need not be the real HEAD — Amend (which rewrites the
-    // actual HEAD) must not be offered.
     await tester.tap(find.text('head commit'));
     await tester.pumpAndSettle();
     await tester.tap(_actionsMenu);
     await tester.pumpAndSettle();
 
     expect(find.text('Revert aaaaaaa'), findsOneWidget);
+    expect(find.text('Amend last commit'), findsNothing);
+  });
+
+  testWidgets('a branch-scoped history never offers Amend on that branch\'s '
+      'tip — amend rewrites the real HEAD', (tester) async {
+    // "History of feature" (Branches ▸ Open reachable history) with Show all
+    // branches off: the list is `git log feature`, so its top row is
+    // feature's tip, not HEAD. Offering Amend there would rewrite whatever
+    // HEAD is while appearing to act on feature.
+    final featureTip = _c('ccccccc3333333', 'feature tip');
+    final container = await _pump(tester, [
+      featureTip,
+      older,
+    ], headOid: head.hash);
+    await tester.tap(
+      find.byWidgetPredicate(
+        (w) =>
+            w is MacosIcon && w.icon == CupertinoIcons.square_stack_3d_up_fill,
+      ),
+    );
+    await tester.pumpAndSettle();
+    container
+        .read(historyNavigationIntentProvider.notifier)
+        .set(_repo, 'feature');
+    await tester.pumpAndSettle();
+    expect(find.text('History of feature'), findsOneWidget);
+
+    await tester.tap(find.text('feature tip'));
+    await tester.pumpAndSettle();
+    expect(
+      _historyHandler(tester, 'history.amend'),
+      isNull,
+      reason: '⇧⌘↩ must not amend while feature\'s tip is the selection',
+    );
+    await tester.tap(_actionsMenu);
+    await tester.pumpAndSettle();
+
+    expect(find.text('Revert ccccccc'), findsOneWidget);
     expect(find.text('Amend last commit'), findsNothing);
   });
 

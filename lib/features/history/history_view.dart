@@ -252,7 +252,7 @@ class _HistoryViewState extends ConsumerState<HistoryView>
 
   /// True when any narrowing criterion is active. The all-branches toggle is
   /// a view *scope* rather than a filter, but both route the panel through
-  /// [logSearchProvider] and disqualify the top row as HEAD.
+  /// [logSearchProvider].
   bool get _hasQueryFilters =>
       _effGrep != null ||
       _effAuthor != null ||
@@ -261,9 +261,6 @@ class _HistoryViewState extends ConsumerState<HistoryView>
       _effPath != null ||
       _effSha != null ||
       _hideMerges;
-
-  bool get _filtering =>
-      _hasQueryFilters || ref.read(appSettingsProvider).historyAllBranches;
 
   /// The provider key for the currently displayed history. The paging depth is
   /// deliberately not part of it — it lives on [LogSearchNotifier], so scrolling
@@ -743,15 +740,18 @@ class _HistoryViewState extends ConsumerState<HistoryView>
     return null;
   }
 
-  // The unfiltered list is `git log HEAD`, so its first row is the current
-  // HEAD commit. Under any active filter/scope the displayed list is a
-  // subset whose top row need not be HEAD, so refuse to treat any commit as
-  // HEAD then: "Amend last commit" rewrites the *real* HEAD, not the shown
-  // commit, and must never be offered against a non-HEAD top row.
-  bool _isHead(String hash) =>
-      !_filtering &&
-      _lastCommits?.isNotEmpty == true &&
-      _lastCommits!.first.hash == hash;
+  /// The commit HEAD points at, as `git status` last reported it (the
+  /// `branch.oid` header — also set when HEAD is detached). Watched in
+  /// [build]; null until status loads, and for an unborn branch.
+  String? _headOid;
+
+  // "Amend last commit" rewrites the *real* HEAD, whatever row it is offered
+  // on, so the row must be HEAD's commit by git's own account. Inferring it
+  // from the list — "the top row, unless a filter or scope is active" —
+  // went wrong the moment a list mode was added without updating the
+  // inference: under "History of <branch>" another branch's tip passed as
+  // HEAD. Unknown HEAD offers nothing.
+  bool _isHead(String hash) => _headOid != null && _headOid == hash;
 
   /// A single-field text prompt (branch name, mainline number) — the shared
   /// sheet, see [promptText].
@@ -1306,6 +1306,9 @@ class _HistoryViewState extends ConsumerState<HistoryView>
 
   @override
   Widget build(BuildContext context) {
+    _headOid = ref.watch(
+      statusProvider(widget.repoPath).select((s) => s.value?.branch.oid),
+    );
     // Watch so a late prefs load rebuilds onto the correct LogQuery key.
     final allBranches = ref.watch(
       appSettingsProvider.select((s) => s.historyAllBranches),

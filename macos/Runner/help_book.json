@@ -1110,7 +1110,7 @@
               "type": "items",
               "items": [
                 "Single commit: Checkout, Branch from…, Branch from… in a new worktree…, Tag…, Cherry-pick, Revert, Interactive rebase from here…, Reset to the commit (soft / mixed / hard), and Copy SHA. Every reset asks first; hard warns that it overwrites all uncommitted changes, which are snapshotted so ⌘Z right after undoes it. Checkout switches to a branch when one points at the commit. On a merge commit, Cherry-pick and Revert ask for the mainline parent.",
-                "Amend last commit appears on the top row only when Show all branches is off and no filter is set. ⇧⌘↩ amends when no commit is selected.",
+                "Amend last commit appears on the commit HEAD points at, wherever it is listed — with Show all branches on or off, and under a filter. It rewrites HEAD, so no other row offers it. ⇧⌘↩ amends when no commit is selected, or when HEAD's commit is.",
                 "Two commits: compare them (\"Comparing X → Y\", Copy both SHAs). Right-click two or more to cherry-pick or revert N, or copy N SHAs; ⌘C copies every selected SHA. Cherry-pick applies oldest first, revert newest first, and both stop at the first conflict. Bulk cherry-pick and revert are disabled when the selection contains a merge commit — act on it alone to choose its mainline parent.",
                 "The diff header above a commit has word wrap, Copy full SHA, Open diff in a larger window, and a menu with the same commit actions.",
                 "Drop a branch onto a commit to merge it into the current branch (normal, no-ff, or squash), rebase the current branch onto it, or move that branch here.",
