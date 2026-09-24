@@ -25,6 +25,9 @@ class _FakeFs extends HostFsService {
     '/home/testuser': ['code', 'notes', '.config'],
     '/home/testuser/code': ['magic-git', 'secret'],
     '/home/testuser/code/magic-git': ['lib', 'test'],
+    'C:/Users/u': ['code'],
+    'C:/Users': ['u'],
+    'C:/': ['Users'],
   };
   final Set<String> denied = {'/home/testuser/code/secret'};
   final List<String> listed = [];
@@ -32,7 +35,7 @@ class _FakeFs extends HostFsService {
 
   @override
   Future<String> homeDir({HostPathStyle style = HostPathStyle.posix}) async =>
-      '/home/testuser';
+      style == HostPathStyle.windows ? 'C:/Users/u' : '/home/testuser';
 
   @override
   Future<List<String>> listDirectories(String path) async {
@@ -57,12 +60,17 @@ Future<String?> _open(
   WidgetTester tester, {
   String? initialPath,
   _FakeFs? fs,
+  bool windows = false,
 }) async {
   fs ??= _FakeFs();
   String? result;
   await tester.pumpWidget(
     ProviderScope(
-      overrides: [hostFsServiceProvider.overrideWithValue(fs)],
+      overrides: [
+        hostFsServiceProvider.overrideWithValue(fs),
+        if (windows)
+          hostPathStyleProvider.overrideWithValue(HostPathStyle.windows),
+      ],
       child: MacosApp(
         debugShowCheckedModeBanner: false,
         home: Builder(
@@ -107,6 +115,19 @@ void main() {
     await tester.tap(_byTooltip('Hiding dotfiles (click to show)'));
     await tester.pumpAndSettle();
     expect(find.text('.config'), findsOneWidget);
+  });
+
+  testWidgets('on a Windows host, Up stops at the drive root (0070.3)', (
+    tester,
+  ) async {
+    final fs = _FakeFs();
+    await _open(tester, fs: fs, windows: true);
+    for (var i = 0; i < 3; i++) {
+      await tester.tap(_byTooltip('Parent folder'));
+      await tester.pumpAndSettle();
+    }
+    // C:/ is its own parent, like / — never `C:` or the MSYS root.
+    expect(fs.listed, ['C:/Users/u', 'C:/Users', 'C:/']);
   });
 
   testWidgets('descending and going up navigate the tree', (tester) async {

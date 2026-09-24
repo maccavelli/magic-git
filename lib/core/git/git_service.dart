@@ -12,6 +12,7 @@ import '../ssh/shell_escaper.dart';
 import '../ssh/ssh_command_executor.dart';
 import '../undo/undo_types.dart';
 import '../utils/git_porcelain_parser.dart';
+import '../utils/host_path.dart';
 import 'branch_comparison.dart';
 import 'git_cat_file_batch.dart';
 import 'log_search.dart';
@@ -995,8 +996,9 @@ RefsResult parseRefsDetailed(String raw) {
     // no non-OID text can ever land here.
     final peeled = at(4);
     // A git older than 2.23 doesn't know `%(worktreepath)` and echoes the
-    // format atom back verbatim. Requiring a leading `/` rejects that (and any
-    // other non-path) without needing a version probe here.
+    // format atom back verbatim. Requiring an absolute path rejects that (and
+    // any other non-path) without needing a version probe here. Absolute in
+    // any host's form: Git for Windows prints `C:/…` (0070.3).
     final wt = at(5);
     // `%(upstream:track)`: `[ahead 2, behind 1]` (either half alone), `[gone]`,
     // or empty. Parsed by shape, so an old git echoing the atom back verbatim
@@ -1031,7 +1033,7 @@ RefsResult parseRefsDetailed(String raw) {
         upstream: f[3].isEmpty ? null : f[3],
         subject: _stripSeps(subject),
         peeledOid: _oidShape.hasMatch(peeled) ? peeled : null,
-        worktreePath: wt.startsWith('/') ? wt : null,
+        worktreePath: HostPath.looksAbsolute(wt) ? wt : null,
         ahead: _trackCount(track, 'ahead'),
         behind: _trackCount(track, 'behind'),
         upstreamGone: track == '[gone]',
@@ -1543,7 +1545,8 @@ class GitService {
     // collapsing needed: this value is only ever handed to git (as GIT_DIR),
     // which normalizes internally, and [scopedRepoLayout]'s
     // `--path-format=absolute` output is what callers persist.
-    return target.startsWith('/') ? target : '$repoPath/$target';
+    // Absolute in any host's form: Git for Windows writes `gitdir: C:/…`.
+    return HostPath.looksAbsolute(target) ? target : '$repoPath/$target';
   }
 
   /// [repoLayout] under an explicit scope overlay — the same

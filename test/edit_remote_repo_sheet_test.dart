@@ -86,6 +86,32 @@ void main() {
     expect(find.text('Path on the host'), findsOneWidget);
   });
 
+  testWidgets('a Windows entry in git\'s C:/ form can be saved (0070.3)', (
+    tester,
+  ) async {
+    // Git for Windows prints C:/ paths, and a heal or a canonical connect
+    // stores them; the sheet must not call them relative.
+    const repo = 'C:/Users/u/repo';
+    final conn = const SavedConnection(
+      id: 'c2',
+      label: 'Laptop',
+      host: 'h',
+      port: 22,
+      username: 'u',
+      repoPath: repo,
+      repoPaths: [repo],
+    ).withScopedGitDir(repo, 'C:/Users/u/repo.git');
+    await _pump(tester, conn: conn, repo: repo);
+
+    final save = tester.widget<AppPushButton>(
+      find.ancestor(
+        of: find.text('Save'),
+        matching: find.byType(AppPushButton),
+      ),
+    );
+    expect(save.onPressed, isNotNull, reason: 'C:/ is absolute on Windows');
+  });
+
   testWidgets('a scoped repo cannot be saved with a blank git-dir', (
     tester,
   ) async {

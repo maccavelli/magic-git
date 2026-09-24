@@ -10,6 +10,7 @@ import '../../core/local/security_scoped_bookmark.dart';
 import '../../core/output/output_log.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/settings/app_settings.dart';
+import '../../core/utils/host_path.dart';
 import '../common/actions.dart';
 import '../common/buttons.dart';
 import '../common/field_styles.dart';
@@ -195,15 +196,21 @@ class _AddWorktreeSheetState extends ConsumerState<AddWorktreeSheet> {
       _Basis.detached =>
         _revision.text.trim().isEmpty ? 'detached' : _revision.text,
     });
-    final repoName = widget.repoPath.split('/').last;
+    final repoName = HostPath.basename(widget.repoPath);
     _folderName.text = slug.isEmpty ? '' : '$repoName-$slug';
   }
 
   /// The repo's own parent — where a sibling worktree conventionally goes.
   String _defaultParent() {
+    if (_style == HostPathStyle.windows) {
+      return HostPath.dirname(widget.repoPath, _style);
+    }
     final parts = widget.repoPath.split('/')..removeLast();
     return parts.join('/');
   }
+
+  /// The session host's path style (0070.3).
+  HostPathStyle get _style => ref.read(hostPathStyleProvider);
 
   /// `feature/auth` -> `feature-auth`. Slashes would create nested directories,
   /// and a branch name is otherwise a fine folder name.
@@ -231,14 +238,18 @@ class _AddWorktreeSheetState extends ConsumerState<AddWorktreeSheet> {
     final repo = widget.repoPath;
     // Symlink-insensitive (isInsideRepo canonicalizes both sides): a /tmp
     // alias of the repo's real /private/tmp path must not slip past.
-    if (isInsideRepo(path, repo)) {
+    final inside = _style == HostPathStyle.windows
+        ? HostPath.isInside(path, repo, _style)
+        : isInsideRepo(path, repo);
+    if (inside) {
       return 'Choose a folder outside the repository — a worktree inside it '
           "would show up as untracked files in the repository's own status.";
     }
-    if (!path.startsWith('/')) {
+    if (!HostPath.isAbsolute(path, _style)) {
       return 'The folder to create in must be an absolute path.';
     }
-    if (_folderName.text.contains('/')) {
+    if (_folderName.text.contains('/') ||
+        (_style == HostPathStyle.windows && _folderName.text.contains(r'\'))) {
       return 'The folder name cannot contain "/".';
     }
     return null;

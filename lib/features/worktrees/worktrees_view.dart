@@ -12,6 +12,7 @@ import '../../core/settings/keymap.dart';
 import '../../core/settings/repository_workspace_prefs.dart';
 import '../../core/utils/display_error.dart';
 import '../../core/utils/file_actions.dart';
+import '../../core/utils/host_path.dart';
 import '../branches/branches_view.dart';
 import '../common/actions.dart';
 import '../common/adaptive_workspace_layout.dart';
@@ -397,11 +398,17 @@ class _WorktreesViewState extends ConsumerState<WorktreesView>
       if (destination == null || !mounted) return;
     }
 
-    if (destination == wt.path) return;
+    final style = ref.read(hostPathStyleProvider);
+    if (HostPath.same(destination, wt.path, style)) return;
     // A worktree inside the repository shows up as untracked noise in the
     // repository's own status — the same rule the Add sheet enforces,
     // symlink-insensitively (a /tmp alias of the repo must not slip past).
-    if (isInsideRepo(destination, repoPath)) {
+    // git prints the worktree's `C:/…` path; compare as the host does
+    // (0070.3). The local backend keeps the symlink-aware check.
+    final inside = style == HostPathStyle.windows
+        ? HostPath.isInside(destination, repoPath, style)
+        : isInsideRepo(destination, repoPath);
+    if (inside) {
       await showErrorDialog(
         context,
         'Move it outside the repository — a worktree inside it would show up '
@@ -638,17 +645,23 @@ class _WorktreesViewState extends ConsumerState<WorktreesView>
             );
       });
       final paths = live.map((w) => w.path).toSet();
+      // A tab is live when git lists its worktree, compared as the host
+      // compares paths (0070.3: case-insensitive on Windows).
+      final style = ref.read(hostPathStyleProvider);
+      bool listed(String p) => paths.any((q) => HostPath.same(p, q, style));
       if (_selectedOverviewPath != null &&
           !paths.contains(_selectedOverviewPath)) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted) setState(() => _selectedOverviewPath = null);
         });
       }
-      final dead = tabs.open.where((p) => !paths.contains(p)).toList();
+      final dead = tabs.open.where((p) => !listed(p)).toList();
       if (dead.isNotEmpty) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (!mounted) return;
-          ref.read(worktreeTabsProvider.notifier).retain(paths);
+          ref
+              .read(worktreeTabsProvider.notifier)
+              .retain(tabs.open.where(listed).toSet());
           // The explicit close paths (_closeTab/_remove/_move) release their
           // grants themselves; this sweep is the ONLY release for a worktree
           // that vanished externally (pruned, or removed in a terminal) —

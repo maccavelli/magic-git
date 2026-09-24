@@ -276,6 +276,32 @@ void main() {
 
   // 0009 H2: selecting a checkout tab used to return before the handler map
   // was built, so every Worktree menu/keymap/palette verb silently died.
+  testWidgets('on a Windows host a tab survives git spelling its path in '
+      'another case (0070.3)', (tester) async {
+    const tabPath = 'c:/users/u/app-feat';
+    final container = await pump(
+      tester,
+      data: const [
+        GitWorktree(
+          path: 'C:/Users/u/app',
+          isMain: true,
+          branch: 'refs/heads/main',
+        ),
+        GitWorktree(path: 'C:/Users/u/app-feat', branch: 'refs/heads/feat'),
+      ],
+      extraOverrides: [
+        ..._tabOverrides(tabPath),
+        hostPathStyleProvider.overrideWithValue(HostPathStyle.windows),
+      ],
+    );
+    container.read(worktreeTabsProvider.notifier).open(tabPath);
+    await tester.pumpAndSettle();
+    await tester.pumpWidget(tree(container, isActive: true));
+    await tester.pumpAndSettle();
+
+    expect(container.read(worktreeTabsProvider).open, [tabPath]);
+  });
+
   testWidgets('an open checkout tab keeps the Worktree handlers live', (
     tester,
   ) async {

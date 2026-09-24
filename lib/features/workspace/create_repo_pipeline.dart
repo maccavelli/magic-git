@@ -28,6 +28,7 @@ import '../../core/github/gh_service.dart';
 import '../../core/gitlab/glab_service.dart';
 import '../../core/ssh/ssh_command_executor.dart';
 import '../../core/utils/display_error.dart';
+import '../../core/utils/host_path.dart';
 import '../../core/utils/posix_path.dart';
 
 /// What `origin` should point at when the repo is created.
@@ -102,7 +103,12 @@ class CreateRepoRequest {
     required this.identityValid,
     required this.authorName,
     required this.authorEmail,
+    this.pathStyle = HostPathStyle.posix,
   });
+
+  /// The target host's path style (0070.3): its paths are compared and
+  /// joined as that host spells them.
+  final HostPathStyle pathStyle;
 
   bool get onForge =>
       remote == CreateRemoteMode.github || remote == CreateRemoteMode.gitlab;
@@ -122,8 +128,10 @@ class CreateRepoRequest {
 
   /// Where the repository ends up.
   String get dest => existing
-      ? stripTrailingSlashesKeepRoot(existingFolder)
-      : HostFsService.joinPath(parentDir, name);
+      ? stripTrailingSlashesKeepRoot(
+          HostPath.canonical(existingFolder, pathStyle),
+        )
+      : HostPath.join(parentDir, name, pathStyle);
 }
 
 /// The widget-layer capabilities the pipeline borrows, injected so the
@@ -329,7 +337,8 @@ Future<({CreateRepoOutcome? failure, bool alreadyRepo})> _preChecks(
     var alreadyRepo = false;
     if (probe.isSuccess) {
       final top = stripTrailingSlashesKeepRoot(probe.stdout.trim());
-      if (top != dest) {
+      // git prints `C:/…` on Windows; the folder may be `/c/…` (0070.3).
+      if (!HostPath.same(top, dest, request.pathStyle)) {
         return (
           failure: CreateRepoOutcome.failure(
             dest,

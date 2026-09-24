@@ -4,6 +4,7 @@ import 'package:macos_ui/macos_ui.dart';
 
 import '../../core/git/host_fs_service.dart';
 import '../../core/providers/app_providers.dart';
+import '../../core/utils/host_path.dart';
 import '../common/buttons.dart';
 import '../common/field_styles.dart';
 import '../common/sized_sheet.dart';
@@ -114,7 +115,7 @@ class _RemoteDirectoryBrowserSheetState
   void _goUp() {
     final current = _currentPath;
     if (current == null) return;
-    final parent = _parentOf(current);
+    final parent = _parentFor(current);
     if (parent != current) _navigateTo(parent);
   }
 
@@ -128,7 +129,8 @@ class _RemoteDirectoryBrowserSheetState
   @override
   Widget build(BuildContext context) {
     final typography = MacosTheme.of(context).typography;
-    final atRoot = _currentPath == '/' || _currentPath == null;
+    final current = _currentPath;
+    final atRoot = current == null || _parentFor(current) == current;
 
     return SizedSheet(
       width: kSheetWidth,
@@ -266,6 +268,15 @@ class _RemoteDirectoryBrowserSheetState
         );
       },
     );
+  }
+
+  /// The parent on this host: a Windows drive root `C:/` is its own parent,
+  /// like `/` (0070.3).
+  String _parentFor(String path) {
+    final style = ref.read(hostPathStyleProvider);
+    return style == HostPathStyle.windows
+        ? HostPath.dirname(path, style)
+        : _parentOf(path);
   }
 
   /// The parent of an absolute path: `/a/b` → `/a`, `/a` → `/`, `/` → `/`.

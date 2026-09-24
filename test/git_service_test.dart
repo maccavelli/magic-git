@@ -527,6 +527,25 @@ void main() {
     );
   });
 
+  test(
+    'a gitfile target in Git for Windows\' C:/ form is absolute (0070.3)',
+    () async {
+      final service = GitService(
+        _fixed(
+          const SSHCommandResult(
+            exitCode: 0,
+            stdout: 'gitdir: C:/Users/u/r/.git/worktrees/w\n',
+            stderr: '',
+          ),
+        ),
+      );
+      expect(
+        await service.gitfileRedirectTarget('C:/Users/u/w'),
+        'C:/Users/u/r/.git/worktrees/w',
+      );
+    },
+  );
+
   group('scope injection', () {
     test('scope env is passed to executor commands', () async {
       final executor = _fixed(

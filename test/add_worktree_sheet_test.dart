@@ -15,6 +15,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:macos_ui/macos_ui.dart';
 import 'package:remote_magic_git/core/git/git_service.dart';
 import 'package:remote_magic_git/core/providers/app_providers.dart';
+import 'package:remote_magic_git/core/utils/host_path.dart';
 import 'package:remote_magic_git/features/common/buttons.dart';
 import 'package:remote_magic_git/features/worktrees/add_worktree_sheet.dart';
 
@@ -54,6 +55,8 @@ Future<void> pump(
   WorktreeStart? start,
   bool localBackend = false,
   Size size = const Size(1400, 1400),
+  String repo = _repo,
+  bool windows = false,
 }) async {
   tester.view.physicalSize = size;
   tester.view.devicePixelRatio = 1.0;
@@ -61,7 +64,9 @@ Future<void> pump(
 
   final container = ProviderContainer(
     overrides: [
-      refsProvider(_repo).overrideWith((ref) async => _refs),
+      refsProvider(repo).overrideWith((ref) async => _refs),
+      if (windows)
+        hostPathStyleProvider.overrideWithValue(HostPathStyle.windows),
       if (localBackend)
         connectionProvider.overrideWith(
           () => _StubConnection(
@@ -77,7 +82,7 @@ Future<void> pump(
       container: container,
       child: MacosApp(
         debugShowCheckedModeBanner: false,
-        home: AddWorktreeSheet(repoPath: _repo, start: start),
+        home: AddWorktreeSheet(repoPath: repo, start: start),
       ),
     ),
   );
@@ -115,6 +120,24 @@ void main() {
     expect(find.text('Folder name'), findsOneWidget);
     expect(fieldText(tester, _parentField), '/Users/x/wt-demo');
   });
+
+  testWidgets(
+    'a Windows repository gets a C:/ parent and can create (0070.3)',
+    (tester) async {
+      await pump(tester, repo: 'C:/Users/u/app', windows: true);
+      expect(fieldText(tester, _parentField), 'C:/Users/u');
+
+      await tester.enterText(
+        find.byType(MacosTextField).at(_branchField),
+        'feat',
+      );
+      await tester.pumpAndSettle();
+
+      expect(fieldText(tester, _folderNameField), 'app-feat');
+      expect(find.textContaining('must be an absolute path'), findsNothing);
+      expect(createButton(tester).onPressed, isNotNull);
+    },
+  );
 
   testWidgets('the folder name is derived from the branch, and previewed', (
     tester,

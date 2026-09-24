@@ -15,6 +15,7 @@ import '../../core/settings/app_settings.dart';
 import '../../core/ssh/ssh_command_executor.dart';
 import '../../core/storage/saved_connection.dart';
 import '../../core/utils/display_error.dart';
+import '../../core/utils/host_path.dart';
 import '../../core/utils/posix_path.dart';
 import '../common/buttons.dart';
 import '../common/escape_dismissible.dart';
@@ -264,10 +265,12 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
   bool _sourceValid() {
     if (_source == _SourceMode.existingFolder) {
       if (_isLocalTarget) return _pickedFolder != null;
-      return _folder.text.trim().startsWith('/');
+      // The host may not be provisioned yet, so its style is unknown here:
+      // absolute in any host's form (0070.3); canonical when it runs.
+      return HostPath.looksAbsolute(_folder.text.trim());
     }
     if (_isLocalTarget) return _pickedParent != null;
-    return _parent.text.trim().startsWith('/');
+    return HostPath.looksAbsolute(_parent.text.trim());
   }
 
   bool _remoteValid() =>
@@ -559,7 +562,12 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
             ? own.read(localExecutorProvider)
             : runIn.read(activeExecutorProvider),
         log: _OutputLogSink(runIn.read(outputLogProvider.notifier)),
-        request: _request(host),
+        request: _request(
+          host,
+          _isLocalTarget
+              ? HostPathStyle.posix
+              : runIn.read(hostPathStyleProvider),
+        ),
         deps: CreateRepoDeps(
           ensureForgeLogin: () => runIn
               .read(connectionProvider.notifier)
@@ -656,29 +664,33 @@ class _CreateRepositorySheetState extends ConsumerState<CreateRepositorySheet>
 
   /// The wizard's answers as plain values — the pipeline's whole view of this
   /// form. Resolved here so the pipeline cannot reach back into a controller.
-  CreateRepoRequest _request(String host) => CreateRepoRequest(
-    existing: _source == _SourceMode.existingFolder,
-    name: _name.text.trim(),
-    forgePath: _forgePath,
-    parentDir: _isLocalTarget ? (_pickedParent ?? '') : _parent.text.trim(),
-    existingFolder: _isLocalTarget
-        ? (_pickedFolder ?? '')
-        : _folder.text.trim(),
-    branch: _branch.text.trim(),
-    host: host,
-    remote: _remote,
-    private: _private,
-    description: _description.text.trim(),
-    remoteUrl: _remoteUrl.text.trim(),
-    addReadme: _addReadme,
-    commitAll: _commitAll,
-    replaceOrigin: _replaceOrigin,
-    createParents: _createParents,
-    isLocalTarget: _isLocalTarget,
-    identityValid: _identityValid,
-    authorName: _authorNameText,
-    authorEmail: _authorEmailText,
-  );
+  CreateRepoRequest _request(String host, HostPathStyle pathStyle) =>
+      CreateRepoRequest(
+        pathStyle: pathStyle,
+        existing: _source == _SourceMode.existingFolder,
+        name: _name.text.trim(),
+        forgePath: _forgePath,
+        parentDir: _isLocalTarget
+            ? (_pickedParent ?? '')
+            : HostPath.canonical(_parent.text.trim(), pathStyle),
+        existingFolder: _isLocalTarget
+            ? (_pickedFolder ?? '')
+            : _folder.text.trim(),
+        branch: _branch.text.trim(),
+        host: host,
+        remote: _remote,
+        private: _private,
+        description: _description.text.trim(),
+        remoteUrl: _remoteUrl.text.trim(),
+        addReadme: _addReadme,
+        commitAll: _commitAll,
+        replaceOrigin: _replaceOrigin,
+        createParents: _createParents,
+        isLocalTarget: _isLocalTarget,
+        identityValid: _identityValid,
+        authorName: _authorNameText,
+        authorEmail: _authorEmailText,
+      );
 
   /// The tab an SSH create dials in (MADR 0036, 1C/6B), claimed at the first
   /// commitment to the host — Browse… or Create, whichever comes first

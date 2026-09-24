@@ -9,6 +9,7 @@ import '../output/output_log.dart';
 import '../providers/app_providers.dart';
 import '../ssh/ssh_command_executor.dart';
 import '../utils/bounded_tail.dart';
+import '../utils/host_path.dart';
 
 /// Lifecycle of one clone job. Terminal phases ([succeeded], [failed],
 /// [cancelled]) allow a new [CloneJobController.run].
@@ -116,6 +117,15 @@ class CloneRequest {
     this.createParents = false,
     this.local = false,
   });
+
+  /// This request with [parentDir] replaced.
+  CloneRequest withParentDir(String parentDir) => CloneRequest(
+    source: source,
+    parentDir: parentDir,
+    name: name,
+    createParents: createParents,
+    local: local,
+  );
 }
 
 /// Runs one clone at a time as an explicit state machine: probe the
@@ -153,6 +163,14 @@ class CloneJobController extends Notifier<CloneJobState> {
   Future<bool> _run(CloneRequest request) async {
     _cancelled = false;
     _createdByThisJob = false;
+    // One spelling of the parent from here on (0070.3, D5): a Windows
+    // host's canonical `C:/…`, whatever form was typed or browsed.
+    final style = request.local
+        ? HostPathStyle.posix
+        : ref.read(hostPathStyleProvider);
+    request = request.withParentDir(
+      HostPath.canonical(request.parentDir, style),
+    );
 
     // Local requests force the local executor even when no local session is
     // active (clone-to-This-Mac from the landing); everything else follows the
@@ -173,7 +191,7 @@ class CloneJobController extends Notifier<CloneJobState> {
     if (!HostFsService.isValidRepoDirName(request.name)) {
       return _fail('"${request.name}" is not a valid folder name.');
     }
-    if (!request.parentDir.startsWith('/')) {
+    if (!HostPath.isAbsolute(request.parentDir, style)) {
       return _fail('The destination folder must be an absolute path.');
     }
 

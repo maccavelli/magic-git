@@ -43,7 +43,9 @@ CreateRepoRequest _request({
   String authorName = '',
   String authorEmail = '',
   String description = '',
+  HostPathStyle pathStyle = HostPathStyle.posix,
 }) => CreateRepoRequest(
+  pathStyle: pathStyle,
   existing: existing,
   name: name,
   forgePath: forgePath ?? name,
@@ -191,6 +193,25 @@ void main() {
   });
 
   group('init', () {
+    test('a Windows folder chosen as /c/… is the repository git reports as '
+        'C:/… (0070.3)', () async {
+      exec.results
+        ..add(okResult('C:/Users/u/app')) // rev-parse --show-toplevel
+        ..add(okResult('abc123')); // rev-parse --verify HEAD
+      final outcome = await _run(
+        exec,
+        log,
+        _request(
+          existing: true,
+          existingFolder: '/c/Users/u/app',
+          pathStyle: HostPathStyle.windows,
+        ),
+      );
+      expect(outcome.error, isNull);
+      expect(outcome.dest, 'C:/Users/u/app');
+      expect(_joined(exec), isNot(contains(startsWith('git init'))));
+    });
+
     test('is skipped when the folder is already a repository', () async {
       exec.results
         ..add(okResult('/srv/app')) // already a repo root

@@ -99,6 +99,20 @@ void main() {
   });
 
   group('isCheckedOutElsewhere', () {
+    test('a Windows worktree path, as Git for Windows prints it (0070.3)', () {
+      final refs = parseRefs(
+        [
+          _line(name: 'refs/heads/held', worktree: 'C:/Users/u/wt/held'),
+          // A git older than 2.23 echoes the atom back: still no path.
+          _line(name: 'refs/heads/old', worktree: '%(worktreepath)'),
+        ].join('\n'),
+        _sep,
+      );
+      expect(refs[0].elsewhereWorktreePath, 'C:/Users/u/wt/held');
+      expect(refs[0].isCheckedOutElsewhere, isTrue);
+      expect(refs[1].worktreePath, isNull);
+    });
+
     test('true only for a non-head local branch with a worktree path', () {
       final refs = parseRefs(
         [

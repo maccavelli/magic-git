@@ -6,6 +6,7 @@ import 'package:macos_ui/macos_ui.dart';
 
 import '../../core/storage/saved_connection.dart';
 import '../../core/storage/saved_local_repo.dart';
+import '../../core/utils/host_path.dart';
 import '../common/buttons.dart';
 import '../common/inline_action_button.dart';
 import '../common/labeled_text_field.dart';
@@ -320,11 +321,12 @@ class _EditRemoteRepoSheetState extends State<EditRemoteRepoSheet> {
   // A repo entry must point at an absolute path on the host, same rule the
   // old path-only prompt enforced.
   bool get _canSave {
-    if (!_path.text.trim().startsWith('/')) return false;
+    // Absolute in any host's form (0070.3): a Windows entry is `C:/…`.
+    if (!HostPath.looksAbsolute(_path.text.trim())) return false;
     // A scoped entry without a git-dir is not scoped at all — every command
     // for it would run unscoped and fail "not a git repository". Blank is only
     // valid for an ordinary repo.
-    if (_scoped && !_gitDir.text.trim().startsWith('/')) return false;
+    if (_scoped && !HostPath.looksAbsolute(_gitDir.text.trim())) return false;
     return true;
   }
 

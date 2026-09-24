@@ -201,6 +201,7 @@ Each gets the test from Phase 0 (or one written here) before its fix:
 | `add_worktree_sheet.dart:198`, `:204`, `:238` | `HostPath.basename` / `dirname` / `isAbsolute` with the style |
 | `worktrees_view.dart:647` (sweep), `:301-306`, `:435` (forget/close), `:400`, `:404` (Move guard) | compare with `HostPath.same` / `isInside` |
 | `clone_sheet.dart:183`, `:441`; `create_repo_sheet.dart:267`, `:270` | `HostPath.isAbsolute` with the style, and `canonical` on the way in |
+| **D5:** `lib/core/workspace/clone_controller.dart:170-177` | canonical parent in the clone container's style (POSIX for a local clone); `HostPath.isAbsolute` and `HostPath.join` |
 | `remote_directory_browser.dart:131`, `:272-280` | `HostPath.dirname`; `X:/` is a root like `/` |
 
 ### Phase 5 — Labels and duplicates
@@ -325,6 +326,12 @@ Phase 2 alone would bring back F15.
   (line 34) invalid; that file was not in the plan. The maintainer chose to update the fake's
   signature, keeping the planned API. File added: `test/remote_directory_browser_test.dart`.
 
+* **D5 (2026-09-24), the clone check lives in the controller.** The inventory listed
+  `clone_controller.dart:170`, `:176` with the clone sheet; the Phase 4 table dropped it. It is
+  where a `C:/…` destination is refused (`startsWith('/')`) and joined (`joinPath`), so fixing
+  the sheet alone would leave Windows clones refused. The maintainer added it. Files added:
+  `lib/core/workspace/clone_controller.dart`, `test/clone_controller_test.dart`.
+
 ### Phase 0 (2026-09-24)
 
 * The maintainer approved the plan and Amendment 0070.3, accepting the hook trade-off. Records:
@@ -390,3 +397,37 @@ Phase 2 alone would bring back F15.
 * `no_real_identifiers_scan_test` caught my first test data: a capital `U` in the account
   segment (`/C/USERS/U/R`) reads as an account name. The account segment is now the `u`
   placeholder, with the case varied elsewhere. Full suite: only the three Phase 0 tests fail.
+* Commit `6c116b1`.
+
+### Phase 4 (2026-09-24), with D5
+
+* `git_service.dart`: `worktreePath` and the gitfile target use `HostPath.looksAbsolute` (it still
+  rejects an old git's echoed `%(worktreepath)`).
+* `edit_entry_sheets.dart`: `looksAbsolute` for the path and git-dir.
+* `create_repo_pipeline.dart`: `CreateRepoRequest.pathStyle`; `dest` canonical;
+  `!HostPath.same(top, dest, style)`. `create_repo_sheet.dart` passes the style of the container
+  the create runs in (`runIn`, the provisioned target's own tab), POSIX for This Mac.
+* **Within the plan's API, where the host is unknown at validation time:** the create and clone
+  sheets validate a typed path with `looksAbsolute`, because a saved-connection target is not
+  provisioned yet. The canonical form is applied when the job runs, in the target's style.
+* `clone_controller.dart` (D5): `_run` canonicalizes the request's parent once, in the
+  container's style, and checks `HostPath.isAbsolute`; `CloneRequest.withParentDir` added.
+* `add_worktree_sheet.dart`: `HostPath.basename`; on Windows `HostPath.dirname` and
+  `HostPath.isInside`; `HostPath.isAbsolute`; a `\` in the folder name is refused on Windows. The
+  POSIX default-parent expression is kept byte-for-byte (for a repository at `/repo` it still
+  gives `''`).
+* `worktrees_view.dart`: the dead-tab sweep keeps a tab when git lists it under `HostPath.same`;
+  the Move no-op and inside-repository guards use `same` and `isInside` on Windows, and keep the
+  symlink-aware check otherwise.
+* `remote_directory_browser.dart`: `_parentFor` — `C:/` is its own parent, like `/`; `atRoot`
+  follows it.
+* Tests: the three Phase 0 tests now pass. New:
+  * `add_worktree_sheet_test`: a `C:/Users/u/app` repository gets parent `C:/Users/u` and can
+    create;
+  * `create_repo_pipeline_test`: `/c/Users/u/app`, reported by git as `C:/Users/u/app`, is taken
+    as the repository;
+  * `clone_controller_test`: a `C:\Users\u\src` parent is canonical and accepted;
+  * `worktrees_view_test`: a case-variant tab survives a rebuild;
+  * `remote_directory_browser_test`: Up lists `C:/Users/u`, `C:/Users`, `C:/`, and stops.
+* The touched files' suites: `+202` (with the Phase 0 tests), then `+67` for the five with new
+  cases. `flutter analyze`: No issues found.

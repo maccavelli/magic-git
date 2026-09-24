@@ -328,6 +328,32 @@ void main() {
     await fut;
   });
 
+  test(
+    'a Windows destination is canonical, not refused (0070.3, D5)',
+    () async {
+      final win = ProviderContainer(
+        overrides: [
+          activeExecutorProvider.overrideWithValue(exec),
+          hostPathStyleProvider.overrideWithValue(HostPathStyle.windows),
+        ],
+      );
+      addTearDown(win.dispose);
+      exec.results.add(_ok('exists')); // the probe: the folder is there
+
+      final ok = await win
+          .read(cloneJobProvider.notifier)
+          .run(_req.withParentDir(r'C:\Users\u\src'));
+
+      // Accepted as absolute, joined in git's form — the probe's refusal
+      // names the destination it checked.
+      expect(ok, isFalse);
+      expect(
+        win.read(cloneJobProvider).error,
+        'The destination already exists: C:/Users/u/src/magic-git',
+      );
+    },
+  );
+
   test('only one job at a time; terminal states allow a re-run', () async {
     exec.results.add(_ok('absent'));
     final fut = job.run(_req);

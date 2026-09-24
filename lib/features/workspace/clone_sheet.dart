@@ -11,6 +11,7 @@ import '../../core/local/scoped_access.dart';
 import '../../core/providers/app_providers.dart';
 import '../../core/storage/saved_connection.dart';
 import '../../core/utils/display_error.dart';
+import '../../core/utils/host_path.dart';
 import '../../core/utils/posix_path.dart';
 import '../../core/workspace/clone_controller.dart';
 import '../common/async_views.dart';
@@ -180,7 +181,9 @@ class _CloneRepositorySheetState extends ConsumerState<CloneRepositorySheet>
   bool _locationValid() {
     if (!HostFsService.isValidRepoDirName(_name.text.trim())) return false;
     if (_isLocalTarget) return _pickedParent != null;
-    return _parent.text.trim().startsWith('/');
+    // The host may not be provisioned yet, so its style is unknown here:
+    // absolute in any host's form (0070.3); the clone canonicalizes it.
+    return HostPath.looksAbsolute(_parent.text.trim());
   }
 
   void _goBack() {
