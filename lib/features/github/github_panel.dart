@@ -487,8 +487,11 @@ class _GitHubPanelState extends ConsumerState<GitHubPanel> {
     bool needsAttention(WorkflowRun r) => r.runState.needsAttention;
 
     final entries = <ForgeInboxEntry>[
+      // Open work only. Browse's "Show closed pull requests" widens the one
+      // list both views read, and closed or merged requests are not work
+      // (0071).
       for (final pr in prs.value ?? const <PullRequest>[])
-        if (_prMatches(pr))
+        if (forgeChangeRequestIsOpen(pr.state) && _prMatches(pr))
           ForgeInboxEntry(
             itemKey: 'pr:${pr.number}',
             kind: ForgeInboxKind.changeRequest,

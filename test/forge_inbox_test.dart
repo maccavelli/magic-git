@@ -71,7 +71,7 @@ const _issues = [
   ForgeIssue(id: 12, title: 'Fix login', state: 'opened', author: 'mac'),
 ];
 
-Future<void> _pump(WidgetTester tester) async {
+Future<void> _pump(WidgetTester tester, {List<PullRequest>? prs}) async {
   SharedPreferences.setMockInitialValues({});
   addTearDown(() => SharedPreferences.setMockInitialValues({}));
   tester.view.physicalSize = const Size(1200, 900);
@@ -89,7 +89,7 @@ Future<void> _pump(WidgetTester tester) async {
             files: const [],
           ),
         ),
-        pullRequestsProvider(_repo).overrideWith((ref) async => _prs),
+        pullRequestsProvider(_repo).overrideWith((ref) async => prs ?? _prs),
         workflowRunsProvider(_repo).overrideWith((ref) async => _runs),
         projectIssuesProvider(_repo).overrideWith((ref) async => _issues),
         projectMilestonesProvider(_repo).overrideWith((ref) async => const []),
@@ -123,6 +123,45 @@ void main() {
     // Browse-only chrome is absent.
     expect(find.text('Pull Requests'), findsNothing);
     expect(find.text('Milestones'), findsNothing);
+  });
+
+  testWidgets('closed and merged pull requests stay out of the Inbox', (
+    tester,
+  ) async {
+    // "Show closed pull requests" widens the one list Browse and the Inbox
+    // share; the Inbox is open work only.
+    await _pump(
+      tester,
+      prs: [
+        ..._prs,
+        const PullRequest(
+          number: 9,
+          title: 'Abandoned idea',
+          state: 'closed',
+          merged: false,
+          draft: false,
+          authorLogin: 'carol',
+          headRefName: 'idea',
+          baseRefName: 'main',
+          url: '',
+        ),
+        const PullRequest(
+          number: 10,
+          title: 'Shipped fix',
+          state: 'merged',
+          merged: true,
+          draft: false,
+          authorLogin: 'dan',
+          headRefName: 'fix',
+          baseRefName: 'main',
+          url: '',
+        ),
+      ],
+    );
+
+    expect(find.text('Add the parser'), findsOneWidget);
+    expect(find.text('Abandoned idea'), findsNothing);
+    expect(find.text('Shipped fix'), findsNothing);
   });
 
   testWidgets('type chips filter the Inbox to one category', (tester) async {

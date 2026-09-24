@@ -359,7 +359,13 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
   ]);
 
   bool _pipelineFilterMatches(Pipeline p) =>
-      forgeFilterMatch(_filterQuery, [p.ref, p.shortSha, p.status]);
+      // The pretty name too, so the "MR !7" a row shows is what finds it.
+      forgeFilterMatch(_filterQuery, [
+        p.ref,
+        prettyPipelineRef(p.ref),
+        p.shortSha,
+        p.status,
+      ]);
 
   bool _issueMatches(ForgeIssue i) => forgeFilterMatch(_filterQuery, [
     i.title,
@@ -523,8 +529,11 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
     bool needsAttention(Pipeline p) => p.ciStatus.needsAttention;
 
     final entries = <ForgeInboxEntry>[
+      // Open work only. Browse's "Show closed merge requests" widens the one
+      // list both views read, and closed or merged requests are not work
+      // (0071).
       for (final mr in mrs.value ?? const <MergeRequest>[])
-        if (_mrMatches(mr))
+        if (forgeChangeRequestIsOpen(mr.state) && _mrMatches(mr))
           ForgeInboxEntry(
             itemKey: 'mr:${mr.iid}',
             kind: ForgeInboxKind.changeRequest,
@@ -842,7 +851,7 @@ class _GitLabPanelState extends ConsumerState<GitLabPanel> {
       ),
       title: pipeline == null
           ? 'Pipeline #$pipelineId'
-          : 'Pipeline #$pipelineId  ·  ${pipeline.ref}',
+          : 'Pipeline #$pipelineId  ·  ${prettyPipelineRef(pipeline.ref)}',
       headerActions: [
         if (pipeline != null && pipeline.isRetryable)
           InFlightIconButton(

@@ -207,3 +207,36 @@ No settings, storage or wire formats change.
 * MADR 0071 `accepted`, this plan `in-progress`, the index row added. Records check: 0
   findings.
 * The reproduction tests applied to the tree unchanged from the scratch run.
+  Run in the tree, exactly the five new tests failed, each on its own assertion.
+
+### Phase 1 (2026-09-24), defects 1 and 5 — commit `ce5cf4e`
+
+* `add_worktree_sheet.dart`: `WorktreeStart` (`CheckOutBranch`, `NewBranchAt`) replaces
+  `initialCommitish` / `initialBranchName`. Existing branch is valid only for a branch in
+  `_offered`, the set the popup shows. The fields scroll inside `Flexible`; the action row is
+  pinned below them.
+* Callers: `drop_registry.dart` (`_worktreeStartFor`: a local branch, a remote branch, any other
+  ref; and a commit), `history_view.dart`, and both `branches_view.dart` sites. No reference to
+  the old parameters remains in `lib/` or `test/`.
+* `help_book.json` `drag_and_drop`: what each drop on Worktrees does.
+* Tests: the commit drop (Phase 0); a remote-branch drop (New branch, named `feat/login`); a
+  local-branch drop (Existing branch); in `add_worktree_sheet_test`, Create Worktree disabled for
+  a branch the popup does not offer, and the 640x480 case.
+* `flutter analyze`: No issues found. `navdrop_dispatch_test` + `add_worktree_sheet_test`:
+  `+16: All tests passed!`. Full suite: only the four reproduction tests of defects 2-4 failed,
+  as expected before their phases.
+* **Two slips in the commit itself.** This record was meant to land with `ce5cf4e`; the edit
+  that wrote it was blocked, and the commit had been issued alongside it, so it went out without
+  this entry. It lands in the next phase's commit instead (no amend, by rule). And the
+  hook-generated message of `ce5cf4e` names all five fixes, because the MADR and plan it carries
+  describe them; its code fixes defects 1 and 5 only.
+
+### Phases 2 and 3 (2026-09-24), defects 2 and 3 — one commit (D1)
+
+* `github_panel.dart` and `gitlab_panel.dart`: the Inbox lists a change request only when
+  `forgeChangeRequestIsOpen(state)`.
+* `gitlab_panel.dart`: the pipeline detail title uses `prettyPipelineRef`; the Pipelines filter
+  matches the pretty name as well as the raw ref, sha and status.
+* `flutter analyze`: No issues found. `forge_inbox_test` + `gitlab_panel_test`:
+  `+25: All tests passed!`.
+* This commit also carries the Phase 1 record above.

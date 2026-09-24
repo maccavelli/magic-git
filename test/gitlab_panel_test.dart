@@ -156,6 +156,10 @@ Future<ProviderContainer> _pump(
   WidgetTester tester, {
   GlabService? glab,
   GlRepoMergePolicy policy = const GlRepoMergePolicy(),
+  bool inbox = false,
+  List<MergeRequest>? mrs,
+  List<Pipeline>? pipelines,
+  List<Override> extra = const [],
 }) async {
   tester.view.physicalSize = const Size(1200, 800);
   tester.view.devicePixelRatio = 1;
@@ -163,7 +167,7 @@ Future<ProviderContainer> _pump(
   final container = ProviderContainer(
     overrides: [
       connectionProvider.overrideWith(_Connected.new),
-      forgeInboxModeProvider.overrideWith(_BrowseMode.new),
+      if (!inbox) forgeInboxModeProvider.overrideWith(_BrowseMode.new),
       if (glab != null) glabServiceProvider.overrideWithValue(glab),
       refsProvider(_repo).overrideWith((ref) async => _remoteRefs),
       // Sibling of the refs override: the views now read CONFIGURED
@@ -176,18 +180,21 @@ Future<ProviderContainer> _pump(
           files: const [],
         ),
       ),
-      mergeRequestsProvider(_repo).overrideWith((ref) async => _mrs),
+      mergeRequestsProvider(_repo).overrideWith((ref) async => mrs ?? _mrs),
       mergeRequestDetailProvider((
         _repo,
         7,
       )).overrideWith((ref) async => _readyMr),
       repoMergePolicyProvider(_repo).overrideWith((ref) async => policy),
-      pipelinesProvider(_repo).overrideWith((ref) async => _pipelines),
+      pipelinesProvider(
+        _repo,
+      ).overrideWith((ref) async => pipelines ?? _pipelines),
       jobsProvider((_repo, 100)).overrideWith((ref) async => _jobs),
       // The MR detail's inline Checks body mounts the head pipeline's jobs
       // (pipeline 101 — ref 'feat' matches the MR's source branch).
       jobsProvider((_repo, 101)).overrideWith((ref) async => _jobs),
       ..._projectOverrides(_repo),
+      ...extra,
     ],
   );
   addTearDown(container.dispose);
@@ -284,6 +291,77 @@ void main() {
     expect(focus?.kind, WorkspaceFocusKind.pipeline);
     expect(focus?.identity, '100');
     expect(focus?.panelIndex, 4);
+  });
+
+  testWidgets('closed and merged merge requests stay out of the Inbox', (
+    tester,
+  ) async {
+    // "Show closed merge requests" widens the one list Browse and the Inbox
+    // share; the Inbox is open work only.
+    await _pump(
+      tester,
+      inbox: true,
+      mrs: const [
+        _readyMr,
+        MergeRequest(
+          iid: 8,
+          title: 'Abandoned idea',
+          state: 'closed',
+          authorUsername: 'carol',
+          sourceBranch: 'idea',
+          targetBranch: 'main',
+          webUrl: '',
+          draft: false,
+        ),
+        MergeRequest(
+          iid: 9,
+          title: 'Shipped fix',
+          state: 'merged',
+          authorUsername: 'dan',
+          sourceBranch: 'fix',
+          targetBranch: 'main',
+          webUrl: '',
+          draft: false,
+        ),
+      ],
+    );
+
+    expect(find.text('Inbox'), findsOneWidget);
+    expect(find.text('Add the parser'), findsOneWidget);
+    expect(find.text('Abandoned idea'), findsNothing);
+    expect(find.text('Shipped fix'), findsNothing);
+  });
+
+  testWidgets('a merge-request pipeline is MR !N in its detail title, and '
+      'the filter finds it by that name', (tester) async {
+    const mrPipeline = Pipeline(
+      id: 102,
+      status: 'failed',
+      ref: 'refs/merge-requests/7/head',
+      sha: 'ccccccc3zzz',
+      webUrl: '',
+    );
+    await _pump(
+      tester,
+      pipelines: [..._pipelines, mrPipeline],
+      extra: [jobsProvider((_repo, 102)).overrideWith((ref) async => _jobs)],
+    );
+    await tester.ensureVisible(find.text('MR !7'));
+    await tester.tap(find.text('MR !7'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Pipeline #102  ·  MR !7'), findsOneWidget);
+    expect(find.textContaining('refs/merge-requests'), findsNothing);
+
+    await tester.enterText(
+      find.byWidgetPredicate(
+        (w) => w is MacosTextField && w.placeholder == 'Filter',
+      ),
+      '!7',
+    );
+    await tester.pumpAndSettle();
+    // The row keeps its place under the name it shows.
+    expect(find.text('MR !7'), findsOneWidget);
   });
 
   testWidgets('left-pane sections list in the canonical order', (tester) async {
