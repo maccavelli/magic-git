@@ -657,6 +657,28 @@ void main() {
       expect(exec.events, ['rejected', 'windows-probe']);
     });
 
+    test(
+      'a ~ repository path still finds the Windows host its banner hid',
+      () async {
+        final exec = _WindowsHostExecutor(
+          banner: 'SSH-2.0-CustomBanner',
+          facts: _factsCmdWithBash,
+        )..posixRejected = true;
+        final (:container, manager: _) = _windowsContainer(exec);
+        await container
+            .read(connectionProvider.notifier)
+            .connect(profile: winProfile, repoPath: '~/repo');
+
+        final state = container.read(connectionProvider);
+        expect(
+          state.windowsShellPrompt?.kind,
+          WindowsShellPromptKind.notActive,
+        );
+        expect(state.error, isNot(contains('Could not resolve')));
+        expect(exec.events, ['rejected', 'windows-probe']);
+      },
+    );
+
     test('dismissing the prompt releases the transport', () async {
       final exec = _WindowsHostExecutor(
         banner: _windowsBanner,

@@ -240,3 +240,12 @@ No settings, storage or wire formats change.
 * `flutter analyze`: No issues found. `forge_inbox_test` + `gitlab_panel_test`:
   `+25: All tests passed!`.
 * This commit also carries the Phase 1 record above.
+
+### Phase 4 (2026-09-24), defect 4
+
+* `app_providers.dart`: `_remoteHome` throws `CmdExeShellDetected` when the lookup fails with
+  cmd.exe's rejection (`looksLikeCmdExe`). In `connect`, the `~` expansion moved inside the
+  `try … on CmdExeShellDetected` that already wrapped the environment probe, so the forced
+  Windows check covers whichever POSIX command runs first.
+* `flutter analyze`: No issues found. `connection_env_reset_test` + `home_path_test`:
+  `+18: All tests passed!` (the new case, and the existing Windows and `~` cases).
