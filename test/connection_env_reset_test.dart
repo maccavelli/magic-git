@@ -245,6 +245,49 @@ class _WindowsHostExecutor extends SSHCommandExecutor {
   }
 }
 
+/// A POSIX host whose `$HOME` is [home]: records each command's repo path.
+class _HomeHostExecutor extends SSHCommandExecutor {
+  _HomeHostExecutor(this.home) : super(SSHClientManager());
+
+  final String home;
+  final List<({String repoPath, String what})> calls = [];
+
+  @override
+  Future<SSHCommandResult> execute({
+    required String repoPath,
+    required List<String> gitArgs,
+    Map<String, String>? extraEnv,
+    String? stdin,
+    Duration timeout = SSHCommandExecutor.defaultTimeout,
+    int retries = 0,
+    ExecLane lane = ExecLane.exclusive,
+    bool compress = false,
+    Duration? activityIdle,
+    OperationDescriptor? operation,
+    OperationEventCallback? onOperationEvent,
+    CommandOutputCallback? onOutput,
+  }) async {
+    final script = gitArgs.join(' ');
+    if (script.contains(r'printf %s "$HOME"')) {
+      calls.add((repoPath: repoPath, what: 'home'));
+      return SSHCommandResult(exitCode: 0, stdout: home, stderr: '');
+    }
+    if (gitArgs.contains('rev-parse')) {
+      calls.add((repoPath: repoPath, what: 'validate'));
+      return const SSHCommandResult(exitCode: 0, stdout: 'true\n', stderr: '');
+    }
+    if (script.contains('uname')) {
+      calls.add((repoPath: repoPath, what: 'probe'));
+      return const SSHCommandResult(
+        exitCode: 0,
+        stdout: 'OS=Linux\nPATH=/usr/bin\n',
+        stderr: '',
+      );
+    }
+    return const SSHCommandResult(exitCode: 0, stdout: '', stderr: '');
+  }
+}
+
 const _windowsBanner = 'SSH-2.0-OpenSSH_for_Windows_9.5';
 const _factsCmdWithBash =
     'MGW_PS=5.1.26100.2161\n'
@@ -627,6 +670,80 @@ void main() {
 
       expect(container.read(connectionProvider).windowsShellPrompt, isNull);
       expect(manager.disconnects, 1);
+    });
+  });
+
+  group('a ~ repository path', () {
+    const host = SSHConnectionProfile(host: 'box', username: 'u');
+
+    ProviderContainer containerFor(SSHCommandExecutor exec) {
+      final container = ProviderContainer(
+        overrides: [
+          sshClientManagerProvider.overrideWithValue(_OkManager()),
+          executorProvider.overrideWithValue(exec),
+          gitServiceProvider.overrideWithValue(GitService(exec)),
+        ],
+      );
+      addTearDown(container.dispose);
+      return container;
+    }
+
+    test(
+      'is expanded against the host HOME before any command uses it',
+      () async {
+        final exec = _HomeHostExecutor('/home/u');
+        final container = containerFor(exec);
+        await container
+            .read(connectionProvider.notifier)
+            .connect(
+              profile: host,
+              repoPath: '~/src/app',
+              repoPaths: const ['~/src/app', '/srv/other', '~/dots'],
+              scopedGitDirs: const {'~/dots': '~/.dots.git'},
+            );
+
+        final state = container.read(connectionProvider);
+        expect(
+          state.phase,
+          ConnectionPhase.connected,
+          reason: '${state.error}',
+        );
+        expect(state.repoPath, '/home/u/src/app');
+        expect(state.repoPaths, containsAll(['/home/u/src/app', '/srv/other']));
+        expect(state.repoPaths.where((p) => p.startsWith('~')), isEmpty);
+        expect(state.scopedGitDirs, {'/home/u/dots': '/home/u/.dots.git'});
+        expect(exec.calls.first, (repoPath: '/', what: 'home'));
+        expect(
+          exec.calls.where((c) => c.what != 'home').map((c) => c.repoPath),
+          everyElement(isNot(startsWith('~'))),
+          reason: 'no command may cd into an unexpanded ~ path',
+        );
+      },
+    );
+
+    test('costs nothing when no path starts with ~', () async {
+      final exec = _HomeHostExecutor('/home/u');
+      final container = containerFor(exec);
+      await container
+          .read(connectionProvider.notifier)
+          .connect(profile: host, repoPath: '/srv/app');
+
+      expect(exec.calls.map((c) => c.what), isNot(contains('home')));
+      expect(container.read(connectionProvider).repoPath, '/srv/app');
+    });
+
+    test('fails honestly when the host reports no absolute HOME', () async {
+      final exec = _HomeHostExecutor('');
+      final container = containerFor(exec);
+      await container
+          .read(connectionProvider.notifier)
+          .connect(profile: host, repoPath: '~/src/app');
+
+      final state = container.read(connectionProvider);
+      expect(state.phase, ConnectionPhase.error);
+      expect(state.error, contains('Could not resolve "~" on the host'));
+      expect(state.error, isNot(contains('not a git repository')));
+      expect(exec.calls.map((c) => c.what), ['home']);
     });
   });
 }

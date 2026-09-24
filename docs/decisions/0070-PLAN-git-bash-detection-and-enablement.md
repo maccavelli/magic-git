@@ -454,6 +454,18 @@ setting is machine-wide.
     * **A watcher sweep fails on a quoted `~`:** `watcher sweep skipped ~/gitrepos/<repo>: … cd:
       ~/gitrepos/<repo>: No such file or directory`. That path is not the open repository, and a
       quoted `~` is never expanded. It is not specific to Windows; it is traced separately.
+      **Fixed 2026-09-23, outside this plan.** There were two causes:
+      * The connection form saved a typed path into the connection before connecting, so the
+        failed `~` attempt stayed in the list the sweep walks.
+      * Nothing expanded `~`.
+
+      Now a path joins a saved connection only once a connect validates it. A connection that
+      has never connected has its path replaced, not merged. The connect expands a leading
+      `~` against the host's `$HOME`; `lib/core/ssh/home_path.dart` does the expansion. Tests:
+      `home_path_test.dart`, the "a ~ repository path" group in
+      `connection_env_reset_test.dart`, and "what Save connection keeps" in
+      `connection_form_test.dart`. Each was seen to fail against the pre-fix code or a
+      mutation in a scratch clone.
 * **Phase 0 (2026-09-23).** Records: MADR 0070 `accepted`, this plan `in-progress`, the index row.
   The negative rehearsal ran per phase, not up front: each new check was run against deliberately
   broken code in a scratch clone (`p1-clone`) before the phase was committed, which is the stronger

@@ -51,6 +51,7 @@ import '../settings/repository_workspace_prefs.dart';
 import '../settings/tool_catalog.dart';
 import '../ssh/command_formatter.dart';
 import '../ssh/environment_probe.dart';
+import '../ssh/home_path.dart';
 import '../ssh/host_key_prompt.dart';
 import '../ssh/ssh_client_manager.dart';
 import '../ssh/ssh_command_executor.dart';
@@ -1584,6 +1585,27 @@ class ConnectionController extends Notifier<ConnectionState> {
       // [WindowsShellSetupRequired] when they cannot run.
       await _checkWindowsShell(attempt);
       if (attempt != _attempt || !ref.mounted) return;
+      // A `~` path is never expanded inside the quotes every command puts it
+      // in, so resolve it against the host's own $HOME before anything —
+      // the environment probe included — `cd`s into it. The values kept for
+      // a reconnect stay as typed; each connect expands them afresh.
+      if ([
+        repoPath,
+        ...?repoPaths,
+        ...fsmonitorPaths,
+        ...scopedGitDirs.keys,
+        ...scopedGitDirs.values,
+      ].any(hasHomePrefix)) {
+        final home = await _remoteHome();
+        if (attempt != _attempt || !ref.mounted) return;
+        String expand(String path) => expandHomePath(path, home);
+        repoPath = expand(repoPath);
+        repoPaths = repoPaths?.map(expand).toList();
+        fsmonitorPaths = [for (final p in fsmonitorPaths) expand(p)];
+        scopedGitDirs = {
+          for (final e in scopedGitDirs.entries) expand(e.key): expand(e.value),
+        };
+      }
       try {
         await _resolveEnvironment(repoPath, attempt: attempt);
       } on CmdExeShellDetected {
@@ -2502,6 +2524,28 @@ class ConnectionController extends Notifier<ConnectionState> {
   }
 
   static const Duration _windowsProbeTimeout = Duration(seconds: 30);
+
+  /// The connected host's `$HOME`, for expanding a `~` repository path.
+  /// Run from `/`, since the repository path is the thing not yet known to
+  /// be usable. Throws [HomePathUnresolved] unless it is absolute.
+  Future<String> _remoteHome() async {
+    final result = await ref
+        .read(executorProvider)
+        .execute(
+          repoPath: '/',
+          gitArgs: const ['sh', '-c', r'printf %s "$HOME"'],
+          timeout: const Duration(seconds: 20),
+          lane: ExecLane.read,
+        );
+    final home = result.stdout.trim();
+    if (!result.isSuccess || !home.startsWith('/')) {
+      final said = result.stderr.trim();
+      throw HomePathUnresolved(
+        said.isNotEmpty ? said : 'exit ${result.exitCode}, "$home"',
+      );
+    }
+    return home;
+  }
 
   /// Enable, from the Windows shell prompt (0070-PLAN D-d): sets the
   /// discovered Git Bash as the host's SSH default shell over the session

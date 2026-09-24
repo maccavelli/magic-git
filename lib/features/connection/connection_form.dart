@@ -178,6 +178,10 @@ class _ConnectionFormState extends ConsumerState<ConnectionForm> {
     };
     String? connectionId;
     String? connectionLabel;
+    // The saved profile and the validated connection it extends, kept for
+    // the post-connect save below.
+    SavedConnection? savedConn;
+    SavedConnection? known;
 
     if (_save) {
       // Reuse an existing saved profile for the same host+user (update in
@@ -192,14 +196,18 @@ class _ConnectionFormState extends ConsumerState<ConnectionForm> {
         }
       }
       final id = match?.id ?? DateTime.now().microsecondsSinceEpoch.toString();
+      // Only a profile that has connected before carries paths worth
+      // keeping. One that never connected holds just the path a failed
+      // attempt typed; this attempt replaces it rather than merging it in.
+      known = match?.lastConnectedAt != null ? match : null;
       repoPaths = SavedConnection.dedupePaths([
         repoPath,
-        ...?match?.allRepoPaths,
+        ...?known?.allRepoPaths,
       ]);
       // Merge into the profile's existing scopes: set this repo's git-dir when
       // the toggle is on, else clear any stale scope for it.
       scopedGitDirs = Map<String, String>.from(
-        match?.scopedGitDirs ?? const {},
+        known?.scopedGitDirs ?? const {},
       );
       if (gitDir.isNotEmpty) {
         scopedGitDirs[repoPath] = gitDir;
@@ -212,11 +220,16 @@ class _ConnectionFormState extends ConsumerState<ConnectionForm> {
         host: profile.host,
         port: profile.port,
         username: profile.username,
-        repoPath: repoPath,
-        repoPaths: repoPaths,
-        fsmonitorPaths: match?.fsmonitorPaths ?? const [],
-        repoLabels: match?.repoLabels ?? const {},
-        scopedGitDirs: scopedGitDirs,
+        // Saved before connecting, so the credentials survive a failed
+        // attempt — but the new path joins the saved list only once the
+        // connect validates it (after connect() below). A new profile needs
+        // a path to exist at all; it is the one a later attempt replaces.
+        repoPath: known?.repoPath ?? repoPath,
+        repoPaths: known?.repoPaths ?? [repoPath],
+        fsmonitorPaths: known?.fsmonitorPaths ?? const [],
+        repoLabels: known?.repoLabels ?? const {},
+        scopedGitDirs:
+            known?.scopedGitDirs ?? {if (gitDir.isNotEmpty) repoPath: gitDir},
         lastConnectedAt: match?.lastConnectedAt,
       );
       // Saving is best-effort: the Keychain is unavailable on an unsigned build
@@ -267,6 +280,7 @@ class _ConnectionFormState extends ConsumerState<ConnectionForm> {
       if (!mounted) return;
       connectionId = id;
       connectionLabel = conn.displayName;
+      savedConn = conn;
     }
 
     final nav = Navigator.of(context);
@@ -283,11 +297,61 @@ class _ConnectionFormState extends ConsumerState<ConnectionForm> {
           scopedGitDirs: scopedGitDirs,
         );
     if (!mounted) return;
+    if (savedConn != null) await _saveValidatedPath(savedConn, known);
+    if (!mounted) return;
     // Success: the workspace is live behind this sheet — dismiss it. Stay open
     // on failure (the error renders under the button) and when the profile
     // save failed (the warning must stay readable; the user closes manually).
     if (ref.read(connectionProvider).isConnected && _saveWarning == null) {
       nav.pop();
+    }
+  }
+
+  /// After a successful connect, adds the repository path to the saved
+  /// profile — as the connection resolved it, so a `~` path is stored
+  /// absolute — and makes it the default. A failed connect adds nothing:
+  /// a path that never worked must not become one of the connection's
+  /// repositories, swept and offered on every later connect.
+  Future<void> _saveValidatedPath(
+    SavedConnection saved,
+    SavedConnection? known,
+  ) async {
+    final state = ref.read(connectionProvider);
+    final resolved = state.repoPath;
+    if (!state.isConnected || resolved == null) return;
+    try {
+      final store = ref.read(connectionStoreProvider);
+      // Re-read: connect() has just stamped lastConnectedAt on it.
+      final stored = (await store.list())
+          .where((c) => c.id == saved.id)
+          .firstOrNull;
+      if (stored == null) return;
+      final scopes = Map<String, String>.from(known?.scopedGitDirs ?? const {});
+      final scope = state.scopedGitDirFor(resolved);
+      if (scope != null && scope.isNotEmpty) {
+        scopes[resolved] = scope;
+      } else {
+        scopes.remove(resolved);
+      }
+      await store.updateMetadata(
+        stored.copyWith(
+          repoPath: resolved,
+          repoPaths: SavedConnection.dedupePaths([
+            resolved,
+            ...?known?.allRepoPaths,
+          ]),
+          scopedGitDirs: scopes,
+        ),
+      );
+      if (!mounted) return;
+      ref.invalidate(savedConnectionsProvider);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _saveWarning =
+            'Connected, but the repository could not be saved to this '
+            'connection. ($e)';
+      });
     }
   }
 
