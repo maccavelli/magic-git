@@ -1,5 +1,5 @@
 ---
-status: "in-progress"
+status: "complete"
 date: 2026-09-24
 associated-madr: "0071-MADR-worktree-start-inbox-state-pipeline-names-and-shell-check-order.md"
 verified: 2026-09-24
@@ -249,3 +249,25 @@ No settings, storage or wire formats change.
   Windows check covers whichever POSIX command runs first.
 * `flutter analyze`: No issues found. `connection_env_reset_test` + `home_path_test`:
   `+18: All tests passed!` (the new case, and the existing Windows and `~` cases).
+
+### Phase 5 (2026-09-24), proof and records
+
+* Mutation runs in a scratch clone of `7847808`. Baseline over the five test files first:
+  `+56: All tests passed!`. Then each mutation, alone, against its named tests; every one failed
+  on its own assertion, none on a compile error:
+
+  | Mutation | Test that failed | Assertion |
+  |---|---|---|
+  | M1 a dropped commit becomes `CheckOutBranch` | commit drop on Worktrees | "New branch name" not found |
+  | M2 Existing branch valid when not offered | branch checked out elsewhere | Create Worktree enabled |
+  | M3 the action row back inside the scroll view | the smallest window | Create Worktree bottom 593 > 480 |
+  | M4 GitHub Inbox without the open filter | closed and merged pull requests | "Abandoned idea" listed |
+  | M5 GitLab Inbox without the open filter | closed and merged merge requests | "Abandoned idea" listed |
+  | M6 raw ref in the pipeline title | MR pipeline | "Pipeline #102  ·  MR !7" not found (line 353) |
+  | M7 filter without the pretty name | MR pipeline | "MR !7" row filtered out (line 364) |
+  | M8 the `~` block outside the `try` | `~` path on a hidden-banner host | no Windows prompt |
+  | M9 `_remoteHome` without the cmd.exe check | `~` path on a hidden-banner host | no Windows prompt |
+
+* At `7847808`: `flutter analyze` No issues found; full suite `03:00 +4407 ~3: All tests
+  passed!`; `dart run scripts/tools/records.dart check` 0 findings.
+* Every acceptance criterion is met. Plan `complete`; MADR 0071 stays `accepted`.
