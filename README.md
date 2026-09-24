@@ -4,21 +4,24 @@ Magic Git is a native macOS Git client for repositories that live **on a remote
 host** as well as on your Mac. It drives `git`, `gh` and `glab` where the
 repository is:
 
-- **Over SSH** on a remote POSIX machine. The repository stays on the host, with
-  no local clone, and Magic Git runs every command there.
+- **Over SSH** on a macOS or Linux host, or a Windows host with Git Bash as its
+  SSH shell. The repository stays on the host, with no local clone, and Magic
+  Git runs every command there.
 - **On this Mac**, for repositories in a local folder.
 
 Both give you the same screens: status, history, diffs, branches, stashes,
 worktrees, and GitHub/GitLab pull or merge requests, issues and CI.
 
-macOS is the only target platform.
+The app itself runs on macOS only.
 
 ## Features
 
 - **Sessions and tabs.** Several repositories open at once in File tabs, saved
-  as named workspaces. There is a Connections Manager for saved SSH hosts and
-  local repositories, and support for scoped "dotfiles" repositories (a separate
-  `GIT_DIR` and work tree). Dropped SSH sessions reconnect automatically.
+  as named workspaces. The Workspaces panel holds saved SSH hosts and local
+  repositories, and supports scoped "dotfiles" repositories (a separate
+  `GIT_DIR` and work tree). An SSH repository path may start with `~`. Dropped
+  SSH sessions reconnect automatically. Clone a repository, or create one
+  together with its GitHub or GitLab project.
 - **Repository.** Stage files, hunks or single lines; resolve conflicts; review
   many files at once. Commit from a focused sheet or a docked composer, with
   co-authors, templates and hook-generated messages. A push continues in the
@@ -38,12 +41,18 @@ macOS is the only target platform.
 - **Forge.** A GitHub and GitLab inbox, including self-hosted GitLab. Create,
   review, approve and merge pull or merge requests; create and work on issues;
   follow CI runs and pipelines, with live GitLab job logs.
-- **Safety.** ⌘Z undoes the last git operation, and a Recovery view reaches the
-  reflog and automatic snapshots taken before every discard.
+- **Windows hosts.** When you connect, Magic Git checks that Git Bash is the
+  OpenSSH default shell, and offers to set it. That needs an administrator
+  account, and the setting applies to the whole machine. Status, history and
+  diffs are verified on a real Windows host. Live refresh polls, and tabs show
+  the full `C:\…` path.
+- **Safety.** ⌘Z undoes the last git operation and ⇧⌘Z redoes it. A Recovery
+  view reaches the reflog and the snapshots taken before destructive operations
+  such as discard, reset, revert and stash pop.
 - **Everywhere.** A command palette (⌘K), remappable shortcuts, drag and drop,
   a file viewer that edits remote files in your editor, a live command Output
-  log, a Dashboard, and a Tool Health doctor that installs missing tools on the
-  host.
+  log, a Dashboard, and a Tool Health check that installs missing tools on macOS
+  and Linux hosts (Windows hosts get the commands to run).
 
 ## Requirements
 
@@ -56,15 +65,18 @@ macOS is the only target platform.
 | `git` | everything | 2.24 |
 | `gh` | GitHub features | 2.0 |
 | `glab` | GitLab features | — |
-| `fswatch` (macOS hosts) or `inotifywait` (Linux hosts) | live refresh; without one, Magic Git polls | optional |
+| `fswatch` (macOS SSH hosts) or `inotifywait` (Linux SSH hosts) | live refresh over SSH; without one, Magic Git polls. Repositories on this Mac use macOS file events. | optional |
+| Git for Windows (Git Bash) | Windows SSH hosts: the OpenSSH default shell | — |
 
 Sign the forge CLIs in on that machine: `gh auth login`, and `glab auth login`
 (add `--hostname <host>` for self-hosted GitLab). You can also put a token on a
-saved SSH connection. SSH hosts must offer a POSIX shell.
+saved SSH connection. SSH hosts must run commands through a POSIX shell. On
+Windows that means OpenSSH Server with Git Bash as its default shell. Magic Git
+offers to set it (Help ▸ Support & Help ▸ Windows Hosts).
 
 ## Install
 
-Build the app from source on a Mac with Xcode and CocoaPods installed:
+Build the app from source on a Mac with Xcode installed:
 
 ```sh
 ./build_macos.sh --unsigned --install
@@ -87,6 +99,20 @@ Inside the app:
 
 ## Development
 
+First-time setup on a Mac:
+
+```sh
+./devenv.sh            # checks the toolchain and installs what is missing
+./devenv.sh --check    # report only; changes nothing
+python3 dependencies.py  # checks the Python the repository's scripts run on
+```
+
+`devenv.sh` checks Xcode, git, Flutter at the pinned version and
+Python 3.12 or newer. It installs what it can with Homebrew, vendors Flutter
+into `./.flutter-sdk` when the one on your `PATH` is not the pin, and fetches the
+Dart packages. Steps that need `sudo`, such as accepting the Xcode licence, are
+printed for you to run. `--optional` also installs `gh` and `glab`.
+
 The Flutter version is pinned: `FLUTTER_VERSION` in `build_macos.sh`
 (currently **3.47.2**). A different SDK rewrites `pubspec.lock` and fails the
 golden tests, so check before you start:
@@ -102,8 +128,14 @@ If your `flutter` differs, use `./.flutter-sdk/bin/flutter`, which
 `build_macos.sh` fetches.
 
 - Analyze and tests run on any platform; the `.app` builds only on a Mac.
-- Tests tagged `live-forge` create and delete **real** GitHub and GitLab
-  projects. They are skipped by default; never run them without meaning to.
+- Tests tagged `live-forge` create and delete **real** GitLab projects, and make
+  read-only calls to GitHub. They are skipped by default; never run them
+  without meaning to.
+- Tooling lives in `scripts/tools/`. `records.dart` checks the docs tree
+  (`flutter test` runs it), and `dart run scripts/tools/records.dart next` gives
+  a new record its number. `mutate.py` proves a test can fail, and `devenv/`
+  inventories a machine's toolchains (see its README). The Python tooling uses
+  only the standard library.
 - The native Swift tests run through Xcode. See
   [docs/guides/build-macos.md](docs/guides/build-macos.md#running-the-xcode-unit-tests-without-a-certificate).
 

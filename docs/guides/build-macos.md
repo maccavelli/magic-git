@@ -17,12 +17,14 @@ entitlement selection described below; see
   sudo xcodebuild -runFirstLaunch
   sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
   ```
-- **CocoaPods** — links the native plugins (secure storage, path provider, …):
-  ```sh
-  sudo gem install cocoapods    # or: brew install cocoapods
-  ```
 
-The script checks for both and stops with these instructions if either is missing.
+The script checks for Xcode and stops with these instructions if it is missing.
+CocoaPods is not needed: the native plugins (secure storage, path provider, …)
+link through Swift Package Manager, which comes with Xcode, and the project has
+no `macos/Podfile`.
+
+`./devenv.sh` at the repository root checks all of this, and the rest of the
+development toolchain, in one pass; `./devenv.sh --check` changes nothing.
 
 ### The Flutter pin
 
@@ -60,7 +62,7 @@ From the repository root, pick one:
 ./build_macos.sh
 ```
 
-The first run may clone Flutter and install the CocoaPods dependencies, so it is
+The first run may clone Flutter and resolve the plugins' Swift packages, so it is
 slow (a few minutes). Later runs are fast. An unknown option stops the script with
 `Unknown option: … (supported: --unsigned, --install)`.
 

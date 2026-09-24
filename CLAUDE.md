@@ -91,7 +91,8 @@ flutter test --plain-name "substring of test name"
 - `integration_test/` contains on-device Flutter integration tests (separate
   from the `integration` tag in `test/`).
 
-**Build the .app** (macOS only, needs Xcode + CocoaPods; script vendors a
+**Build the .app** (macOS only, needs Xcode — plugins link through Swift
+Package Manager, so no CocoaPods; script vendors a
 pinned Flutter SDK into gitignored `./.flutter-sdk`). A plain
 `flutter build macos` fails on machines without a signing identity — always use
 the script:
@@ -107,7 +108,11 @@ the script:
 catalogues, `records.dart` (the docs checker), and `devenv/`, a read-only probe of a
 developer machine's toolchains and shell environment (its README says how to run
 it). Until 2026-09-23 the tooling lived in `tool/`, and older records cite those
-paths.
+paths. At the root, `./devenv.sh` bootstraps a Mac for development (`--check`
+changes nothing), and `python3 dependencies.py` checks that the interpreter can
+run every Python file in the repository. The development environment targets
+Python 3.12 or newer, and the tooling uses only the standard library; the
+`devenv/` probe alone keeps working on 3.9, for the machines it inspects.
 
 ## Decision records (MADR) and plans
 

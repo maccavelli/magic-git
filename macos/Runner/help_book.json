@@ -42,7 +42,7 @@
           "sections": [
             {
               "type": "paragraph",
-              "text": "Magic Git is a native macOS Git client. It drives git, gh, and glab either on this Mac or on a remote POSIX host over SSH — an SSH session works on the host directly, with no local clone. A connected session has six sidebar panels — Repository, History, Branches, Stashes, Forge, and Worktrees — plus File tabs for more than one repository."
+              "text": "Magic Git is a native macOS Git client. It drives git, gh, and glab either on this Mac or on a remote host over SSH: a macOS or Linux host, or a Windows host whose SSH shell is Git Bash (see Windows Hosts). An SSH session works on the host directly, with no local clone. A connected session has six sidebar panels — Repository, History, Branches, Stashes, Forge, and Worktrees — plus File tabs for more than one repository."
             },
             {
               "type": "heading",
@@ -57,7 +57,7 @@
               "items": [
                 "Repository — the repository name (the tab alias if you set one, otherwise the folder name). Hover for the full path. Ahead/behind counts and a dirty or conflict dot sit on the right; their tooltip reads, for example, \"2 uncommitted · 1 ahead\", or \"Clean, in sync\".",
                 "Location — This Mac for a local session, or the SSH host. Hover for user@host:port.",
-                "Workspaces — opens the Connections Manager (see Connections Manager).",
+                "Workspaces — opens the Workspaces sheet of saved repositories and hosts (see Connections Manager).",
                 "Logout — ends the session after a Log out? confirmation. Nothing on the host is deleted."
               ]
             },
@@ -135,7 +135,7 @@
               "items": [
                 "Host, Port, and Username — the SSH server and the account to sign in as.",
                 "Password, or Private key (PEM) — sign in with a password, or Load private key… or paste the key. Key passphrase is only needed for an encrypted key.",
-                "Repository path — required: the absolute path of the repository to open after connecting.",
+                "Repository path — required: the repository to open after connecting. Type its full path, or start it with ~ for your home folder on the host (for example ~/src/app); Magic Git expands ~ against the host's $HOME when it connects. A ~name/ path is not expanded.",
                 "Scoped work-tree repo (dotfiles) and Git directory — for a repository whose git data lives elsewhere (GIT_DIR); the Repository path becomes its work tree.",
                 "GitLab token and GitHub token — optional personal access tokens that sign glab or gh in on the host.",
                 "Save connection — keeps the profile, with secrets in secure storage, under an optional Label."
@@ -144,6 +144,10 @@
             {
               "type": "paragraph",
               "text": "Connect opens the repository. An unsaved connection still works for the session and appears in the Connections Manager as \"(unsaved)\"."
+            },
+            {
+              "type": "paragraph",
+              "text": "With Save connection on, the host, sign-in, and tokens are saved even when the connect fails. The Repository path joins the connection's repositories only once a connect to it succeeds, and it is saved as a full path, with ~ expanded."
             },
             {
               "type": "callout",
@@ -175,7 +179,7 @@
           "sections": [
             {
               "type": "paragraph",
-              "text": "The Workspaces button in the sidebar (or Connections Manager on the landing screen) opens your local repositories and saved SSH hosts. Its toolbar has Saved workspaces, Add connection, Add existing repository, Clone repository, and Create repository."
+              "text": "The Workspaces button in the sidebar, Connections Manager on the landing screen, and Manage Connections in the command palette all open the Workspaces sheet: your local repositories and saved SSH hosts. Its toolbar has Saved workspaces, Add connection, Add existing repository, Clone repository, and Create repository."
             },
             {
               "type": "heading",
@@ -200,7 +204,7 @@
               "items": [
                 "Edit connection — change the Label, Host, Port, Username, password, key, passphrase, or tokens. A secret field left blank keeps the stored one (\"Leave blank to keep current\").",
                 "Delete connection — deletes the connection and its stored credentials, after a confirmation.",
-                "Edit repository (remote) — Label, Path on the host (repoints the entry), and Git directory for a scoped repository, plus the fsmonitor toggle.",
+                "Edit repository (remote) — Label, Path on the host (repoints the entry), and Git directory for a scoped repository, plus the fsmonitor toggle. A path may start with ~ for your home folder on the host.",
                 "Edit repository (local) — Label and fsmonitor. The Folder is fixed by its access grant; remove the entry and add it again to use a different folder.",
                 "Remove repository — removes the entry from the list. Files are not deleted.",
                 "The fsmonitor icon on a row toggles git fsmonitor (\"Git fsmonitor off (click to enable)\")."
@@ -252,7 +256,7 @@
           "sections": [
             {
               "type": "paragraph",
-              "text": "Windows OpenSSH runs every command through cmd.exe unless it is configured otherwise. Magic Git's commands need a POSIX shell, so on a Windows host it needs Git Bash, from Git for Windows, as the OpenSSH default shell. When you connect, it checks this before running anything."
+              "text": "Windows OpenSSH runs every command through cmd.exe unless it is configured otherwise. Magic Git's commands need a POSIX shell, so on a Windows host it needs Git Bash, from Git for Windows, as the OpenSSH default shell. When you connect, it checks this before running anything — also when the host's SSH banner does not say Windows but cmd.exe rejects Magic Git's first command."
             },
             {
               "type": "heading",
@@ -265,7 +269,7 @@
             {
               "type": "items",
               "items": [
-                "Enable — sets Git Bash as the OpenSSH default shell over this connection, then reconnects. It needs an administrator account; from a standard account the host refuses it, nothing changes, and the prompt shows the host's reason.",
+                "Enable — sets Git Bash as the OpenSSH default shell over this connection, then reconnects. It needs an administrator account; from a standard account the host refuses it, nothing changes, and the prompt shows the host's reason. If this account is not an administrator, the prompt says so before you try.",
                 "The command — under Or run this in an elevated PowerShell on the host, the same command to copy and run by hand, then Reconnect.",
                 "Reconnect — tries the connection again.",
                 "Cancel — closes the prompt and the connection."
@@ -283,7 +287,29 @@
             },
             {
               "type": "paragraph",
-              "text": "The Git Bash Is Not Installed prompt gives the install command, winget install --id Git.Git -e. If Git Bash is installed somewhere else, set its path in Settings under External tools (bash), then Reconnect."
+              "text": "The Git Bash Is Not Installed prompt gives the install command, winget install --id Git.Git -e. If Git Bash is installed somewhere else, press Open Settings and set its path under External tools (bash), for example C:\\Program Files\\Git\\bin\\bash.exe, then Reconnect."
+            },
+            {
+              "type": "heading",
+              "text": "When the host cannot be checked"
+            },
+            {
+              "type": "paragraph",
+              "text": "Couldn't Check This Windows Host means the host looked like Windows but Magic Git could not read its SSH shell setting. The prompt shows the reason. Fix it on the host, then Reconnect, or Cancel."
+            },
+            {
+              "type": "heading",
+              "text": "Working on a Windows host"
+            },
+            {
+              "type": "paragraph",
+              "text": "Enter the Repository path as Windows shows it, for example C:\\Users\\you\\src\\app, or start it with ~ for your home folder. Status, the file tree, history, and diffs work as on any host."
+            },
+            {
+              "type": "callout",
+              "style": "info",
+              "title": "Not yet on Windows",
+              "text": "Live refresh polls instead of watching, so the change-detection dot is orange and changes appear within a few seconds. Tabs and the window title show the full C:\\… path rather than the folder name."
             }
           ]
         },
@@ -307,7 +333,7 @@
           "sections": [
             {
               "type": "paragraph",
-              "text": "Clone repository and Create repository are on the Connections Manager toolbar and under app: in the command palette. Both are step-by-step sheets with Back, Continue, and a final Clone or Create."
+              "text": "Clone repository and Create repository are on the Workspaces sheet's toolbar and under app: in the command palette. Both are step-by-step sheets with Back, Continue, and a final Clone or Create."
             },
             {
               "type": "heading",
@@ -318,7 +344,7 @@
               "items": [
                 "Target — This Mac, a saved connection, or this session (an unsaved SSH session).",
                 "Source — GitHub or GitLab browses the repositories your signed-in account owns (Forge host, Reload, Filter…); URL takes any address git clone accepts, HTTPS or SSH. An organization's repository you do not own needs URL.",
-                "Location — Folder name (prefilled from the source), then the Parent folder on this Mac (Choose…) or Parent folder on the host (Browse…). Options: Create parent folders if missing, Enable git fsmonitor, and Save to Local Repositories with a Label.",
+                "Location — Folder name (prefilled from the source), then the parent folder. On this Mac: Parent folder on this Mac (Choose…) and Save to Local Repositories, with an optional Label. On a host: Parent folder on the host (Browse…), Create parent folders if missing, Enable git fsmonitor, and an optional Label.",
                 "Review — check the summary, then Clone. Progress streams live. A failed or cancelled clone deletes the partial folder it created."
               ]
             },
@@ -388,7 +414,7 @@
             },
             {
               "type": "paragraph",
-              "text": "Saved Workspaces (Connections toolbar, or Manage Saved Workspaces in the palette) saves the open set of saved repositories — each tab's alias and layout preset, plus which tab was active — and restores it later. Open reports any repository that failed without closing the ones that opened. Delete removes the saved set; open tabs are not affected."
+              "text": "Saved Workspaces (the Saved workspaces button on the Workspaces sheet, or Manage Saved Workspaces in the palette) saves the open set of saved repositories — each tab's alias and layout preset, plus which tab was active — and restores it later. Save current tabs as workspace asks for a name. Open reports any repository that failed without closing the ones that opened. Delete removes the saved set; open tabs are not affected."
             },
             {
               "type": "items",
@@ -437,7 +463,7 @@
           "sections": [
             {
               "type": "paragraph",
-              "text": "The workspace is compact below 720 px (navigator or canvas, not both; the sync group collapses; a Toggle sidebar button sits on the bar), standard from 720 to 1199, and wide at 1200 px and above."
+              "text": "The workspace is compact below 720 px, standard from 720 to 1199, and wide at 1200 px and above. When compact, a page shows its list or the selected item, not both: choosing an item opens it, and the ‹ bar above it (for example ‹ Commits) goes back to the list with your selection kept — so do Esc and ⌘[. The sync group collapses, and a Toggle sidebar button sits on the bar."
             },
             {
               "type": "heading",
@@ -494,7 +520,7 @@
             },
             {
               "type": "paragraph",
-              "text": "File, Repository, Branch, Stash, Forge, and Worktree sit in the macOS menu bar with App, Edit, View, Window, and Help. Unavailable items stay visible and dim. View ▸ Focus Navigator, Canvas, Task Dock, and Activity exist and are unbound. Choosing a command from another panel switches there and runs it. Menus and Factory-Default Shortcuts lists every menu item."
+              "text": "File, Repository, Branch, Stash, Forge, and Worktree sit in the macOS menu bar with App, Edit, View, Window, and Help. Unavailable items stay visible and dim. View ▸ Show Navigator (⌥⌘N) shows or hides the left pane. View ▸ Toggle Sidebar, and Focus Navigator, Canvas, Inspector, Task Dock, and Activity, exist and are unbound. Choosing a command from another panel switches there and runs it. Menus and Factory-Default Shortcuts lists every menu item."
             }
           ]
         },
@@ -521,12 +547,17 @@
               "label": "Toggle Output View",
               "keys": "⇧⌘O",
               "actionId": "global.toggleOutput"
+            },
+            {
+              "label": "Toggle Navigator",
+              "keys": "⌥⌘N",
+              "actionId": "global.toggleNavigator"
             }
           ],
           "sections": [
             {
               "type": "paragraph",
-              "text": "File View is View ▸ Show File View (⇧⌘E). The workspace's left pane — the commit list, branch tree or stash list — is View ▸ Show Navigator (⌥⌘N); collapsed (as the Minimal preset leaves it), it shows a narrow rail at the left edge naming the pane, and clicking the rail brings it back. It is on by default but hidden until the canvas is at least 1200 px wide unless you Pin file view open. Hide and Collapse all sit on the Files header. There is no Changes | Files switch — the change list stays in the navigator and the tree is this third pane."
+              "text": "File View is View ▸ Show File View (⇧⌘E). The workspace's left pane — the commit list, branch tree or stash list — is View ▸ Show Navigator (⌥⌘N); collapsed (as the Minimal preset leaves it), it shows a narrow rail at the left edge naming the pane, and clicking the rail brings it back. It is on by default and appears only when the canvas is at least 1200 px wide. Pin file view open keeps it docked even after you hide it. Hide file view and Collapse all sit on the Files header. There is no Changes | Files switch — the change list stays in the navigator and the tree is this third pane."
             },
             {
               "type": "heading",
@@ -541,6 +572,7 @@
               "items": [
                 "Fetch, pull, push, sync, Fetch & Prune, and clone stream their progress live as they run.",
                 "A Pull shows two commands: the fetch, then the merge or rebase.",
+                "While the commit composer drafts a message, anything the repository's prepare-commit-msg hook prints to stderr appears under prepare-commit-msg (message preview).",
                 "After a pull, push, or sync, Output lists the files that were pulled or pushed.",
                 "Clear output empties the log; Hide output view closes it. Drag the top edge to resize.",
                 "The log keeps the last 2000 lines."
@@ -589,11 +621,13 @@
               "items": [
                 "Connection — backend, host, reconnects, and the last drop.",
                 "Authentication — whether git, gh, and glab are installed and signed in, on this Mac and on the connected host.",
-                "Link latency (SSH keepalive) — one sample every 15 s.",
+                "Link latency (SSH keepalive) — SSH sessions only; one sample every 15 s.",
                 "Repository — upstream state, for example \"This branch has no upstream\".",
                 "Commit activity (30 days) with top authors, and Contributions (last 200 commits) as a heatmap.",
                 "Commands (this session) — command counts.",
                 "Change watcher — Live, Polling fallback, or Stopped.",
+                "Tools on the target — git, gh, and glab, each with its version or not found.",
+                "GitHub or GitLab — how many open PRs or MRs the repository has.",
                 "Repository footprint — Measure runs git count-objects and suggests `git gc` when it would help."
               ]
             },
@@ -603,7 +637,7 @@
             },
             {
               "type": "paragraph",
-              "text": "View ▸ Show Recovery View (⇧⌘U) lists every place HEAD has pointed (the reflog) and the snapshots in refs/magic-git/snapshots/. A snapshot is taken automatically before each discard or delete and kept for 7 days. Use Recovery for state that Undo Git Operation can no longer reach."
+              "text": "View ▸ Show Recovery View (⇧⌘U) lists every place HEAD has pointed (the reflog) and the snapshots in refs/magic-git/snapshots/. A snapshot is taken automatically before a discard, a delete, a reset, and the other operations that can lose work, and kept for 7 days. Use Recovery for state that Undo Git Operation can no longer reach."
             },
             {
               "type": "items",
@@ -671,7 +705,7 @@
                 "Workspace appearance — Density Compact or Comfortable (default Comfortable), High contrast, and Reduce Motion, which follows macOS.",
                 "Known Hosts — Forget a recorded SSH host key.",
                 "Keyboard Mappings — Customize remaps. The live cheat sheet is ⌘/.",
-                "External tools — override binary paths and Scan the host (see Tool Health)."
+                "External tools — a path field for each tool Magic Git runs, including bash for Windows hosts (for example C:\\Program Files\\Git\\bin\\bash.exe), marked found, override, or not found. Leave a field blank to find the tool automatically, or set a path to override it. Scan opens the full check (see Tool Health)."
               ]
             }
           ]
@@ -745,7 +779,7 @@
           "sections": [
             {
               "type": "paragraph",
-              "text": "The Repository panel (⌘1) is a sidebar page, not a File tab. The change list is Conflicts, Staged, Changes, and Untracked, with filter chips, Hide reviewed, and group-by status or directory. Review selected and Review all visible open multi-file review. A clean tree shows \"Working tree clean\"."
+              "text": "The Repository panel (⌘1) is a sidebar page, not a File tab. The change list is Conflicts, Staged, Changes, and Untracked. Above it are the Filter changed paths field, the Conflicts, Staged, Unstaged, and Untracked chips, and a menu with Group by status, Group by directory, and Hide reviewed paths. Review all visible, or Review selected (N) when several files are selected, opens multi-file review. A clean tree shows only a green check and \"Working tree clean\"."
             },
             {
               "type": "heading",
@@ -755,9 +789,11 @@
               "type": "items",
               "items": [
                 "Space toggles staging for the selected file or files. ⌘-click and ⇧-click select several.",
-                "Line staging works on unified, whitespace-exact diffs with blame off: select lines, then Stage, Unstage, or Discard Selection. Split and ignore-whitespace diffs are read-only. Per-hunk buttons also exist.",
+                "Line staging works on unified, whitespace-exact diffs with blame off: select lines, then Stage Selection or Discard Selection (Unstage Selection on a staged diff). Split and ignore-whitespace diffs are read-only. Each hunk header also has Stage and Discard, or Unstage.",
                 "Drag unstaged files onto the staging banner to Stage; drag staged files to Unstage.",
-                "Right-click a change for Stage, Unstage, Discard Changes, Discard Staged Changes, Add to .gitignore, Delete Untracked File, Blame, Copy Relative Path, Copy Path, Reveal in Finder (this Mac only), and Open file."
+                "Right-click a change for Stage or Unstage, Discard Changes (Changes), Discard Staged Changes (Staged), Add to .gitignore and Delete Untracked File (Untracked), Blame (one file in Changes), Copy Relative Path, Copy Path, Reveal in Finder (one file, this Mac only), and Open file. With several files selected the items name the count, such as Stage 3 Files.",
+                "Each row has Stage (or Unstage) and Discard changes (or Delete untracked file) icons. Discarding asks first and snapshots the file, so ⌘Z undoes it.",
+                "Multi-file review shows one file at a time with Mark Reviewed, Previous, Next, and Close, and buttons that act on every file in the review, such as Stage N or Unstage N."
               ]
             },
             {
@@ -839,6 +875,8 @@
                 "Assistance (or Hide Assistance) offers Use a recent subject… (Load recent), Load template or Use template, a message policy advisory, and co-authors: enter a Co-author name and email, then Add co-author.",
                 "Regenerate appears when the staged files changed after the draft was generated (\"Staged changes changed; review this draft or regenerate.\").",
                 "A message produced by a prepare-commit-msg hook is marked \"Generated by prepare-commit-msg. Review, Edit, or Accept.\"",
+                "While the hook runs, anything it prints to stderr appears in Output under prepare-commit-msg (message preview). If it fails, or runs past Settings ▸ Command timeouts ▸ Commit, the composer says \"Could not generate a message. Enter one manually.\"",
+                "While a merge, cherry-pick, revert, or rebase is paused, the composer starts from git's own prepared message instead of running the hook.",
                 "Clear empties the message. In the task dock, Collapse hides the composer.",
                 "Escape closes the sheet and keeps your draft — except during the moment the commit itself runs."
               ]
@@ -928,7 +966,7 @@
                 "Fetch — git fetch --prune on all remotes, without submodules.",
                 "Pull — a fetch of the upstream, then a merge or rebase against @{upstream}. The mode comes from Settings ▸ Default sync behavior: Fast-forward only (the default, never creates a merge commit), Rebase, or Merge. Pull with Rebase and Pull with Merge override it once.",
                 "Push — pushes the current branch, plus reachable annotated tags (--follow-tags) when Settings ▸ Push tags by default is on. Push and Set Upstream publishes a branch that has no upstream.",
-                "Sync — pull, then push."
+                "Sync — pull, then a plain push."
               ]
             },
             {
@@ -960,7 +998,7 @@
             },
             {
               "type": "paragraph",
-              "text": "Settings ▸ Auto-fetch (default every 5 minutes) fetches the default remote in the background so ahead/behind counts and remote branches stay current."
+              "text": "Settings ▸ Auto-fetch (default every 5 minutes; Off turns it off) fetches all remotes in the background while you are connected, so ahead/behind counts and remote branches stay current. A repository with no remote is skipped."
             }
           ]
         },
@@ -1048,7 +1086,7 @@
           "sections": [
             {
               "type": "paragraph",
-              "text": "The History panel (⌘2) is a sidebar page, not a File tab. It draws a topological commit graph with ref chips and a minimap — click the minimap to jump there. The context-bar primary is Refresh. Move the selection with ↑/↓ or J/K; Shift extends it; Esc clears it."
+              "text": "The History panel (⌘2) is a sidebar page, not a File tab. It draws a topological commit graph with ref chips (two per row, then a +N chip that lists the rest) and a minimap — click or drag the minimap to jump there. The context-bar primary is Refresh. Click a row to select it, ⌘-click to add or remove one, and Shift-click to select a range. Move the selection with ↑/↓ or J/K; Shift extends it; Esc or a click on empty space clears it. ⌘-scroll and a trackpad pinch zoom the list."
             },
             {
               "type": "heading",
@@ -1059,8 +1097,8 @@
               "items": [
                 "⌘F focuses the filter. Plain words match the message. Terms: author:, file: (or path:), sha: (or commit:), after: (or since:), and before: (or until:). A bare commit hash of 5+ characters finds that commit; * and ? are wildcards; quote values with spaces, like author:\"Jane Developer\".",
                 "Filter by author, date, or path (the slider icon) opens a row with Author name or email, After date, Before date (dates like \"2 weeks ago\" work), a file-or-folder limit, and the Hide merges checkbox.",
-                "The footer counts matches (\"First N matching commits — scroll for more\") and offers Clear filters.",
-                "The All Branches icon (tooltip Show all branches) switches between HEAD and every branch. It has no keyboard shortcut — ⇧⌘B is Checkout Selected Commit, which asks for confirmation.",
+                "While a filter is set, the footer counts matches (\"N matching commits\", or \"First N matching commits — scroll for more\" while more history remains) and offers Clear filters. Clear filters leaves Show all branches as it is.",
+                "The All Branches icon (tooltip Show all branches, or Showing all branches while on) switches between HEAD and every branch. It starts on, and your choice is remembered. It has no keyboard shortcut — ⇧⌘B is Checkout Selected Commit, which asks for confirmation.",
                 "Recovery (reflog & snapshots) and Open History in new window are icons on the same bar."
               ]
             },
@@ -1071,10 +1109,12 @@
             {
               "type": "items",
               "items": [
-                "Single commit: Checkout, Branch from…, Branch from… in a new worktree…, Tag…, Cherry-pick, Revert, Interactive rebase from here…, Reset to the commit (soft / mixed / hard — hard asks first, because it overwrites all uncommitted changes), Amend last commit (HEAD only), and Copy SHA.",
-                "Two commits: compare them (\"Comparing X → Y\", Copy both SHAs). Several: cherry-pick or revert N, or copy N SHAs. Bulk cherry-pick and revert are disabled when the selection contains a merge commit — act on it alone to choose its mainline parent.",
+                "Single commit: Checkout, Branch from…, Branch from… in a new worktree…, Tag…, Cherry-pick, Revert, Interactive rebase from here…, Reset to the commit (soft / mixed / hard), and Copy SHA. Every reset asks first; hard warns that it overwrites all uncommitted changes, which are snapshotted so ⌘Z right after undoes it. Checkout switches to a branch when one points at the commit. On a merge commit, Cherry-pick and Revert ask for the mainline parent.",
+                "Amend last commit appears on the top row only when Show all branches is off and no filter is set. ⇧⌘↩ amends when no commit is selected.",
+                "Two commits: compare them (\"Comparing X → Y\", Copy both SHAs). Right-click two or more to cherry-pick or revert N, or copy N SHAs; ⌘C copies every selected SHA. Cherry-pick applies oldest first, revert newest first, and both stop at the first conflict. Bulk cherry-pick and revert are disabled when the selection contains a merge commit — act on it alone to choose its mainline parent.",
                 "The diff header above a commit has word wrap, Copy full SHA, Open diff in a larger window, and a menu with the same commit actions.",
-                "Drop a branch onto a commit to merge it into the current branch (normal, no-ff, or squash), rebase the current branch onto it, or move that branch here."
+                "Drop a branch onto a commit to merge it into the current branch (normal, no-ff, or squash), rebase the current branch onto it, or move that branch here.",
+                "Drag a commit row onto Branches in the sidebar to start a branch there, onto Worktrees for a new worktree, or onto Repository to cherry-pick it into the current branch."
               ]
             },
             {
@@ -1083,7 +1123,7 @@
             },
             {
               "type": "paragraph",
-              "text": "Interactive rebase from here… opens the Interactive rebase sheet. Set each commit to Pick, Squash, Fixup, or Drop; drag a commit to reorder it, or drop it onto another to squash them. Reword is unavailable because the rebase runs without an editor. It is disabled on the root commit."
+              "text": "Interactive rebase from here… opens the Interactive rebase sheet. Set each commit to Pick, Squash, Fixup, or Drop; drag a commit to reorder it, or drop it onto another to squash them. Reword is unavailable because the rebase runs without an editor. It is disabled on the root commit. Rebase asks first, and refuses a commit the current branch does not contain or a range with a merge commit. If it stops on a conflict, finish it from the Repository panel."
             },
             {
               "type": "heading",
@@ -1159,10 +1199,10 @@
                 "⌘B opens the New branch sheet (Name and Start at, defaulting to the selected ref or HEAD). After Create, choose Here or New worktree.",
                 "Double-click or press Enter to check a branch out. You can also check out in a new worktree.",
                 "⇧⌘M merges the selected branch into the current branch after a confirmation.",
-                "Delete (⌘⌫) always confirms. An unmerged branch asks again with Force Delete. A branch checked out in a worktree offers Remove Worktree and Delete.",
+                "Delete (⌘⌫) always confirms. An unmerged branch asks again with Force Delete. On a branch checked out in another worktree, the row menu's Delete branch is dimmed; ⌘⌫ offers Remove Worktree and Delete instead.",
                 "Rebase the current branch onto another by dragging that branch onto HEAD (\"Combine with …\"), or use Reconcile… when it has diverged from its upstream. There is no general Rebase item on the context menu.",
                 "Right-click (or the detail pane's Advanced menu) for merge variants, Set upstream…, Unset upstream, Rename…, Pin to top, Copy name, and Delete branch.",
-                "Pin to top keeps a branch first. The folder icon switches between a flat list and grouping by folder."
+                "Pin to top keeps a branch first. The list button beside the filter field switches between a flat list and grouping by folder. In Browse, branches with no commit in 3 months collapse into a stale row under Local Branches (\"N stale (no commit in 3 months)\"); click it to show or hide them."
               ]
             },
             {
@@ -1172,13 +1212,12 @@
             {
               "type": "items",
               "items": [
-                "Compared with picks the base (Recommended, Local, Remotes, Tags); Reset saved base returns to the default.",
-                "Sort: Smart, Activity, Name, Ahead, or Behind. Filter: Unpublished, Upstream gone, In a worktree, Has a request, No request, Failing CI, Mine.",
+                "Compared with picks the base (Recommended, Local, Remotes, Tags). If a saved base no longer exists, Review uses a fallback and offers Reset saved base.",
+                "Sort: Smart, Activity, Name, Ahead, or Behind. Filter (N) is a menu: Unpublished, Upstream gone, In a worktree; Has a request, No request, and Failing CI once forge data has loaded; Mine when a Committer identity is set; and Clear filters. The filter field also accepts author: and status:.",
                 "Select several branches (⌘-click, ⇧-click, ⇧-arrow, or Space) and the detail pane becomes \"N branches selected\" with Pin, Unpin, Hide, and Delete if merged…. Batch actions never include Merge.",
                 "Hidden branches disappear from the list. The eye icon shows them again; then Unhide on a row.",
-                "With nothing selected, Review adds Merged and Conflicts filter chips and Scan for conflicts.",
-                "The detail pane compares the branch with the base: Overview, Changes, and Commits, with a Readiness prediction of a local merge (needs git 2.38+).",
-                "Branches with no commit in 3 months collapse into a stale group you can show or hide."
+                "With nothing selected, Review adds Merged, Stale, and Conflicts filter chips and Scan for conflicts; Conflicts filters only after a scan, and the button then reads Re-scan for conflicts.",
+                "The detail pane compares the branch with the base: Overview, Changes, and Commits, with a Readiness prediction of a local merge (needs git 2.38+)."
               ]
             },
             {
@@ -1190,7 +1229,7 @@
               "items": [
                 "Create Tag (⇧⌘T) opens Create Tag: tick Annotated tag to add a Tag message, and Push to <remote> after creating.",
                 "Tags only on this machine are marked local only; one that points elsewhere on the remote is marked differs from <remote>. Push tag, or push all local-only tags from the section header.",
-                "Deleting a tag that also exists on the remote asks: Delete Local Only, or Delete Local and on the remote.",
+                "Deleting a tag that also exists on the remote asks: Delete Local Only, or Delete Local and on <remote>.",
                 "A remote branch offers Check out tracking branch and Delete branch on the remote."
               ]
             },
@@ -1223,7 +1262,7 @@
           "sections": [
             {
               "type": "paragraph",
-              "text": "Branches explains why a branch cannot simply pull or push, and offers a named action for each case. Rows show a short chip; the detail pane explains the state and holds the action."
+              "text": "Branches explains why a branch cannot simply pull or push, and offers a named action for each case. In Browse, rows show a short chip; the detail pane explains the state and holds the action."
             },
             {
               "type": "heading",
@@ -1271,7 +1310,7 @@
             },
             {
               "type": "paragraph",
-              "text": "When Fetch & Prune finds local branches whose remote branch no longer exists, it asks Clean up stale branches? and lists them; Delete removes them locally. Branches that are not fully merged — for example squash- or rebase-merged ones — get a second Force Delete prompt."
+              "text": "When Fetch & Prune finds local branches whose remote branch it just removed — never the current branch or one checked out in a worktree — it asks Clean up stale branches? and lists them; Delete removes them locally. Branches that are not fully merged — for example squash- or rebase-merged ones — get a second Force Delete prompt."
             },
             {
               "type": "heading",
@@ -1287,7 +1326,7 @@
             },
             {
               "type": "paragraph",
-              "text": "While a merge, rebase, cherry-pick, or revert is paused on conflicts, a full-width banner across Branches reads \"<Verb> in progress — resolve conflicts, then continue, or abort.\" with Continue and Abort <Verb>. Resolve the files in Repository, then Continue."
+              "text": "While a merge, rebase, cherry-pick, revert, or patch application (git am) is paused on conflicts, a full-width banner across Branches reads \"<Verb> in progress — resolve conflicts, then continue, or abort.\" with Continue and Abort <Verb>, which asks first. Resolve the files in Repository, then Continue."
             },
             {
               "type": "heading",
@@ -1295,13 +1334,13 @@
             },
             {
               "type": "paragraph",
-              "text": "The detail pane's Advanced menu matches the row menu: Check out, Switch to its worktree, Check out in a new worktree…, Create Pull or Merge Request, Open on Forge, Open reachable history, Merge into current, Merge (no fast-forward), Merge (fast-forward only), Squash merge, Reconcile…, Set upstream…, Unset upstream, Rename…, Pin to top, Copy name, and Delete branch."
+              "text": "The detail pane's Advanced menu has the row menu's actions plus Create Pull Request (or Create Merge Request), Open on Forge, and Open reachable history: Check out, Switch to its worktree, Check out in a new worktree…, Create Pull Request, Open on Forge, Open reachable history, Merge into current, Merge (no fast-forward), Merge (fast-forward only), Squash merge, Reconcile…, Set upstream…, Unset upstream, Rename…, Pin to top, Copy name, and Delete branch. Unhide is on the row menu only."
             },
             {
               "type": "callout",
               "style": "tip",
               "title": "Undo and Recovery",
-              "text": "Reconcile's Reset is recorded in the undo journal (⌘Z). A merge or rebase can be backed out with Abort while it is in progress, or afterwards from Recovery (⇧⌘U)."
+              "text": "Reconcile's Reset, and any merge or rebase that completes, is recorded in the undo journal, so ⌘Z backs it out. A squash merge only stages changes and is not undoable. While a merge or rebase is paused on conflicts, use Abort. Older states are in Recovery (⇧⌘U)."
             }
           ]
         },
@@ -1370,8 +1409,8 @@
                 "Apply (⌥⌘A) restores the stash and leaves it on the stack. Pop (⌥⌘P) restores and removes it. The row menu also offers Apply, restoring staged files and Pop, restoring staged files (--index).",
                 "Each card has inline buttons: Apply stash (keep in list), Pop stash (apply & remove), and Drop stash.",
                 "Drop (⌘⌫) deletes the selected stash after confirmation; it is recorded first, so ⌘Z undoes it.",
-                "Create branch from stash… is on the row menu.",
-                "The header menu (and the Stash menu) has Apply latest stash, Pop latest stash, and Clear all stashes…"
+                "Create branch from stash… (row menu) creates a branch at the stash's base commit, applies the stash there, and drops it; ⌘Z undoes all of it.",
+                "The header menu (and the Stash menu) has Apply latest stash, Pop latest stash, and Clear all stashes…, which asks first; like Drop, it is recorded, so ⌘Z or Recovery brings the stashes back."
               ]
             }
           ]
@@ -1419,7 +1458,7 @@
                 "Switch between Inbox and Browse. Inbox is the default, and your choice is remembered.",
                 "Inbox collects open pull or merge requests, CI runs or pipelines that failed or are still running, and open issues. Chips filter All / PRs or MRs / CI / Issues. No blockers is a separate toggle that combines with them.",
                 "Pin to top or Snooze an Inbox row; pinned and snoozed rows gather under Pinned and Snoozed. Pinning and snoozing cancel each other and are remembered per repository.",
-                "Browse sections are Issues, PRs or MRs, Labels (view only), Milestones, Releases, and Workflow Runs or Pipelines. Every section can collapse, and stays collapsed. One Filter field filters every section. The + on the Issues header (also Forge ▸ New Issue… and the palette) starts a new issue."
+                "Browse sections are Issues, Pull Requests or Merge Requests, Labels (view only), Milestones, Releases, and Workflow Runs or Pipelines, each with its own refresh button. Select a milestone or release to see its details. Every section can collapse, and stays collapsed. One Filter field filters every section. The + on the Issues header (also Forge ▸ New Issue… and the palette) starts a new issue; the + on the Pull Requests or Merge Requests header starts a new request."
               ]
             },
             {
@@ -1441,10 +1480,10 @@
             {
               "type": "items",
               "items": [
-                "The merge readiness strip shows blockers, or Ready to merge, Checking mergeability… (with Retry), or an auto-merge note.",
+                "The merge readiness strip shows Ready to merge, the reasons a merge is blocked, or an auto-merge note. While details load it says Checking mergeability…; when the forge itself is still working it out, it says so and offers Retry.",
                 "Check out checks out the head branch (asking first if your tree is dirty).",
-                "Update branch (GitHub) or Rebase onto target (GitLab) appears as a button when the branch is behind its target.",
-                "Enable auto-merge or Cancel auto-merge sits on the action bar; Cancel Auto-merge is also on the Forge menu.",
+                "Update branch (GitHub) or Rebase onto target (GitLab) appears when the forge reports the branch behind its target. Both ask first; Rebase onto target rewrites the remote branch.",
+                "Enable auto-merge appears when the remaining blockers can clear on their own and the project allows it; it and Cancel auto-merge sit on the action bar; Cancel Auto-merge is also on the Forge menu.",
                 "Approve (⌥⌘A), Merge (⇧⌘M), and Re-run Failed Jobs or Retry Pipeline (⌥⌘R) follow the detected host."
               ]
             },
@@ -1452,7 +1491,7 @@
               "type": "callout",
               "style": "info",
               "title": "Which host?",
-              "text": "Magic Git detects GitHub or GitLab from the origin remote, including self-hosted GitLab. If the repository has no remote, or the remote is not a recognized GitHub or GitLab host, the panel says so. See Troubleshooting ▸ Forge for sign-in and rate-limit messages."
+              "text": "Magic Git detects GitHub or GitLab from the origin remote, including self-hosted hosts that gh or glab on that machine is signed in to. If the repository has no remote, or the remote is not a recognized GitHub or GitLab host, the panel says so. See Troubleshooting ▸ Forge for sign-in and rate-limit messages."
             }
           ]
         },
@@ -1517,11 +1556,11 @@
             {
               "type": "items",
               "items": [
-                "New Pull Request (⌘N, the context bar, or the Forge menu) opens a form in the detail pane: Head branch, Base branch, Title, Description, Reviewers (comma-separated), Assignees (comma-separated), labels, a Milestone, and Create as draft. Preview changes shows the diff. Create pushes the branch with its upstream first.",
+                "New Pull Request (⌘N, the context bar, or the Forge menu) opens a form in the detail pane: Head branch, Base branch, Title, Description, Reviewers (comma-separated), Assignees (comma-separated), labels, a Milestone, and Create as draft. Preview changes shows the diff. Head defaults to the current branch and Base to the default branch; Labels and Milestone appear only when the project has them. Create pull request pushes the branch with its upstream first when it exists only locally.",
                 "New Merge Request is the same on GitLab, with Source and Target branches plus Mark as draft, Squash commits when merged, and Remove source branch when merged.",
                 "New issue — the + on the Issues section, the palette, or Forge ▸ New Issue… (no default shortcut). It takes a Title, Description, Assignees, labels, and a Milestone.",
-                "Dragging a local branch onto Forge opens the create form with that branch filled in.",
-                "Leaving a form with unsaved text asks Discard draft? (Keep Editing or Discard Draft). A draft survives switching panels."
+                "Dragging a local branch onto Forge, or Branches ▸ Create Pull Request, opens the create form with that branch filled in.",
+                "Selecting another item while a form has unsaved text asks Discard draft? (Keep Editing or Discard Draft). Cancel closes the form without asking. A draft survives switching panels, but not switching repositories."
               ]
             },
             {
@@ -1533,8 +1572,8 @@
               "items": [
                 "Rows show a DRAFT badge, the CI state, review chips (approved, changes requested, review needed — only review needed on GitLab), and label chips.",
                 "Right-click a request for Open in browser, Copy link, Copy #N (GitHub) or Copy !N (GitLab), Check out branch, Comment…, Approve, Request changes… (GitHub only), Mark ready for review or Convert to draft, Edit…, the merge methods, and Close or Reopen.",
-                "Merge methods: GitHub offers Merge, Squash and merge, and Rebase and merge; GitLab offers Merge and Squash and merge, as the project allows. Drafts cannot be merged until marked ready.",
-                "Close asks first (\"You can reopen it later.\"). Reopen does not."
+                "Merge methods: GitHub offers Merge, Squash and merge, and Rebase and merge; GitLab offers Merge and Squash and merge, as the project allows. GitHub's row menu lists all three; a method the project disallows is replaced by its default when the merge sheet opens. Drafts cannot be merged until marked ready.",
+                "Close asks first (\"You can reopen it later.\"). Approve, auto-merge, Update branch, Rebase onto target, Re-run, and Retry also ask first; Reopen, Mark ready for review, and Assign to me do not."
               ]
             },
             {
@@ -1552,7 +1591,7 @@
             {
               "type": "items",
               "items": [
-                "The detail pane lists Head/Base (or Source/Target), Author, State, Review, Merge status, Head SHA, Auto-merge, Labels, and Assignees, then the description, checks, and Comments (the last 50; open the forge for the full thread).",
+                "The detail pane lists Head/Base (or Source/Target), Author, State, Review, Merge status, Head SHA, Auto-merge, Labels, and Assignees, then the description, the Checks for the head branch, and Comments (the last 50; open the forge for the full thread).",
                 "The More menu holds Comment…, Request changes… (GitHub only; a comment is required), Mark ready for review or Convert to draft, Edit… (Title and Description), and Close or Reopen."
               ]
             },
@@ -1563,10 +1602,10 @@
             {
               "type": "items",
               "items": [
-                "Right-click an issue for Open in browser, Copy link, Copy #N, Start work (GitHub only), Comment…, Assign to me (GitHub only), Edit…, and Close or Reopen.",
+                "Right-click an issue for Open in browser, Copy link, Copy #N, Start work → create branch (GitHub only), Comment…, Assign to me (GitHub only), Edit…, and Close or Reopen.",
                 "Start work creates a branch for the issue and checks it out (gh issue develop).",
                 "The issue detail pane shows State, Author, labels, the description, and Comments, with Start work, Comment, Close or Reopen, and More (Edit…, Assign to me).",
-                "The Issues header shows a count such as \"30 of 974\"; Show all issues loads the rest."
+                "The Issues section lists open issues, and its header shows a count such as \"30 of 974\". Show all issues loads the rest, up to a limit; if it still stops short, it says \"Showing N of M issues\"."
               ]
             }
           ]
@@ -1602,7 +1641,7 @@
           "sections": [
             {
               "type": "paragraph",
-              "text": "Browse ▸ Workflow Runs (GitHub) or Pipelines (GitLab) lists the newest 10; Show all workflow runs or Show all pipelines loads more. Failed and running ones also appear in the Inbox. A request's detail pane shows its own checks."
+              "text": "Browse ▸ Workflow Runs (GitHub) or Pipelines (GitLab) lists the newest 10; Show all workflow runs or Show all pipelines loads more. Failed, running, and waiting ones also appear in the Inbox. A request's detail pane shows its own checks."
             },
             {
               "type": "heading",
@@ -1614,6 +1653,7 @@
                 "Select a run or pipeline to see its Jobs, with Refresh jobs. Select a job to view its log in a resizable pane.",
                 "GitLab streams a running job's log live, and refreshes the job list every 5 seconds while jobs run. Scroll up and a Jump to latest button appears. Very long logs keep the last 256 KB.",
                 "GitHub updates job statuses live, but a job's log appears only after it finishes: \"This job is still running. Logs are available once it completes.\"",
+                "GitHub logs are shown as plain text: Magic Git removes the terminal colour codes and the job and step columns that gh adds to each line.",
                 "GitLab merge-request pipelines are labelled \"MR !N\" or \"MR !N (merged results)\"."
               ]
             },
@@ -1624,8 +1664,8 @@
             {
               "type": "items",
               "items": [
-                "GitHub: Re-run failed jobs (⌥⌘R, the row icon, or Forge ▸ Re-run Failed Jobs) re-runs only the jobs that failed.",
-                "GitLab: Retry pipeline (⌥⌘R, the row icon, or Forge ▸ Retry Pipeline)."
+                "GitHub: Re-run failed jobs (⌥⌘R, the icon on a failed or canceled run, or Forge ▸ Re-run Failed Jobs) asks first, then re-runs only the jobs that failed.",
+                "GitLab: Retry pipeline (⌥⌘R, the icon on a failed or canceled pipeline, or Forge ▸ Retry Pipeline) asks first, then retries the pipeline's failed jobs."
               ]
             }
           ]
@@ -1668,7 +1708,7 @@
                 "Every worktree is listed with chips for its branch (or \"(detached abc1234)\"), missing, locked (with the reason), main worktree, and open. A row shows at most two chips plus +N.",
                 "With only the main worktree, Overview shows No worktrees yet with Add Worktree….",
                 "A missing worktree offers Repair — I moved this folder and Prune — forget all missing worktrees….",
-                "The strip's menu has Prune stale worktrees and Repair all worktree links."
+                "The strip has +, Refresh, and a menu with Prune stale worktrees (Prune N stale… when some are missing; it lists them first) and Repair all worktree links."
               ]
             },
             {
@@ -1678,10 +1718,10 @@
             {
               "type": "items",
               "items": [
-                "Open Worktree, and Open in Window — a separate Status window for that worktree (see Secondary Windows).",
+                "Open Worktree (or double-click the row), and Open in Window — a separate Status window for that worktree (see Secondary Windows). Both are hidden for a missing worktree; the main worktree's menu has only Reveal in Finder, Open in Terminal, and Copy Path.",
                 "Reveal in Finder and Open in Terminal (this Mac only; Terminal.app), Copy Path.",
                 "Lock / Unlock, Move… (not while locked or missing), Repair… (when missing).",
-                "Remove Worktree…, and Remove Worktree and Delete Branch… (not for a detached HEAD). Removing one with uncommitted changes or a lock asks again (Remove Anyway)."
+                "Remove Worktree…, and Remove Worktree and Delete Branch… (not for a detached HEAD). Removing one with uncommitted changes or a lock asks again (Remove Anyway). Removing also closes its checkout tab and any window open on it."
               ]
             },
             {
@@ -1694,7 +1734,7 @@
             },
             {
               "type": "paragraph",
-              "text": "Add Worktree can create a new branch, use an existing one, or detach at a revision (Based on). Choose where it goes (Create in, with Choose…, and Folder name) — it must be outside the repository. Optional: copy ignored files such as .env*, and run a post-create command (remembered for next time; its output appears in Output). Open it when done opens the new worktree right away."
+              "text": "Under Based on, choose New branch (New branch name), Existing branch (branches already checked out in another worktree are not offered), or Detached (Revision). Choose where it goes with Create in and Folder name — it must be outside the repository, and the folder name defaults to <repository>-<branch>. On this Mac, Choose… picks the folder. Optional: Copy ignored files (.env* by default) and Run a command after creating. Both are remembered for next time, and their output appears in Output. Open it when done opens the new worktree right away."
             },
             {
               "type": "paragraph",
@@ -1758,7 +1798,7 @@
                 "Markdown, HTML, and SVG files open in Preview; switch to Source with the title-bar toggle. Links in a Markdown preview open in the browser.",
                 "The title bar also has Copy file contents, Word wrap, and Maximize (or double-click the title bar).",
                 "⌘F opens the find bar.",
-                "Binary files and files too large to display offer Open in Default App instead."
+                "Images (PNG, JPEG, GIF, WebP, BMP, ICO, TIFF) open as a picture. Other binary files, and files too large to display, offer Open in Default App instead; on an SSH session it copies the file to this Mac first, the same way Open file does."
               ]
             },
             {
@@ -1813,7 +1853,7 @@
             },
             {
               "type": "paragraph",
-              "text": "Review selected and Review all visible (Repository panel) step through files with Previous, Next, and Mark Reviewed. Bulk buttons act on every file in the review: Stage, Unstage, Discard, Delete, Ignore, and for conflicts Use Ours (HEAD), Use Theirs (incoming), and Mark Resolved."
+              "text": "Review selected and Review all visible (Repository panel) step through files with Previous, Next, and Mark Reviewed. Bulk buttons act on every file in the review: Stage, Unstage, Discard, Delete, Ignore, and for conflicts Use Ours (HEAD) and Use Theirs (incoming) — Use Onto (ours) and Use Commit (theirs) during a rebase — and Mark Resolved."
             },
             {
               "type": "heading",
@@ -1871,6 +1911,7 @@
                 "A commit or branch onto Worktrees = the Add Worktree sheet.",
                 "A branch onto a History commit = merge, rebase, or move that branch here.",
                 "A commit onto a branch row = cherry-pick onto that branch; a branch onto HEAD = merge or rebase.",
+                "While you drag, each sidebar panel that accepts the item shows what a drop there does — for example New branch, Cherry-pick, or Stash files. Over a place that accepts it, the dragged item shrinks to a small chip beside the pointer, and the sidebar row under the pointer gets a ring.",
                 "Esc cancels a drag."
               ]
             }
@@ -1900,10 +1941,10 @@
             {
               "type": "items",
               "items": [
-                "The native History window is a singleton (⇧⌘H, View ▸ Open History in New Window, the History filter bar, or the palette).",
-                "A detached Status window shows the full Repository view for one path. Open one from Worktrees ▸ Open in Window; it is titled \"Status — <repository> (<connection>)\" and works for linked worktrees too. It shows Waiting for session… until the main window's session is ready, and a reconnecting banner if the connection drops.",
+                "The native History window is a singleton (⇧⌘H, View ▸ Open History in New Window, the History filter bar, or the palette). It follows the active tab.",
+                "A detached Status window shows the full Repository view for one path. Open one from Worktrees ▸ Open in Window; it is titled \"Status — <repository> (<connection>)\" and works for linked worktrees too. It shows Waiting for session… until the main window's session is ready, and a reconnecting banner if the connection drops. It stays with the tab that opened it, and has its own Output view.",
                 "The diff pop-out (Open diff in larger window) is an in-window float, not a native window.",
-                "While one of the native secondary windows is key, its View and repository menu key equivalents are stripped so they do not steal keys from that window. Menu clicks still act on the main session."
+                "While one of the native secondary windows is key, its View, File, and repository menu key equivalents are stripped so they do not steal keys from that window. Menu clicks still act on the main session."
               ]
             }
           ]
@@ -1947,15 +1988,15 @@
             {
               "type": "items",
               "items": [
-                "go: switches panels, and lists Switch to tab <name> for each File tab and Open workspace <name> for each saved workspace.",
+                "go: holds Go to <panel> for each panel and Open History in New Window. It also lists Switch to tab <name> for each other open tab, Open workspace <name> for each saved workspace, Switch to <repository> · <connection> for each saved SSH repository, Open worktree <name> for each worktree, and Switch to worktree for <branch>.",
                 "git: includes Recovery: Browse Reflog & Snapshots.",
                 "forge: lists commands for the detected host only, plus Create Pull or Merge Request and Open CI.",
-                "app: holds Clone Repository, Create Repository, Manage Saved Workspaces, and Manage Connections."
+                "app: holds Refresh, Toggle File View, Toggle Output View, Toggle Dashboard, Toggle Recovery, Open Settings, Keyboard Shortcuts, Clone Repository, Create Repository, Manage Saved Workspaces, and Manage Connections."
               ]
             },
             {
               "type": "paragraph",
-              "text": "Commit-message and viewer actions are intentionally absent from the palette catalog."
+              "text": "Each command shows its current shortcut. Commit-message and viewer actions are intentionally absent from the palette catalog, and Show Navigator and Toggle Sidebar are on the View menu only."
             }
           ]
         },
@@ -2046,7 +2087,7 @@
             },
             {
               "type": "paragraph",
-              "text": "File, Repository, Branch, Stash, Forge, and Worktree hold every toolbar verb. Some chords are shared across scopes (⇧⌘M, ⌥⌘A, ⌘N, ⇧⌘↩, ⌘⌫) — only the active panel's handler runs. Forge items act on the detected host: GitHub items for a GitHub repository, GitLab items for a GitLab one."
+              "text": "File, Repository, Branch, Stash, Forge, and Worktree hold every toolbar verb. Some chords are shared across scopes (⇧⌘M, ⌥⌘A, ⌥⌘R, ⌘N, ⇧⌘↩, ⌘⌫) — only the active panel's handler runs. Forge items act on the detected host: GitHub items for a GitHub repository, GitLab items for a GitLab one."
             },
             {
               "type": "items",
@@ -2081,14 +2122,19 @@
         {
           "id": "feature_ssh",
           "title": "Local and SSH Sessions",
-          "summary": "The same UI for a local Mac and a remote host; silent TOFU; Host Key Changed on mismatch.",
+          "summary": "The same UI for a local Mac and a remote host: what an SSH connection needs, ~ paths, Windows hosts, and host keys.",
           "keywords": [
             "ssh",
             "local",
             "tofu",
             "host key",
             "password",
-            "reconnect"
+            "reconnect",
+            "windows",
+            "git bash",
+            "path",
+            "home",
+            "ssh-agent"
           ],
           "sections": [
             {
@@ -2097,11 +2143,24 @@
             },
             {
               "type": "heading",
+              "text": "What an SSH connection needs"
+            },
+            {
+              "type": "items",
+              "items": [
+                "Host must be a name or address this Mac can reach. Magic Git does not read ~/.ssh/config, so a Host alias from that file does not work here.",
+                "Sign in with a password or a private key — Load private key… or paste it. ssh-agent is not used, and one-time-code (keyboard-interactive) sign-in is not supported.",
+                "Repository path is the repository's path on the host. A path starting with ~ or ~/ is expanded against your $HOME on the host when you connect; ~name/ is not. A path is saved to the connection, as the full path, only once a connect succeeds with it.",
+                "The host needs a POSIX shell. Linux and macOS hosts work as they are; a Windows host needs Git Bash as its OpenSSH default shell — see Windows Hosts."
+              ]
+            },
+            {
+              "type": "heading",
               "text": "Host keys"
             },
             {
               "type": "paragraph",
-              "text": "The first time Magic Git sees a host it records the key silently (TOFU). If a known host presents a different fingerprint, a Host Key Changed dialog offers Cancel Connection or Refresh Key and Continue. Settings ▸ Known Hosts can Forget a recorded key."
+              "text": "The first time Magic Git sees a host it records the key silently (TOFU). If a known host presents a different fingerprint, a Host Key Changed dialog offers Cancel Connection or Refresh Key and Continue. Settings ▸ Known Hosts can Forget a recorded key. Magic Git keeps its own list of trusted keys; it does not use ~/.ssh/known_hosts."
             }
           ]
         },
@@ -2169,7 +2228,10 @@
             "glab",
             "fswatch",
             "inotifywait",
-            "sideload"
+            "sideload",
+            "windows",
+            "winget",
+            "bash"
           ],
           "sections": [
             {
@@ -2179,9 +2241,9 @@
             {
               "type": "items",
               "items": [
-                "Required — git 2.24 or newer, for every repository operation.",
+                "Required — git 2.24 or newer, for every repository operation. On a Windows host, bash (Git Bash, from Git for Windows) is required too.",
                 "Feature — gh 2.0 or newer for GitHub, and glab for GitLab.",
-                "Optional — fswatch on macOS hosts and inotifywait on Linux hosts give live refresh; without them Magic Git polls. Linux hosts are not blamed for a missing fswatch."
+                "Optional — fswatch on macOS hosts and inotifywait on Linux hosts give live refresh; without them Magic Git polls. Linux hosts are not blamed for a missing fswatch. Windows hosts have no supported watcher yet and always poll. A missing optional tool never raises the banner."
               ]
             },
             {
@@ -2190,7 +2252,7 @@
             },
             {
               "type": "paragraph",
-              "text": "The doctor sheet, Environment health, lists each tool as OK, Update, Not installed, or Override, with Re-check. Install with … runs a one-click install when it is safe (its output appears in Output); Copy command gives you the command to run yourself. With no network on the host, Install from file… — or drag a binary or .tar.gz onto the sheet — uploads and installs it (sideload)."
+              "text": "The doctor sheet, Environment health, lists each tool as OK, Update, Not installed, or Override, with Re-check. Install with … runs a one-click install when it is safe (its output appears in Output); Copy command gives you the command to run yourself. With no network on the host, Install from file… — or drag a binary, .tar.gz, or .zip onto the sheet — uploads and installs gh or glab on a macOS or Linux host (sideload). A Windows host has no one-click install: copy the winget command and run it on the host."
             }
           ]
         },
@@ -2203,7 +2265,10 @@
             "log",
             "stdout",
             "stderr",
-            "diagnostics"
+            "diagnostics",
+            "watcher",
+            "hook",
+            "copy"
           ],
           "shortcuts": [
             {
@@ -2216,6 +2281,20 @@
             {
               "type": "paragraph",
               "text": "Output (⇧⌘O) is the docked command log described in File View and Output. Recovery is a separate sheet — see Dashboard, Recovery, and Activity, and Undo, Redo, and Recovery."
+            },
+            {
+              "type": "heading",
+              "text": "Reading the log"
+            },
+            {
+              "type": "items",
+              "items": [
+                "Each command starts with a $ line. Its output follows, stderr stands out from stdout, and a closing line marks success or failure.",
+                "Lines without a $ are session notes: \"connected to <host> in …\" with the time spent on SSH, the environment check, and the repository check; which hosts gh and glab are signed in to; and Undid: or Redid: after ⌘Z or ⇧⌘Z.",
+                "Lines starting with watcher: explain live refresh. One that ends arm unavailable: noTool means the host has no file watcher, so that repository polls — see Refresh and Change Detection.",
+                "While the commit composer drafts a message, anything the repository's prepare-commit-msg hook prints appears under prepare-commit-msg (message preview).",
+                "Drag across lines to select and copy them. In Activity, Output scrolls the log to that operation."
+              ]
             }
           ]
         }
@@ -2229,7 +2308,7 @@
         {
           "id": "trouble_connection",
           "title": "Connection Problems",
-          "summary": "Dropped SSH sessions, a changed host key, and missing tools on the host.",
+          "summary": "Sign-in failures, Windows shell prompts, a wrong repository path, dropped sessions, a changed host key, and missing tools.",
           "keywords": [
             "connection",
             "ssh",
@@ -2239,9 +2318,39 @@
             "fingerprint",
             "timeout",
             "missing tool",
-            "git not found"
+            "git not found",
+            "windows",
+            "cmd.exe",
+            "not recognized",
+            "git bash",
+            "not a git repository",
+            "authentication"
           ],
           "sections": [
+            {
+              "type": "heading",
+              "text": "Connecting fails at sign-in"
+            },
+            {
+              "type": "paragraph",
+              "text": "Symptom: connecting stops with \"Authentication failed — check the username, password, or private key.\", \"Connection refused — is the host reachable and SSH listening?\", \"Could not resolve the host name.\", or \"The private key could not be read — check the key format and passphrase.\" Cause: the host, port, or credentials are not what the server accepts. Fix: correct them in Edit connection. Use the host's real name or address — ~/.ssh/config aliases are not read — and load the key into the connection, since ssh-agent is not used."
+            },
+            {
+              "type": "heading",
+              "text": "A Windows host stops at a shell prompt"
+            },
+            {
+              "type": "paragraph",
+              "text": "Symptom: Git Bash Is Not the SSH Shell, Git Bash Is Not Installed, or Couldn't Check This Windows Host appears when you connect, or connecting stops with \"This host's SSH shell rejected Magic Git's commands the way cmd.exe does.\" Older versions showed \"'export' is not recognized as an internal or external command\". Cause: Windows OpenSSH runs commands through cmd.exe unless Git Bash is its default shell. Fix: follow the prompt — see Windows Hosts."
+            },
+            {
+              "type": "heading",
+              "text": "The repository path is not found"
+            },
+            {
+              "type": "paragraph",
+              "text": "Symptom: connecting stops with \"not a git repository: <path>\" or \"Could not resolve \"~\" on the host\". Cause: the Repository path is wrong on the host, or it starts with ~ and the host did not report an absolute $HOME. Magic Git expands ~ and ~/ but not ~name/. Fix: enter the full path, such as /home/you/src/repo."
+            },
             {
               "type": "heading",
               "text": "The session dropped"
@@ -2272,7 +2381,7 @@
             },
             {
               "type": "paragraph",
-              "text": "Symptom: a red or orange Tool Health banner after connecting. Cause: git, gh, or glab is missing or older than Magic Git needs on that host. Fix: Scan environment, then install from Environment health — see Tool Health."
+              "text": "Symptom: connecting stops with \"git was not found on the host. Install git, or set its path in Settings → External tools.\", or a red or orange Tool Health banner appears after connecting. Cause: git, gh, or glab is missing or older than Magic Git needs on that host. Fix: Scan environment, then install from Environment health — see Tool Health."
             }
           ]
         },
@@ -2301,7 +2410,7 @@
             },
             {
               "type": "paragraph",
-              "text": "Symptom: \"This looks like a sign-in problem — run `gh auth login` (or `glab auth login`) on the target, then refresh.\" with Open Dashboard. Cause: the forge CLI on the host running git is not signed in, or its token expired. Fix: run the auth login command on that machine — this Mac or the SSH host — or add a GitHub token or GitLab token to the saved connection. Dashboard ▸ Authentication shows which CLIs are signed in where."
+              "text": "Symptom: \"This looks like a sign-in problem — run `gh auth login` on the target, then refresh.\" (`glab auth login` on a GitLab repository) with Open Dashboard. Cause: the forge CLI on the host running git is not signed in, or its token expired. Fix: run the auth login command on that machine — this Mac or the SSH host — or add a GitHub token or GitLab token to the saved connection. Dashboard ▸ Authentication shows which CLIs are signed in where."
             },
             {
               "type": "heading",
@@ -2349,7 +2458,9 @@
             "inotifywait",
             "fsmonitor",
             "large repository",
-            "dot"
+            "dot",
+            "windows",
+            "notool"
           ],
           "sections": [
             {
@@ -2358,7 +2469,7 @@
             },
             {
               "type": "paragraph",
-              "text": "Symptom: the dot beside the repository name is orange, the Repository panel says \"Polling for changes (watcher unavailable)\", and Dashboard ▸ Change watcher shows Polling fallback. Cause: no live file watcher could start on the host, so Magic Git re-checks every few seconds instead. Fix: install fswatch (macOS hosts) or inotifywait (Linux hosts) — see Tool Health — then reconnect."
+              "text": "Symptom: on Repository, the dot beside the repository name is orange — hover it for \"Polling for changes (watcher unavailable)\" — and Dashboard ▸ Change watcher shows Polling fallback. Cause: no live file watcher is running, so Magic Git re-checks every few seconds. A watcher: line in Output names the reason, as arm unavailable: <reason>. noTool means the host has no watcher; heldByAnother means another Magic Git session already watches that repository on the host; ceiling or streamBudget means too many repositories are being watched at once. Fix: for noTool, install fswatch (a Mac reached over SSH) or inotifywait (Linux) — see Tool Health. Magic Git tries the watcher again every few minutes; reconnect to pick it up at once. Windows hosts have no supported watcher yet and always poll."
             },
             {
               "type": "heading",
@@ -2374,7 +2485,7 @@
             },
             {
               "type": "paragraph",
-              "text": "Turn on git fsmonitor for the repository: Enable filesystem monitor when adding it, or the fsmonitor toggle on its Connections Manager row. It is unavailable for a scoped (dotfiles) repository, which watches only tracked files instead."
+              "text": "Turn on git fsmonitor for the repository: Enable filesystem monitor when adding a local repository, or the fsmonitor toggle on its Connections Manager row. Where the host's git cannot run its monitor, Magic Git still turns on git's untracked cache. It is unavailable for a scoped (dotfiles) repository, which watches only tracked files instead."
             }
           ]
         },

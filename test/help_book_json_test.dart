@@ -131,6 +131,8 @@ const _labelAnchors = <String, List<String>>{
     'Git Bash Is Not the SSH Shell',
     'Git Bash Is Not Installed',
     'Or run this in an elevated PowerShell on the host',
+    "Couldn't Check This Windows Host",
+    'Open Settings',
   ],
   'clone_create': [
     'Save to Local Repositories',
@@ -141,6 +143,7 @@ const _labelAnchors = <String, List<String>>{
     'Rename active tab',
     'Only saved repositories can have aliases',
     'Are you sure you want to quit?',
+    'Save current tabs as workspace',
   ],
   'overview': ['Log out?'],
   'workspace_chrome': ['More sync actions', 'Commit in ', 'Focused sheet'],
@@ -150,7 +153,12 @@ const _labelAnchors = <String, List<String>>{
     'Restore files',
     'Delete snapshot',
   ],
-  'file_view_and_output': ['Clear output'],
+  'file_view_and_output': [
+    'Clear output',
+    'Hide file view',
+    'Pin file view open',
+    'prepare-commit-msg (message preview)',
+  ],
   'tab_repository': [
     'Hide reviewed',
     'Mark Resolved',
@@ -160,11 +168,15 @@ const _labelAnchors = <String, List<String>>{
     'Commit (theirs)',
     'Unstage All',
     'Stage All',
+    'Filter changed paths',
+    'Stage Selection',
+    'Unstage Selection',
   ],
   'committing': [
     'Committed. Pushing… you can close this; it continues in the ',
     'Regenerate',
     'Add co-author',
+    'Could not generate a message. Enter one manually.',
   ],
   'sync_fetch_pull_push': [
     'Remote has new commits',
@@ -201,6 +213,9 @@ const _labelAnchors = <String, List<String>>{
     'Remove Worktree and Delete Branch…',
     'No worktrees yet',
     'Open it when done',
+    'New branch name',
+    'Copy ignored files',
+    'Run a command after creating',
   ],
   'tab_forge': [
     'No blockers',
@@ -219,6 +234,7 @@ const _labelAnchors = <String, List<String>>{
     'Create as draft',
     'Discard draft?',
     'New issue',
+    'Start work → create branch',
   ],
   'forge_ci': [
     'Jump to latest',
@@ -239,7 +255,11 @@ const _labelAnchors = <String, List<String>>{
   ],
   'undo_recovery': ['Files Changed Since'],
   'tool_health': ['Environment health', 'Install from file…'],
-  'trouble_connection': ['Refresh Key and Continue'],
+  'trouble_connection': [
+    'Refresh Key and Continue',
+    'Connection refused — is the host reachable and SSH listening?',
+    'Could not resolve the host name.',
+  ],
   'trouble_forge': [
     'Open Dashboard',
     'No remote detected',
@@ -260,8 +280,10 @@ const _labelAnchors = <String, List<String>>{
     'Delete if merged…',
     'Force Delete',
     'Compared with',
+    'stale (no commit in 3 months)',
   ],
   'settings': ['Known Hosts', 'Keyboard Mappings', 'Open files with'],
+  'output_log': ['prepare-commit-msg (message preview)'],
 };
 
 /// Sentences Help taught that the app contradicts (0053 W1–W21). Each is

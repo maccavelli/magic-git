@@ -11,9 +11,10 @@
 # and a machine that already has the pinned version does not carry a second
 # ~1.7 GB copy of it.
 #
-# Prerequisites that CANNOT be avoided for any macOS app build:
+# Prerequisite that CANNOT be avoided for any macOS app build:
 #   - Xcode        (the macOS compiler + signer; install from the App Store)
-#   - CocoaPods    (links the native plugins; `sudo gem install cocoapods`)
+# The native plugins link through Swift Package Manager, which Xcode
+# provides, so CocoaPods is not needed (there is no macos/Podfile).
 #
 # Usage:
 #   ./build_macos.sh              signed build (needs a Development Team set in
@@ -132,12 +133,6 @@ xcodebuild -version >/dev/null 2>&1 || die \
     sudo xcodebuild -runFirstLaunch
     sudo xcode-select -s /Applications/Xcode.app/Contents/Developer"
 
-command -v pod >/dev/null 2>&1 || die \
-  "CocoaPods not found. Install it, then re-run:
-    sudo gem install cocoapods
-  (or)
-    brew install cocoapods"
-
 PRODUCT_NAME="$(read_product_name)"
 APP_NAME="${PRODUCT_NAME}.app"
 
@@ -225,7 +220,7 @@ flutter pub get
 # distinct .app products (a common cause of duplicate Finder icons).
 remove_app_bundles "$RELEASE_DIR" "${LEGACY_APP_BUNDLES[@]}" "$APP_NAME"
 
-log "Building release $APP_NAME (runs pod install; first run is slow) ..."
+log "Building release $APP_NAME (resolves Swift packages; first run is slow) ..."
 flutter build macos --release
 
 APP="${RELEASE_DIR}/${APP_NAME}"
