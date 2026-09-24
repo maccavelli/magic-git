@@ -1,0 +1,305 @@
+---
+status: "in-progress"
+date: 2026-09-24
+associated-madr: "0070-MADR-native-windows-hosts-over-ssh.md"
+verified: 2026-09-24
+---
+
+# Implement Windows host paths and argument fidelity: one canonical path form, and user text that reaches git unchanged
+
+Associated MADR:
+[0070-MADR-native-windows-hosts-over-ssh.md](0070-MADR-native-windows-hosts-over-ssh.md),
+Amendment 0070.3 (accepted with this plan). The first plan for the same MADR is
+[0070-PLAN-git-bash-detection-and-enablement.md](0070-PLAN-git-bash-detection-and-enablement.md).
+
+## Goal
+
+On a Windows host whose SSH shell is Git Bash:
+
+1. Every host path the app stores, compares, joins, labels or hands to git is in one canonical
+   form, git's own `X:/a/b` (Amendment 0070.3, decision 1). The defects caused by comparing a
+   git-printed `C:/…` with a stored `/c/…` or `C:\…` are gone.
+2. User text passed to git as an argument (commit, tag, merge and stash messages; History
+   filters) arrives unchanged (decision 2).
+
+POSIX hosts and the local backend behave byte-for-byte as today.
+
+## Scope
+
+In scope:
+
+* **New:** `lib/core/utils/host_path.dart`, `test/host_path_test.dart`.
+* **Transport:** `lib/core/ssh/ssh_command_executor.dart` (`configureEnvironment`, the per-command
+  env); `lib/core/ssh/command_formatter.dart` (unchanged signature; the env map carries the
+  variable); `lib/core/exec/proxy_command_executor.dart` and `local_command_executor.dart` (the new
+  parameter only).
+* **Connect and ingestion:** `lib/core/providers/app_providers.dart` (connect; a
+  `hostPathStyleProvider`); `lib/core/git/git_service.dart` (`validateRepoPath`,
+  `parseRefsDetailed`'s `worktreePath`, the gitfile target); `lib/core/git/host_fs_service.dart`
+  (`homeDir`).
+* **Defect sites** (Phase 4 lists each with its line).
+* **Labels and dedupe** (Phase 5).
+* **Docs:** `macos/Runner/help_book.json` (`windows_hosts`), `docs/architecture.md` (the
+  Windows paragraph), the MADR (Amendment 0070.3 status), `docs/README.md`.
+* **Tests:** listed per phase.
+
+Out of scope:
+
+* the bridge, `WindowsArgv`, SFTP, the watcher and tree-kill (Amendment 0070.3, decision 3);
+* switching drives in the remote folder browser (`/` is the Git install directory, F20);
+* a custom MSYS `cygdrive` prefix (anything other than the default `/c`);
+* rewriting Recent Repositories entries saved before this change (they keep working; their
+  labels are fixed in Phase 5);
+* the first 0070 plan's three device checks that were not run (Copy, Denied, Settings path).
+  They stay with that plan.
+
+## Facts this plan is built on
+
+All measured on the maintainer's host on 2026-09-24, read-only (Amendment 0070.3, F12-F20):
+
+* git prints `C:/…` everywhere (F12); the app stores `/c/…`, `C:\…` or `C:/…` (F13); git returns
+  the true case, and the shell echoes the typed case (F14).
+* MSYS rewrites `/…` arguments into native programs, user text included (F15).
+  `MSYS_NO_PATHCONV=1` stops it and is inherited (F16). Under it, git accepts `C:/…` and rejects
+  `/c/…`, in arguments and in `GIT_DIR` (F17).
+
+And from the code (a full inventory of host-path sites in `lib/`, 2026-09-24):
+
+* `CommandFormatter.format` exports its `env` map before every command (`command_formatter.dart:103-150`);
+  `configureEnvironment` sets the PATH and binaries (`ssh_command_executor.dart:452`).
+* The environment probe reports `os == 'windows'` for MINGW/MSYS/CYGWIN (`environment_probe.dart:172-179`),
+  before validation.
+* `validateRepoPath` runs `git rev-parse --is-inside-work-tree` (`git_service.dart:1287-1305`).
+* Read and confirmed defects:
+  * `git_service.dart:1034` `worktreePath: wt.startsWith('/') ? wt : null` gets `C:/…` (F12), so it
+    is always null on Windows;
+  * `create_repo_pipeline.dart:334` `top != dest`;
+  * `edit_entry_sheets.dart:323`, `:327` `startsWith('/')`;
+  * `worktrees_view.dart:647` the dead-tab sweep against git's paths;
+  * `git_service.dart:1530` a gitfile target tested with `startsWith('/')`.
+* Predicted from reading, to be confirmed by the Phase 0 tests: the remaining sites in Phase 4.
+
+## Implementation Steps
+
+### Phase 0 — Records and failing tests
+
+1. MADR Amendment 0070.3 `accepted`; this plan `in-progress`; `docs/README.md` row updated with
+   this plan. (Only after the maintainer approves.)
+2. Write each test below against the **current** API, run it, and record the failure. A failure
+   that is a compile error does not count; those tests are written in the phase that adds the API.
+   * `test/refs_parse_test.dart` (`parseRefsDetailed`, `git_service.dart:976`): a `for-each-ref`
+     record with `%(worktreepath)` = `C:/Users/u/wt` parses to a non-null `worktreePath`.
+   * `test/create_repo_pipeline_test.dart`: an existing repository at a folder whose
+     `--show-toplevel` is `C:/Users/u/r`, chosen as `/c/Users/u/r`, is accepted as "already a
+     repository", not refused as "inside another Git repository".
+   * `test/edit_remote_repo_sheet_test.dart`: an entry at `C:/Users/u/r` with git-dir
+     `C:/Users/u/r.git` can be saved.
+   * `test/worktrees_view_test.dart`: with the repository at `/c/Users/u/r`, a tab opened for
+     `/c/Users/u/r-feat` survives a rebuild when git lists `C:/Users/u/r-feat`.
+   * `test/git_service_test.dart` (layout): a `.git` gitfile `gitdir: C:/Users/u/r/.git/worktrees/w`
+     is taken as absolute.
+
+### Phase 1 — `HostPath` (pure)
+
+`lib/core/utils/host_path.dart`, no I/O, no Flutter imports:
+
+```dart
+enum HostPathStyle { posix, windows }
+
+abstract final class HostPath {
+  /// posix: unchanged. windows: `X:\a`, `x:/a/`, `/x/a` (a single-letter MSYS drive mount) →
+  /// `X:/a`; `/x` → `X:/`; `\\srv\share\a` → `//srv/share/a`; anything else unchanged
+  /// (an MSYS mount such as `/tmp` is only the host's to map).
+  static String canonical(String path, HostPathStyle style);
+
+  /// posix: starts with `/`. windows: canonical form starts with `X:/` or `//`.
+  static bool isAbsolute(String path, HostPathStyle style);
+
+  /// Absolute in some style: `/…`, `X:/`, `X:\`, `//`, `\\`. For a path whose host is unknown
+  /// (a saved entry of another connection). A drive prefix is never a POSIX absolute path.
+  static bool looksAbsolute(String path);
+
+  /// Equal after [canonical]; case-insensitive for windows.
+  static bool same(String a, String b, HostPathStyle style);
+
+  /// [child] is [parent] or below it, under [same]'s rules.
+  static bool isInside(String child, String parent, HostPathStyle style);
+
+  /// The last segment. Splits on `/`, and also on `\` when the path has a drive or UNC prefix,
+  /// so a legacy `C:\Users\u\r` labels as `r` with no style needed.
+  static String basename(String path);
+
+  static String dirname(String path, HostPathStyle style);   // `X:/` stays `X:/`
+  static String join(String base, String rel, HostPathStyle style);
+}
+```
+
+`test/host_path_test.dart`:
+
+* A table of cases for each function, both styles. It covers `/c/…`, `/C/…`, `C:\…`, `c:/…/`,
+  `C:/`, `/c`, UNC, `/tmp`, relative paths, trailing slashes, and a POSIX path named `/c/…` (which
+  stays unchanged under `posix`).
+* Properties: `canonical` is idempotent; `same(a, canonical(a))`; `posix` is the identity for
+  every input.
+
+### Phase 2 — Argument fidelity
+
+1. `CommandExecutor.configureEnvironment` gains `HostPathStyle style = HostPathStyle.posix`. On the
+   SSH executor, `windows` adds `MSYS_NO_PATHCONV=1` to the env map every command exports (the
+   same map that carries `PATH`). The proxy executor takes the parameter and stays a no-op
+   (`proxy_command_executor.dart:307-310`): pop-out windows relay every command to the main
+   window's executor, which carries it. The local executor ignores it.
+2. `_resolveEnvironment` passes `windows` when the probe reports `os == 'windows'`, and `posix`
+   otherwise. The reconnect cache passes it the same way.
+3. `hostPathStyleProvider` (sync `Provider`): `windows` when the backend is SSH and
+   `binaryEnvironmentProvider.os == 'windows'`, else `posix`.
+4. Tests (`test/command_formatter_test.dart`, `test/connection_env_reset_test.dart`):
+   * after a Windows probe, every command string exports `MSYS_NO_PATHCONV=1`;
+   * after a Linux probe, and on the local backend, none does.
+
+### Phase 3 — Canonical on the way in
+
+1. **Connect** (`app_providers.dart`, after the probe and the `~` expansion): on `windows`, pass
+   `repoPath`, `repoPaths`, `fsmonitorPaths` and both sides of `scopedGitDirs` through
+   `HostPath.canonical`.
+2. **Case from git.** `validateRepoPath` runs `git rev-parse --is-inside-work-tree --show-toplevel`
+   (one call, as now) and returns the top level. On `windows`, when `HostPath.same(top, repoPath)`,
+   the connect adopts `top`. A scoped repository, whose top level is its work tree, is compared the
+   same way and adopts it only when equal. The post-connect save
+   (`connection_form.dart` `_saveValidatedPath`) already stores `state.repoPath`, so saved entries
+   become canonical on their next connect.
+3. **Folder browser.** `HostFsService.homeDir()` returns `HostPath.canonical(pwd, style)`; the
+   service takes the style from its caller (`remote_directory_browser.dart`, via the provider).
+   Browsing then produces `C:/Users/<user>/…` from the first listing.
+4. Tests (`test/connection_env_reset_test.dart`, `test/host_fs_service_test.dart`):
+   * a Windows host connected with `/c/Users/u/r` ends with `state.repoPath == 'C:/Users/u/r'`;
+   * with `c:/users/U/R`, it takes git's `C:/Users/u/r`;
+   * a Linux host with `/c/data` keeps `/c/data`;
+   * `homeDir` on Windows is `C:/Users/u`.
+
+### Phase 4 — Defect sites
+
+Each gets the test from Phase 0 (or one written here) before its fix:
+
+| Site | Change |
+|---|---|
+| `git_service.dart:1034` | `HostPath.looksAbsolute(wt) ? wt : null` |
+| `git_service.dart:1530` | `HostPath.looksAbsolute(target) ? target : '$repoPath/$target'` |
+| `create_repo_pipeline.dart:332-334` | `!HostPath.same(top, dest, style)`; the style comes from the sheet |
+| `edit_entry_sheets.dart:323`, `:327` | `HostPath.looksAbsolute` |
+| `add_worktree_sheet.dart:198`, `:204`, `:238` | `HostPath.basename` / `dirname` / `isAbsolute` with the style |
+| `worktrees_view.dart:647` (sweep), `:301-306`, `:435` (forget/close), `:400`, `:404` (Move guard) | compare with `HostPath.same` / `isInside` |
+| `clone_sheet.dart:183`, `:441`; `create_repo_sheet.dart:267`, `:270` | `HostPath.isAbsolute` with the style, and `canonical` on the way in |
+| `remote_directory_browser.dart:131`, `:272-280` | `HostPath.dirname`; `X:/` is a root like `/` |
+
+### Phase 5 — Labels and duplicates
+
+1. Replace host-path basenames with `HostPath.basename`:
+   * `saved_connection.dart:138-140`
+   * `tab_ui_providers.dart:70-72`
+   * `connection_switcher.dart:618`, `:651`
+   * `saved_workspaces_sheet.dart:133`, `:233`, `:257`
+   * `app_providers.dart:654-657` (`_pathBasename`)
+   * `command_palette.dart:331-334` (`_repoBasename`)
+   * `window_manager_bridge.dart:542`
+   * `secondary_window_main.dart:676`
+
+   A legacy `C:\…` entry then labels as its folder name.
+2. `SavedConnection.dedupePaths` stays exact-string; it receives canonical paths from Phase 3.
+   `tabs_controller.dart:139`, `:445-452` (`openOrFocus`) compares with
+   `HostPath.same(…, style)` so a case variant focuses the open tab.
+3. Tests: a label test per site family, with `C:\Users\u\repo` → `repo` and POSIX unchanged; and
+   `openOrFocus` with a case variant.
+
+### Phase 6 — Docs
+
+* `help_book.json`, `windows_hosts`:
+  * Windows repositories appear as `C:/…`;
+  * any typed form is accepted;
+  * text starting with `/` is kept as typed;
+  * the hook note (Amendment 0070.3, Consequences).
+* `docs/architecture.md`: one paragraph on the canonical form and `MSYS_NO_PATHCONV`.
+* The help-book label anchors gain the new strings.
+
+### Phase 7 — Device gate (the maintainer's host; mutating steps need consent)
+
+Read-only first, then in a scratch repository under `%TEMP%`, created and removed by the gate
+with the maintainer's consent:
+
+| Check | Expected |
+|---|---|
+| Connect with the saved `/c/…` entry | Title, tab and Workspaces show `C:/Users/<user>/gitrepos/magic-cli-remote`; the saved entry is rewritten to that on this connect |
+| Branches in the scratch repo with a second worktree | A branch checked out there shows the worktree chip; Delete is dimmed with the reason |
+| Commit with message `/usr/bin broken` | `git log -1 --format=%s` on the host reads `/usr/bin broken` |
+| History filter `/usr` | Finds that commit |
+| Add worktree, open when done | The new tab stays open after the next refresh |
+| A sample `pre-commit` hook that echoes `$1`-style path arguments to a native program | Documents the F16 difference; recorded, not a failure |
+
+### Phase 8 — Proof and records
+
+* Mutations, in a scratch clone with the baseline first. Each must fail its named test:
+  * `canonical` without the MSYS-drive rule;
+  * `same` case-sensitive on Windows;
+  * the formatter without `MSYS_NO_PATHCONV`;
+  * connect without canonicalization;
+  * `worktreePath` back to `startsWith('/')`;
+  * the pipeline back to `!=`;
+  * the sweep back to `contains`.
+* `flutter analyze`, the full suite, the records check; this plan `complete`.
+
+## Verification
+
+```sh
+flutter analyze
+flutter test test/host_path_test.dart test/command_formatter_test.dart \
+  test/connection_env_reset_test.dart test/host_fs_service_test.dart
+flutter test
+dart run scripts/tools/records.dart check
+```
+
+## Acceptance Criteria
+
+* On a Windows host, `state.repoPath` and every saved path written by a connect are canonical
+  `X:/…`, in git's case.
+* Every command to a Windows host exports `MSYS_NO_PATHCONV=1`; no command to any other host does.
+* A commit message, tag message, merge message, stash message or History filter starting with `/`
+  reaches git unchanged (device gate).
+* The Phase 4 sites behave on Windows paths, each pinned by a test that failed before its fix.
+* A legacy `C:\…` entry labels as its folder name everywhere Phase 5 lists.
+* POSIX hosts and the local backend: the full suite passes unchanged, and `HostPath` under
+  `posix` is the identity.
+* Every new test was seen to fail (Phase 0 or a mutation); `flutter analyze` is clean; the records
+  check reports 0 findings.
+
+## Rollout and Rollback
+
+One commit per phase. Phases 1-2 change no behaviour on POSIX hosts. Phase 3 rewrites saved paths
+on Windows hosts only as they connect. That is forward-compatible: a revert keeps working with the
+canonical form, because `cd` and git accept `C:/…` with or without conversion (F17). Reverting
+Phase 2 alone would bring back F15.
+
+## Execution record
+
+### Phase 0 (2026-09-24)
+
+* The maintainer approved the plan and Amendment 0070.3, accepting the hook trade-off. Records:
+  the amendment `accepted`, this plan `in-progress`, the index row.
+* Three tests were written against the current API; each failed on its own assertion:
+  * `refs_parse_test`: `worktreePath` expected `C:/Users/u/wt/held`, was null
+    (`git_service.dart:1034`);
+  * `git_service_test`: the gitfile target came back `C:/Users/u/w/C:/Users/u/r/.git/worktrees/w`
+    (`:1530`);
+  * `edit_remote_repo_sheet_test`: Save was disabled for a `C:/…` entry
+    (`edit_entry_sheets.dart:323`, `:327`).
+* The `create_repo_pipeline_test` and `worktrees_view_test` cases need the host style, which
+  Phases 2-4 add. As step 2 provides, they are written in Phase 4, where each is still seen to
+  fail before its fix.
+* These tests commit with their fixes (Phase 4), so no commit carries a failing test.
+
+### Phase 1 (2026-09-24)
+
+* `lib/core/utils/host_path.dart`: `HostPathStyle` and `HostPath`, as specified.
+* `test/host_path_test.dart`: `+15: All tests passed!`. One expectation in my first draft was
+  wrong: "POSIX labels match `posix_path.basename`" ran over Windows-shaped samples too, where the
+  label differs by design. It now runs over every POSIX-shaped sample, and asserts that there are
+  more than ten; the Windows labels are pinned in their own test.

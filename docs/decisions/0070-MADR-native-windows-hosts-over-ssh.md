@@ -536,3 +536,94 @@ The Git Bash slice (0070-PLAN) was checked on the maintainer's Windows 11 laptop
 * a watcher sweep fails on a quoted `~` path, which is not specific to Windows.
 
 A2 to A9 remain open for the layered-dialect work.
+
+## Amendment 0070.3 (2026-09-24): reassessed under Git Bash — paths and arguments first
+
+**Status: accepted** (the maintainer, 2026-09-24, including the hook trade-off below), with
+its plan,
+[0070-PLAN-host-paths-and-argument-fidelity.md](0070-PLAN-host-paths-and-argument-fidelity.md).
+
+The decision above (O8) was made before any Windows host was reached. Since then the maintainer
+chose the Git Bash route (Amendment 0070.1), it shipped, and it works for reading (0070.2). This
+amendment reassesses what O8 still has to deliver, from facts measured on the maintainer's
+Windows 11 host on 2026-09-24. Every measurement was read-only: no file was written on the host,
+and every git call pinned `core.hooksPath=/dev/null` and `core.fsmonitor=false`.
+
+### Facts measured (observed)
+
+| # | Fact | How it was seen |
+|---|---|---|
+| F12 | **Git for Windows prints every absolute path as `C:/…`** (drive letter, forward slashes): `rev-parse --show-toplevel`, `--absolute-git-dir`, `--path-format=absolute`, `worktree list --porcelain`, and `for-each-ref %(worktreepath)`. | `git 2.55.0.windows.5`, run in the maintainer's repository |
+| F13 | **The app stores a Windows repository in three forms.** `/c/Users/<user>/…` from the folder browser (it starts at `pwd`, `HostFsService.homeDir`) and from `~` (`$HOME=/c/Users/<user>`); `C:\…` or `C:/…` when typed. Recent Repositories holds `C:\…` and `/c/…` for the same repository. | the live preferences store |
+| F14 | **Git canonicalizes case; the shell does not.** After `cd` into an all-caps spelling, `pwd` echoes the caps, and `--show-toplevel` returns the true case in `C:/…` form. `cd` accepts `/c/…`, `C:/…`, `C:\…` and any case. | host |
+| F15 | **MSYS rewrites every argument that starts with `/` on its way into a native program**, user text included. Into `git.exe`: `/usr/bin broken` → `C:/Program Files/Git/usr/bin broken`; `/tmp` → `C:/Users/<user>/AppData/Local/Temp`; `--x=/tmp/y` → `--x=C:/Users/<user>/AppData/Local/Temp/y`. `a:/b`, URLs, `refs/heads/x`, `HEAD:/c/file` and `//server/share` pass unchanged. The app passes commit, tag, merge and stash messages and the History `--grep=`/`--author=` filters as arguments (`git_service.dart:2465-2468`, `:3286`, `:4259`, `:4718`, `:5395`, `:5680`), so **such text is corrupted today** on a Git Bash host. | `git rev-parse --sq-quote` echoing its arguments |
+| F16 | **`MSYS_NO_PATHCONV=1` stops the rewriting, and is inherited.** Under it all ten test arguments arrive unchanged. A nested `sh` (as a hook's shell would be) inherits it. | host |
+| F17 | **With conversion off, git needs Windows-form paths.** Under `MSYS_NO_PATHCONV=1`: `git -C C:/…` and `GIT_DIR=C:/…` work; `git -C /c/…` and `GIT_DIR=/c/…` fail ("cannot change to", "not a git repository"). MSYS programs (`cd`, `ls`, `test`, `cat`) accept `C:/…`. | host |
+| F18 | **The byte path is clean under Git Bash.** `status --porcelain=v2 -z --branch` arrives with its NULs and no CR; `log` lines end in `\n`. | `od -c` over SSH |
+| F19 | **The host has what the native services need.** Windows PowerShell 5.1 (`powershell.exe`), PowerShell 7 (a user install), `taskkill`/`tasklist`, `/proc/$$/winpid`, and MSYS `stdbuf`, `timeout`, `base64`, `mktemp`, `gzip`, `cygpath`. There is no `fswatch` or `inotifywait`. | `command -v` |
+| F20 | **Git defaults on this host:** `core.autocrlf=true` (system config), `core.ignorecase=true`, `core.symlinks=false`, `core.filemode=false`. The MSYS root `/` is the Git install directory; drives are mounted at `/c`, `/d`, … but are not listed in `/`. | host |
+
+### Assumptions, updated
+
+* **A1** confirmed (0070.2). **A10** confirmed (0070.2).
+* **A2** answered for the Git Bash route (F18). It stays open only for a `cmd.exe` shell, which the
+  app now refuses with the Git Bash prompt.
+* **A3** and **A5** do not arise under Git Bash: nothing passes through PowerShell or a bridge.
+* **A6** confirmed: `base64` is present (F19).
+* **A4, A7, A9** remain open. Each needs a prototype that starts processes on the host, so each is
+  a Phase 0 of the plan that needs it, run with the maintainer's consent.
+* **A8** does not arise while file writes go through MSYS `cat` (F17).
+
+### Reassessment of O8's parts
+
+| Part | Under Git Bash | Decision |
+|---|---|---|
+| Honest detection | Shipped (0070-PLAN, first slice) | done |
+| `PosixShell` | Is the transport (O2) | done |
+| `GitBashBridge`, `WindowsArgv`, byte transport, the polyglot probe | Needed only for a host whose SSH shell cannot be Git Bash (no administrator, or MinGit only) | **deferred** until such a host is a requirement |
+| SFTP file I/O | Not needed: MSYS `cat` writes `C:/…` paths (F17) | **deferred** |
+| **`HostPath`** | Needed now: F12-F14 break every comparison between a git-printed and a stored path, and F17 makes one canonical form mandatory | **next** |
+| **Argument fidelity** (new) | F15 corrupts user text today | **next, with `HostPath`** |
+| `FileSystemWatcher` live refresh | Needed: Windows polls (F19: no watcher tool) | after, behind an A7 prototype |
+| Tree-kill cancellation | Needed for timeouts (0069-REPORT) | after, behind A4 and A9 prototypes |
+| `core.longpaths` / `core.autocrlf` in the health sheet | Useful (F20) | later |
+
+### Decision
+
+1. **Canonical form.** On a Windows host, a host path is canonical as git prints it: `X:/a/b`
+   (upper-case drive letter, forward slashes, no trailing slash except `X:/`). `//server/share/…`
+   stays UNC. The app canonicalizes when a path enters (the connect, the folder browser, a typed
+   field), compares Windows paths case-insensitively, and takes git's case when git reports the
+   repository's top level (F14). POSIX paths, on the local backend and on POSIX hosts, stay
+   byte-for-byte as today.
+2. **Argument fidelity.** On a Windows host the executor exports `MSYS_NO_PATHCONV=1` with every
+   command. Every app-supplied path is canonical (decision 1), so nothing still needs MSYS to
+   convert it (F17), and user text reaches git unchanged (F16).
+3. **Delivery order**, replacing "Delivery order" above for the remaining work: `HostPath` with
+   argument fidelity; then live refresh (A7 prototype first); then tree-kill (A4, A9 first); then
+   the health-sheet items. The bridge, `WindowsArgv` and SFTP wait for a host that cannot use Git
+   Bash.
+
+### Consequences
+
+* Good, because every defect caused by stored versus git-printed forms goes away at the source.
+  The plan lists them: worktree "checked out elsewhere", adding a worktree, a new worktree's tab,
+  "Create in existing folder", editing saved entries, and duplicates across forms.
+* Good, because commit messages and search text starting with `/` stop being rewritten.
+* Neutral, because tabs, titles and the Workspaces sheet show `C:/Users/…` paths for Windows
+  repositories, which is how git, PowerShell and Explorer's address bar can all use them.
+* **Bad, because `MSYS_NO_PATHCONV=1` is inherited by hooks (F16).** A hook script that passes a
+  `/c/…` or `/tmp` path to a native Windows program would now pass it unconverted, where the same
+  hook run from the user's own Git Bash terminal gets it converted. Hooks that build paths from
+  `git rev-parse` (which prints `C:/…`) or use relative paths are unaffected. The alternative
+  considered, keeping conversion on and moving user text off the command line, is incomplete:
+  `stash push -m`, `--grep` and `--author` have no file or stdin form, so some text would still be
+  rewritten. The plan's device gate runs a sample hook to show the difference, and the help book
+  documents it.
+
+### Confirmation
+
+On macOS, every run: `HostPath` property tests; formatter tests pinning `MSYS_NO_PATHCONV=1` for a
+Windows host and its absence otherwise; a test per defect site. On the host, the plan's device
+gate: a message starting with `/` committed and read back unchanged, and a worktree added and
+opened, both in a scratch repository with the maintainer's consent.
