@@ -131,6 +131,9 @@ class _CountingExecutor implements CommandExecutor {
   void setForgeTokenNeutralization(Iterable<String> vars) {}
 
   @override
+  void setHostPathStyle(HostPathStyle style) {}
+
+  @override
   void resetEnvironment() {}
 }
 

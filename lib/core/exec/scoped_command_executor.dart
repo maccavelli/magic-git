@@ -106,5 +106,8 @@ class ScopedCommandExecutor implements CommandExecutor {
       _inner.setForgeTokenNeutralization(vars);
 
   @override
+  void setHostPathStyle(HostPathStyle style) => _inner.setHostPathStyle(style);
+
+  @override
   void resetEnvironment() => _inner.resetEnvironment();
 }

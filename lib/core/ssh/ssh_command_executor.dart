@@ -10,6 +10,7 @@ import '../exec/command_drain.dart';
 import '../exec/command_lanes.dart';
 import '../exec/command_telemetry.dart';
 import '../exec/operation_activity.dart';
+import '../utils/host_path.dart';
 import 'adaptive_read_concurrency.dart';
 import 'command_formatter.dart';
 import 'shell_escaper.dart';
@@ -28,6 +29,8 @@ export '../exec/command_drain.dart'
 export '../exec/command_lanes.dart' show ExecLane, CommandLaneOverrun;
 export '../exec/operation_activity.dart'
     show OperationDescriptor, OperationEventCallback, OperationId;
+// The host path style is part of the executor's interface (0070.3).
+export '../utils/host_path.dart' show HostPathStyle;
 
 /// Transport-agnostic command result. [SSHCommandResult] remains as a
 /// compatibility typedef — both the SSH and local executors return this shape.
@@ -299,6 +302,14 @@ abstract class CommandExecutor {
   /// `gh`/`glab` auth untouched. Cleared by [resetEnvironment].
   void setForgeTokenNeutralization(Iterable<String> vars);
 
+  /// The host's path style (MADR 0070, Amendment 0070.3). For a Windows host
+  /// reached through Git Bash, every command exports `MSYS_NO_PATHCONV=1`, so
+  /// MSYS never rewrites an argument that starts with `/` — user text
+  /// included — on its way into git; the app hands git canonical `C:/…`
+  /// paths instead. Cleared by [resetEnvironment]. A no-op where the
+  /// executor holds no environment of its own.
+  void setHostPathStyle(HostPathStyle style) {}
+
   /// Forgets any resolved environment. See
   /// [SSHCommandExecutor.resetEnvironment].
   void resetEnvironment();
@@ -351,6 +362,13 @@ class SSHCommandExecutor implements CommandExecutor {
   /// command so user-installed tools resolve on the minimal exec-channel PATH.
   /// Null until [configureEnvironment] is called.
   String? _envPath;
+
+  /// See [CommandExecutor.setHostPathStyle].
+  HostPathStyle _hostPathStyle = HostPathStyle.posix;
+
+  /// The style [setHostPathStyle] last set, for tests.
+  @visibleForTesting
+  HostPathStyle get hostPathStyle => _hostPathStyle;
 
   /// Bare tool name → resolved absolute path; when a command's `argv[0]` matches,
   /// the exact binary is used (see [CommandFormatter.format]).
@@ -465,11 +483,15 @@ class SSHCommandExecutor implements CommandExecutor {
     _neutralizeTokens = List.unmodifiable(vars);
   }
 
+  @override
+  void setHostPathStyle(HostPathStyle style) => _hostPathStyle = style;
+
   /// Forgets any resolved environment (on disconnect), reverting to bare-name
   /// invocation against the inherited PATH.
   @override
   void resetEnvironment() {
     _envPath = null;
+    _hostPathStyle = HostPathStyle.posix;
     _binaryPaths = const {};
     _neutralizeTokens = const [];
     resetAdaptiveReads();
@@ -777,8 +799,14 @@ class SSHCommandExecutor implements CommandExecutor {
   Map<String, String> _mergedEnv(Map<String, String>? extraEnv) => {
     ...CommandFormatter.defaultEnv,
     'PATH': ?_envPath,
+    if (_hostPathStyle == HostPathStyle.windows) 'MSYS_NO_PATHCONV': '1',
     ...?extraEnv,
   };
+
+  /// The environment a command with [extraEnv] exports, for tests.
+  @visibleForTesting
+  Map<String, String> commandEnvFor(Map<String, String>? extraEnv) =>
+      _mergedEnv(extraEnv);
 
   /// Marks the in-band exit trailer a compressed read appends to its stdout —
   /// see [CommandFormatter.format]'s `compressOutput` and [splitExitTrailer].

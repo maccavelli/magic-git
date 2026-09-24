@@ -571,6 +571,10 @@ void main() {
       );
       expect(exec.events.first, 'windows-probe');
       expect(container.read(binaryEnvironmentProvider).os, 'windows');
+      // 0070.3: every command now exports MSYS_NO_PATHCONV=1, and the UI
+      // compares paths as Windows does.
+      expect(exec.hostPathStyle, HostPathStyle.windows);
+      expect(container.read(hostPathStyleProvider), HostPathStyle.windows);
     });
 
     test('a POSIX host is never sent the Windows probe', () async {
@@ -750,6 +754,9 @@ void main() {
       expect(exec.calls.first, (repoPath: '/', what: 'probe'));
       expect(exec.calls.map((c) => c.what), isNot(contains('home')));
       expect(container.read(connectionProvider).repoPath, '/srv/app');
+      // A Linux host stays POSIX: no MSYS variable, no Windows comparisons.
+      expect(exec.hostPathStyle, HostPathStyle.posix);
+      expect(container.read(hostPathStyleProvider), HostPathStyle.posix);
     });
 
     test('fails honestly when the host reports no absolute HOME', () async {

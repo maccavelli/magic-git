@@ -320,6 +320,11 @@ class ProxyCommandExecutor implements CommandExecutor {
   @override
   void setForgeTokenNeutralization(Iterable<String> vars) {}
 
+  /// A no-op like [configureEnvironment]: every command relays to the main
+  /// window's executor, which carries the style.
+  @override
+  void setHostPathStyle(HostPathStyle style) {}
+
   @override
   void resetEnvironment() {}
 }

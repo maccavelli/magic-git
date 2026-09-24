@@ -71,6 +71,10 @@ class LocalCommandExecutor implements CommandExecutor {
     _neutralizeTokens = List.unmodifiable(vars);
   }
 
+  /// This Mac is always POSIX, and no MSYS layer runs here.
+  @override
+  void setHostPathStyle(HostPathStyle style) {}
+
   @override
   void resetEnvironment() {
     _envPath = null;

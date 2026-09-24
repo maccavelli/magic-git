@@ -144,13 +144,16 @@ abstract final class HostPath {
 
 ### Phase 2 — Argument fidelity
 
-1. `CommandExecutor.configureEnvironment` gains `HostPathStyle style = HostPathStyle.posix`. On the
+1. ~~`CommandExecutor.configureEnvironment` gains `HostPathStyle style = HostPathStyle.posix`.~~
+   **D1:** `CommandExecutor` gains `setHostPathStyle(HostPathStyle style)`, as
+   `setForgeTokenNeutralization` does. On the
    SSH executor, `windows` adds `MSYS_NO_PATHCONV=1` to the env map every command exports (the
-   same map that carries `PATH`). The proxy executor takes the parameter and stays a no-op
+   same map that carries `PATH`), and `resetEnvironment` returns it to `posix`. The activity and
+   scoped wrappers forward it. The proxy executor takes the parameter and stays a no-op
    (`proxy_command_executor.dart:307-310`): pop-out windows relay every command to the main
    window's executor, which carries it. The local executor ignores it.
-2. `_resolveEnvironment` passes `windows` when the probe reports `os == 'windows'`, and `posix`
-   otherwise. The reconnect cache passes it the same way.
+2. `_resolveEnvironment` calls `setHostPathStyle` with `windows` when the probe reports
+   `os == 'windows'`, and `posix` otherwise. The reconnect cache passes it the same way.
 3. `hostPathStyleProvider` (sync `Provider`): `windows` when the backend is SSH and
    `binaryEnvironmentProvider.os == 'windows'`, else `posix`.
 4. Tests (`test/command_formatter_test.dart`, `test/connection_env_reset_test.dart`):
@@ -280,6 +283,19 @@ Phase 2 alone would bring back F15.
 
 ## Execution record
 
+### Deviations
+
+* **D1 (2026-09-24), how the executor learns the host style.** Step 2.1 gave
+  `configureEnvironment` a new parameter and listed the SSH, proxy and local executors. In fact
+  the activity and scoped wrapper executors must forward it, and test fakes implement the
+  interface. A new parameter would change every override: 5 executors and 11 fakes. The
+  maintainer chose a separate `setHostPathStyle` method, following
+  `setForgeTokenNeutralization`. Files added to Phase 2: `lib/core/exec/activity_command_executor.dart`,
+  `lib/core/exec/scoped_command_executor.dart`, and the four fakes that `implements` the
+  interface: `test/scoped_forge_providers_test.dart`, `test/branches_500ref_baseline_test.dart`,
+  `test/scoped_forge_executor_test.dart`, `test/git_cat_file_batch_test.dart`. The MADR is
+  unaffected.
+
 ### Phase 0 (2026-09-24)
 
 * The maintainer approved the plan and Amendment 0070.3, accepting the hook trade-off. Records:
@@ -303,3 +319,19 @@ Phase 2 alone would bring back F15.
   wrong: "POSIX labels match `posix_path.basename`" ran over Windows-shaped samples too, where the
   label differs by design. It now runs over every POSIX-shaped sample, and asserts that there are
   more than ten; the Windows labels are pinned in their own test.
+* Commit `3aedcb6`. Its hook-generated message also names `MSYS_NO_PATHCONV`, because the plan
+  and amendment it carries describe it; that code is Phase 2's.
+
+### Phase 2 (2026-09-24), with D1
+
+* `CommandExecutor.setHostPathStyle` (no-op default). The SSH executor stores it, adds
+  `MSYS_NO_PATHCONV=1` to every command's env for `windows`, and `resetEnvironment` returns it to
+  `posix`. The activity and scoped wrappers forward it; local and proxy are explicit no-ops; the
+  four `implements` fakes gained a no-op. `ssh_command_executor.dart` re-exports `HostPathStyle`.
+  For tests, `commandEnvFor` and `hostPathStyle` give a read-only view.
+* `app_providers.dart`: `hostPathStyleFor(backend, os)`, used by `_resolveEnvironment` (both the
+  fresh probe and the reconnect cache) and by the new `hostPathStyleProvider`.
+* Tests: `command_formatter_test` (Windows exports `MSYS_NO_PATHCONV='1'` beside `GIT_DIR`; POSIX
+  and a reset executor do not) and `connection_env_reset_test` (the Git Bash connect sets
+  `windows` on the executor and the provider; the Linux connect stays `posix`). Together with
+  `provider_retry_policy_test`: `+39: All tests passed!`. `flutter analyze`: No issues found.

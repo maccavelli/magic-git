@@ -63,6 +63,9 @@ class _RecordingExecutor implements CommandExecutor {
   String? resolvedBinaryPath(String name) => null;
   @override
   void setForgeTokenNeutralization(Iterable<String> vars) {}
+
+  @override
+  void setHostPathStyle(HostPathStyle style) {}
   @override
   void resetEnvironment() {}
 }

@@ -1344,6 +1344,7 @@ class ConnectionController extends Notifier<ConnectionState> {
           binaries: cached.found,
         );
         executor.setForgeTokenNeutralization(_forgeTokenVarsToNeutralize());
+        executor.setHostPathStyle(hostPathStyleFor(state.backend, cached.os));
         ref.read(binaryEnvironmentProvider.notifier).set(cached);
         return cached;
       }
@@ -1360,6 +1361,7 @@ class ConnectionController extends Notifier<ConnectionState> {
       if (attempt != null && attempt != _attempt) return null;
       executor.configureEnvironment(path: env.path, binaries: env.found);
       executor.setForgeTokenNeutralization(_forgeTokenVarsToNeutralize());
+      executor.setHostPathStyle(hostPathStyleFor(state.backend, env.os));
       ref.read(binaryEnvironmentProvider.notifier).set(env);
       if (state.backend == ConnectionBackend.ssh && profile != null) {
         _envCache = env;
@@ -3336,6 +3338,23 @@ final binaryEnvironmentProvider =
     NotifierProvider<BinaryEnvironmentNotifier, RemoteEnvironment>(
       BinaryEnvironmentNotifier.new,
     );
+
+/// A host's path style from its backend and probed OS (0070.3): Windows only
+/// for a Windows host reached over SSH (through Git Bash); POSIX otherwise,
+/// the local backend always. One rule for the executor and the UI.
+HostPathStyle hostPathStyleFor(ConnectionBackend backend, String os) =>
+    backend == ConnectionBackend.ssh && os == 'windows'
+    ? HostPathStyle.windows
+    : HostPathStyle.posix;
+
+/// The active session's [HostPathStyle], for the UI's path comparisons,
+/// joins and absoluteness checks.
+final hostPathStyleProvider = Provider<HostPathStyle>(
+  (ref) => hostPathStyleFor(
+    ref.watch(connectionProvider.select((s) => s.backend)),
+    ref.watch(binaryEnvironmentProvider.select((e) => e.os)),
+  ),
+);
 
 /// Tracks the most recent moment this app itself mutated a repo's `.git`
 /// state (stage/commit/push/fetch/…), so a remote-watcher tick that arrives

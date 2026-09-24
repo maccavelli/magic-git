@@ -1,7 +1,35 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:remote_magic_git/core/ssh/command_formatter.dart';
+import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
+import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 
 void main() {
+  group('host path style (MADR 0070, Amendment 0070.3)', () {
+    test('a Windows host exports MSYS_NO_PATHCONV=1 with every command', () {
+      final exec = SSHCommandExecutor(SSHClientManager())
+        ..setHostPathStyle(HostPathStyle.windows);
+      final env = exec.commandEnvFor(const {'GIT_DIR': 'C:/r/.git'});
+      expect(env['MSYS_NO_PATHCONV'], '1');
+      expect(env['GIT_DIR'], 'C:/r/.git');
+      final command = CommandFormatter.format(
+        repoPath: 'C:/r',
+        gitArgs: const ['git', 'commit', '-m', '/usr/bin broken'],
+        env: env,
+      );
+      expect(command, contains("MSYS_NO_PATHCONV='1'"));
+    });
+
+    test('a POSIX host, and a reset executor, export no such variable', () {
+      final exec = SSHCommandExecutor(SSHClientManager());
+      expect(exec.commandEnvFor(null).containsKey('MSYS_NO_PATHCONV'), isFalse);
+      exec
+        ..setHostPathStyle(HostPathStyle.windows)
+        ..resetEnvironment();
+      expect(exec.commandEnvFor(null).containsKey('MSYS_NO_PATHCONV'), isFalse);
+      expect(exec.hostPathStyle, HostPathStyle.posix);
+    });
+  });
+
   group('CommandFormatter.format', () {
     test('includes default env prelude and cd', () {
       final cmd = CommandFormatter.format(
