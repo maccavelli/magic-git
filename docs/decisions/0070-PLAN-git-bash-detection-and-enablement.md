@@ -43,6 +43,7 @@ the environment health sheet for Windows hosts.
 | `test/host_script_coverage_test.dart` | 1 (D2) | `windowsHostProbeScript` registered as executed. |
 | `test/provider_ref_after_await_scan_test.dart` | 3 (D3) | The allowlist keyed by provider name, not line number. |
 | `lib/features/settings/settings_sheet.dart` | 5 (D4) | The override field's example path comes from the catalog. |
+| `test/help_book_json_test.dart` | 5 (D5) | `windows_hosts` in the locked topic list (35 topics), and its label anchors. |
 | `lib/core/settings/tool_catalog.dart` | 2 | A `bash` entry (Windows only), and Windows install hints. |
 | `lib/core/ssh/environment_probe.dart` | 2 | `uname` values `MINGW*`, `MSYS*` and `CYGWIN*` map to `os: 'windows'`; the display name. |
 | `lib/core/settings/app_settings.dart` | 2 | The doc comment listing overridable tools. |
@@ -295,7 +296,8 @@ deviation: stop and prompt.
      rows, as input to the next plan. `docs/architecture.md`: one paragraph ("Windows hosts are
      supported when Git Bash is their SSH shell; the app detects and offers it").
      `docs/README.md` statuses.
-5.4. `dart run tool/records.dart check` → `0 finding(s)`; the docs tests pass; commit.
+5.4. `dart run scripts/tools/records.dart check` → `0 finding(s)`; the docs tests pass; commit.
+     (Path updated 2026-09-23: `tool/` moved to `scripts/tools/` in `394665d`.)
 
 ## Verification
 
@@ -309,7 +311,7 @@ deviation: stop and prompt.
 | Full suite | `flutter test > "$LOG" 2>&1; STATUS=$?` | `STATUS` 0; 0 `[E]` |
 | Each new check | scratch clone, mutated code | seen to fail, message recorded |
 | Device | Phase 5.2 | every row recorded |
-| Records | `dart run tool/records.dart check` | `0 finding(s)` |
+| Records | `dart run scripts/tools/records.dart check` | `0 finding(s)` |
 
 ## Acceptance Criteria
 
@@ -403,6 +405,30 @@ setting is machine-wide.
     for the rest. **Red first:** on the old field it failed with "no Settings path field for bash".
   * `flutter analyze`: No issues found. Full suite: `03:05 +4386 ~3: All tests passed!`, 0 `[E]`.
   * **Files added to scope:** `lib/features/settings/settings_sheet.dart`.
+* **D5 (2026-09-23, deviation, Phase 5): the help topic needs the help test's locks.**
+  * **Evidence.** The scope's `help_book.json` row adds a "Windows hosts" topic, but
+    `help_book_json_test.dart` locks each category's topic IDs in order, and the total at 34 ("0053
+    locks 34 topics in 7 categories"). A new topic cannot land without editing it, and the file is
+    not in the plan. (`HelpDataModelTests.swift` counts topics in a fixture, not the book, so it is
+    unaffected.)
+  * **Resolutions offered:**
+    1. a new topic in Getting Started after Connections Manager, with the test's lock and label
+       anchors updated;
+    2. a section inside the existing Connecting topic, with no test change.
+  * **Decision (maintainer, 2026-09-23): option 1.** The anchors are the prompt's own titles and its
+    command label, so renaming the prompt fails the suite until Help follows (0053's rule).
+  * **Files added to scope:** `test/help_book_json_test.dart`.
+  * **Done.** A **Windows Hosts** topic after Connections Manager covers:
+    * why Git Bash is needed;
+    * the prompt's Enable, the copyable command, Reconnect and Cancel;
+    * the administrator requirement;
+    * a warning callout that the setting is machine-wide, with the undo command;
+    * the not-installed case with the winget command and the Settings path.
+
+    It was inserted as text, not by re-serialising the book, and parsed back and compared with the
+    intended topic. **Red first:** the updated test failed on the old book in "every locked topic id
+    exists in its category, in order" and "quoted UI labels exist in their topic and in source".
+    After the change: `help_book_json_test.dart` `+16`, all pass.
 * **Phase 0 (2026-09-23).** Records: MADR 0070 `accepted`, this plan `in-progress`, the index row.
   The negative rehearsal ran per phase, not up front: each new check was run against deliberately
   broken code in a scratch clone (`p1-clone`) before the phase was committed, which is the stronger

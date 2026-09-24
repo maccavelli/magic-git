@@ -125,6 +125,13 @@ const _labelAnchors = <String, List<String>>{
     'Add SSH Remote',
   ],
   'connections_manager': ['Edit connection', 'Choose This Folder'],
+  // The Windows shell prompt's own words (MADR 0070): renaming the prompt
+  // fails here until Help follows.
+  'windows_hosts': [
+    'Git Bash Is Not the SSH Shell',
+    'Git Bash Is Not Installed',
+    'Or run this in an elevated PowerShell on the host',
+  ],
   'clone_create': [
     'Save to Local Repositories',
     'Create parent folders if missing',
@@ -710,6 +717,7 @@ void main() {
           'overview',
           'quickstart',
           'connections_manager',
+          'windows_hosts',
           'clone_create',
           'tabs_workspaces',
         ],
@@ -751,7 +759,12 @@ void main() {
         for (final cat in jsonBook['categories'] as List<dynamic>)
           ...(cat as Map<String, dynamic>)['topics'] as List<dynamic>,
       ].length;
-      expect(totalTopics, 34, reason: '0053 locks 34 topics in 7 categories');
+      expect(
+        totalTopics,
+        35,
+        reason:
+            '0053 locks 34 topics in 7 categories; MADR 0070 adds Windows Hosts',
+      );
       for (final cat in jsonBook['categories'] as List<dynamic>) {
         final category = cat as Map<String, dynamic>;
         final ids = (category['topics'] as List<dynamic>)

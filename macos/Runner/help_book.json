@@ -236,6 +236,58 @@
           ]
         },
         {
+          "id": "windows_hosts",
+          "title": "Windows Hosts",
+          "summary": "Connect to a Windows computer over SSH: Magic Git needs Git Bash as its SSH shell, and offers to set it.",
+          "keywords": [
+            "windows",
+            "git bash",
+            "bash",
+            "powershell",
+            "cmd",
+            "openssh",
+            "default shell",
+            "git for windows"
+          ],
+          "sections": [
+            {
+              "type": "paragraph",
+              "text": "Windows OpenSSH runs every command through cmd.exe unless it is configured otherwise. Magic Git's commands need a POSIX shell, so on a Windows host it needs Git Bash, from Git for Windows, as the OpenSSH default shell. When you connect, it checks this before running anything."
+            },
+            {
+              "type": "heading",
+              "text": "When Git Bash is not the SSH shell"
+            },
+            {
+              "type": "paragraph",
+              "text": "The Git Bash Is Not the SSH Shell prompt shows where Git Bash was found and offers:"
+            },
+            {
+              "type": "items",
+              "items": [
+                "Enable — sets Git Bash as the OpenSSH default shell over this connection, then reconnects. It needs an administrator account; from a standard account the host refuses it, nothing changes, and the prompt shows the host's reason.",
+                "The command — under Or run this in an elevated PowerShell on the host, the same command to copy and run by hand, then Reconnect.",
+                "Reconnect — tries the connection again.",
+                "Cancel — closes the prompt and the connection."
+              ]
+            },
+            {
+              "type": "callout",
+              "style": "warning",
+              "title": "A machine-wide setting",
+              "text": "The default shell applies to every SSH user of the host, not only you. To undo it, run Remove-ItemProperty -Path 'HKLM:\\SOFTWARE\\OpenSSH' -Name DefaultShell in an elevated PowerShell on the host."
+            },
+            {
+              "type": "heading",
+              "text": "When Git Bash is not installed"
+            },
+            {
+              "type": "paragraph",
+              "text": "The Git Bash Is Not Installed prompt gives the install command, winget install --id Git.Git -e. If Git Bash is installed somewhere else, set its path in Settings under External tools (bash), then Reconnect."
+            }
+          ]
+        },
+        {
           "id": "clone_create",
           "title": "Clone and Create Repositories",
           "summary": "Clone from GitHub, GitLab, or a URL, or create a new repository, on this Mac or an SSH host.",
