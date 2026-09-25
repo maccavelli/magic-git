@@ -26,15 +26,19 @@ import 'package:remote_magic_git/core/ssh/ssh_client_manager.dart';
 import 'package:remote_magic_git/core/ssh/ssh_command_executor.dart';
 import 'package:remote_magic_git/core/utils/file_actions.dart';
 import 'package:remote_magic_git/core/utils/git_porcelain_parser.dart';
+import 'package:remote_magic_git/features/common/buttons.dart';
 import 'package:remote_magic_git/features/common/panel_shortcuts.dart';
 import 'package:remote_magic_git/features/common/repository_workspace_scaffold.dart';
 import 'package:remote_magic_git/features/common/workspace_focus.dart';
 import 'package:remote_magic_git/features/common/workspace_navigation.dart';
 import 'package:remote_magic_git/features/dnd/deselect.dart';
+import 'package:remote_magic_git/features/repository/repo_file_selection.dart';
+import 'package:remote_magic_git/features/worktrees/add_worktree_sheet.dart';
 import 'package:remote_magic_git/features/worktrees/worktree_access.dart';
 import 'package:remote_magic_git/features/worktrees/worktree_tabs.dart';
 import 'package:remote_magic_git/features/worktrees/worktrees_view.dart';
 import 'package:riverpod/misc.dart' show Override;
+import 'package:shared_preferences/shared_preferences.dart';
 
 /// Records grant releases instead of touching the real ScopedAccess.
 class _RecordingAccess extends WorktreeAccess {
@@ -55,6 +59,45 @@ class _QuietGit extends GitService {
   _QuietGit() : super(SSHCommandExecutor(SSHClientManager()));
 }
 
+/// `worktree add` and `worktree move` as git does them, without a
+/// subprocess: the change lands in what the list provider serves — once
+/// something refreshes it.
+class _WorktreeGit extends _QuietGit {
+  _WorktreeGit(this.listed);
+  final List<GitWorktree> listed;
+  final List<String> added = [];
+
+  @override
+  Future<void> addWorktree(
+    String repoPath, {
+    required String path,
+    String? newBranch,
+    bool resetBranch = false,
+    String? commitish,
+    bool detach = false,
+    bool? track,
+    bool lock = false,
+    String? lockReason,
+    bool force = false,
+  }) async {
+    added.add(path);
+    listed.add(GitWorktree(path: path, branch: 'refs/heads/$newBranch'));
+  }
+
+  @override
+  Future<void> moveWorktree(String repoPath, String from, String to) async {
+    final i = listed.indexWhere((w) => w.path == from);
+    listed[i] = GitWorktree(path: to, branch: listed[i].branch);
+  }
+
+  @override
+  Future<SSHCommandResult> copyIgnoredFiles({
+    required String from,
+    required String to,
+    required List<String> globs,
+  }) async => const SSHCommandResult(exitCode: 0, stdout: '', stderr: '');
+}
+
 /// Keeps the nested workspace's FileView from listing the working tree.
 class _HiddenFileView extends FileViewVisibility {
   @override
@@ -63,8 +106,14 @@ class _HiddenFileView extends FileViewVisibility {
 
 /// Provider stubs for mounting [path]'s checkout tab (its nested workspace
 /// opens on the Changes sub-panel — a full RepoStatusView).
-List<Override> _tabOverrides(String path) => [
-  gitServiceProvider.overrideWithValue(_QuietGit()),
+List<Override> _tabOverrides(String path, {GitService? git}) => [
+  gitServiceProvider.overrideWithValue(git ?? _QuietGit()),
+  fileViewVisibleProvider.overrideWith(_HiddenFileView.new),
+  ..._tabStubs(path),
+];
+
+/// [_tabOverrides]' per-path stubs alone, for a second tab path.
+List<Override> _tabStubs(String path) => [
   statusProvider(path).overrideWith(
     (ref) async => GitStatus(branch: const GitBranchInfo(), files: const []),
   ),
@@ -74,7 +123,6 @@ List<Override> _tabOverrides(String path) => [
   ).overrideWith((ref) => const Stream<RepoWatchEvent>.empty()),
   refsProvider(path).overrideWith((ref) async => const <GitRef>[]),
   remotesProvider(path).overrideWith((ref) async => const <String>[]),
-  fileViewVisibleProvider.overrideWith(_HiddenFileView.new),
 ];
 
 /// Records what would be launched, instead of launching it.
@@ -165,6 +213,7 @@ void main() {
   Future<ProviderContainer> pump(
     WidgetTester tester, {
     List<GitWorktree>? data,
+    List<GitWorktree> Function()? listing,
     List<Override> extraOverrides = const [],
     bool isActive = true,
   }) async {
@@ -180,7 +229,7 @@ void main() {
       overrides: [
         gitWorktreesProvider(
           repo,
-        ).overrideWith((ref) async => data ?? worktrees),
+        ).overrideWith((ref) async => listing?.call() ?? data ?? worktrees),
         ...extraOverrides,
       ],
     );
@@ -300,6 +349,115 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(container.read(worktreeTabsProvider).open, [tabPath]);
+  });
+
+  testWidgets('Add Worktree, open when done: the tab outlives a list no '
+      'watcher refreshed (0070 D8)', (tester) async {
+    SharedPreferences.setMockInitialValues({});
+    // The list as git has it. What the panel shows is a copy taken at each
+    // fetch, so it learns of a new worktree only when something refreshes
+    // it — as on a host with no file watcher.
+    final listed = [...worktrees];
+    final git = _WorktreeGit(listed);
+    final created = '${tmp.path}/app-new';
+    final container = await pump(
+      tester,
+      listing: () => List.of(listed),
+      extraOverrides: [
+        ..._tabOverrides(created, git: git),
+        refsProvider(repo).overrideWith((ref) async => const <GitRef>[]),
+      ],
+    );
+
+    final add = tester
+        .widgetList<PanelShortcuts>(find.byType(PanelShortcuts))
+        .singleWhere((w) => w.handlers.containsKey('worktrees.add'))
+        .handlers['worktrees.add']!;
+    add();
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find
+          .descendant(
+            of: find.byType(AddWorktreeSheet),
+            matching: find.byType(MacosTextField),
+          )
+          .first,
+      'new',
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Create Worktree'));
+    await tester.pumpAndSettle();
+
+    expect(git.added, [created]);
+    expect(find.byType(AddWorktreeSheet), findsNothing);
+    expect(container.read(worktreeTabsProvider).open, [created]);
+  });
+
+  testWidgets('Move keeps its open tab, at the new path (0070 D8)', (
+    tester,
+  ) async {
+    final listed = [...worktrees];
+    final git = _WorktreeGit(listed);
+    final from = '${tmp.path}/app-feature';
+    final to = '${tmp.path}/app-moved';
+    final container = await pump(
+      tester,
+      listing: () => List.of(listed),
+      extraOverrides: [
+        ..._tabOverrides(from, git: git),
+        ..._tabStubs(to),
+      ],
+    );
+    container.read(worktreeTabsProvider.notifier).open(from);
+    await tester.pumpAndSettle();
+
+    // Inside its tab, the Worktree verbs act on that worktree.
+    final move = tester
+        .widgetList<PanelShortcuts>(find.byType(PanelShortcuts))
+        .singleWhere((w) => w.handlers.containsKey('worktrees.move'))
+        .handlers['worktrees.move']!;
+    move();
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(MacosTextField).last, to);
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(AppPushButton, 'Move'));
+    await tester.pumpAndSettle();
+
+    expect(listed.map((w) => w.path), contains(to));
+    expect(container.read(worktreeTabsProvider).open, [to]);
+  });
+
+  testWidgets('switching between two open worktree tabs (0070 D9)', (
+    tester,
+  ) async {
+    final a = worktrees.firstWhere((w) => w.path.endsWith('/app-feature'));
+    final b = worktrees.firstWhere((w) => w.path.endsWith('/app-gone'));
+    final container = await pump(
+      tester,
+      extraOverrides: [..._tabOverrides(a.path), ..._tabStubs(b.path)],
+    );
+    final tabs = container.read(worktreeTabsProvider.notifier);
+    tabs.open(a.path);
+    await tester.pumpAndSettle();
+    // A selection in A's Changes pane, kept per repository.
+    container
+        .read(repoFileSelectionProvider(a.path).notifier)
+        .set(
+          container
+              .read(repoFileSelectionProvider(a.path))
+              .copyWith(paths: const {'x.txt'}),
+        );
+    await tester.pumpAndSettle();
+
+    // The same workspace is retargeted at B: no provider may change mid-build.
+    tabs.open(b.path);
+    await tester.pumpAndSettle();
+    expect(container.read(worktreeTabsProvider).selected, b.path);
+
+    // And coming back finds A's selection where it was left.
+    tabs.select(a.path);
+    await tester.pumpAndSettle();
+    expect(container.read(repoFileSelectionProvider(a.path)).paths, {'x.txt'});
   });
 
   testWidgets('an open checkout tab keeps the Worktree handlers live', (

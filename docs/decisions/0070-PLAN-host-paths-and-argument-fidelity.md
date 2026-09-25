@@ -244,7 +244,7 @@ with the maintainer's consent:
 | Branches in the scratch repo with a second worktree | A branch checked out there shows the worktree chip; Delete is dimmed with the reason |
 | Commit with message `/usr/bin broken` | `git log -1 --format=%s` on the host reads `/usr/bin broken` |
 | History filter `/usr` | Finds that commit |
-| Add worktree, open when done | The new tab stays open after the next refresh |
+| Add worktree, open when done | The new tab stays open after the next refresh (failed on first run: deviation D8) |
 | A sample `pre-commit` hook that echoes `$1`-style path arguments to a native program | Documents the F16 difference; recorded, not a failure |
 
 ### Phase 8 — Proof and records
@@ -351,6 +351,59 @@ Phase 2 alone would bring back F15.
   - returning the canonical form without git's case failed it (`Actual: 'C:/Users/u/temp/new'`),
     and also failed the `connect()` test in `test/connection_env_reset_test.dart`.
   The baseline was green first.
+
+* **D8 (2026-09-24), found at the device gate: an opened worktree tab is swept before the list
+  knows it.** Add Worktree with "Open it when done" created `mg-gate-wt` on the host, and no tab
+  opened. The sheet opens the tab (`add_worktree_sheet.dart:416`) before anything refreshes the
+  worktree list; `WorktreesView._add` refreshes only after the sheet closes
+  (`worktrees_view.dart:492`). In between, the view's dead-tab sweep (`:658`) finds the new tab
+  missing from the stale list and drops it. A host with a file watcher usually refreshes the list
+  first, from its `.git/worktrees/` event; the Windows host only polls. This is not specific to
+  Windows and predates 0070. The lines date from `6adf595` (2026-07-14). A widget test that opens
+  a tab missing from the current list failed the same way in scratch clones at `21afbb4` (before
+  this plan) and at `b7857ea`, with POSIX paths (`Actual: []`). Move reopens its tab at the new
+  path (`:449`) inside its guarded action, and the refresh runs only after that action, so it is
+  exposed the same way. The maintainer chose "openers refresh first":
+  - the sheet refreshes the repository's providers after a successful create, then opens the tab;
+  - Move refreshes before it reopens the tab;
+  - the sweep never judges a tab dead from a list that is still reloading.
+  Files added: `lib/features/worktrees/add_worktree_sheet.dart`,
+  `lib/features/worktrees/worktrees_view.dart` (both already in Phase 4) and
+  `test/worktrees_view_test.dart`. Then the gate's Add Worktree check is redone.
+
+  **Correction (2026-09-25): the cause stated above is not confirmed.**
+  - The reproduction cited above opens a tab for a worktree that never appears in the list. It
+    shows only that the sweep drops a tab missing from a settled list, which is the sweep's
+    purpose. It does not show that the list was stale when the device's tab opened.
+  - Each of the three fixes was reverted on its own in a scratch clone carrying these changes,
+    with a green baseline (20 tests):
+    - the sheet opens the tab without refreshing;
+    - the sweep judges a reloading list;
+    - Move reopens without refreshing.
+    `test/worktrees_view_test.dart` still passed 20 of 20 each time, so no test yet fails
+    without them.
+  - The fixes are committed as the maintainer chose. The device failure is still unexplained,
+    and the gate's Add Worktree check has not been redone. Both stay open until a test
+    reproduces the device failure and fails without the fix.
+
+* **D9 (2026-09-24), found by D8's Move test: switching worktree tabs writes a provider during a
+  build.** The Move test failed with Riverpod's "Tried to modify a provider while the widget tree
+  was building", raised from `RepoStatusView.didUpdateWidget` (`repo_status_view.dart:585`).
+  - The worktree workspace is not keyed by worktree (`worktrees_view.dart:813`), so a tab switch
+    retargets the same `RepoStatusView` at another path.
+  - On a path change, that view clears the file selection. Since `0316880` (2026-08-14) the
+    selection lives in `repoFileSelectionProvider(repoPath)`, keyed per repository, so the clear
+    writes to the *new* repository's provider mid-build and wipes that repository's selection.
+  - This predates this plan and is not specific to Windows. Opening a second worktree tab while
+    one is showing failed with the same stack in a scratch clone at `b7857ea`, which has no D8
+    code. D8's Move fix reaches it because the reopened tab retargets the view.
+  - Several later tests in the same run failed only as fallout; each passes on its own.
+  The maintainer chose to stop the stale reset. The selection is already kept per repository, so
+  the new one brings its own, and only widget-local state is reset on a path change. Behaviour
+  change: returning to a worktree tab shows that worktree's last selection instead of none. File
+  added: `lib/features/repository/repo_status_view.dart`. Test: a tab switch in
+  `test/worktrees_view_test.dart`. Seen to fail (2026-09-24): with the reset put back in a
+  scratch clone, 12 tests in that file failed.
 
 ### Phase 0 (2026-09-24)
 

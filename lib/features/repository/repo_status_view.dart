@@ -582,9 +582,10 @@ class _RepoStatusViewState extends ConsumerState<RepoStatusView>
       // Dismiss any open right-click menu — it targets the old repo's
       // file(s) and its actions would otherwise run against the new repo.
       _contextMenu.remove();
-      _selectionKind = null;
-      _selectedPaths = {};
-      _selectionAnchor = null;
+      // The file selection is NOT reset here: it lives in
+      // repoFileSelectionProvider, keyed by repository, so the new repository
+      // brings its own. Clearing it wrote to that provider mid-build and wiped
+      // the selection of the repository being switched to (0070 D9).
       _popout = false;
       _changeFilterController.clear();
       _changeFilter = const RepoChangeFilter();

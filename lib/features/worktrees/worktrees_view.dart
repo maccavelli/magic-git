@@ -446,7 +446,12 @@ class _WorktreesViewState extends ConsumerState<WorktreesView>
       await WindowManagerBridge.current?.closeDetachedRepoWindows(from);
       if (wasOpen && mounted) {
         final ok = await ref.read(worktreeAccessProvider).ensure(context, to);
-        if (ok) ref.read(worktreeTabsProvider.notifier).open(to);
+        if (ok) {
+          // Refresh first, so the sweep below finds the tab's new path in
+          // the list rather than dropping it as dead (0070 D8).
+          _refresh();
+          ref.read(worktreeTabsProvider.notifier).open(to);
+        }
       }
     });
   }
@@ -656,7 +661,10 @@ class _WorktreesViewState extends ConsumerState<WorktreesView>
         });
       }
       final dead = tabs.open.where((p) => !listed(p)).toList();
-      if (dead.isNotEmpty) {
+      // Only a settled list can say a worktree is gone. While it reloads,
+      // `live` is the previous list, which cannot know a worktree just created
+      // or moved — and its tab, opened a moment ago, would be dropped (0070 D8).
+      if (dead.isNotEmpty && !worktreesAsync.isLoading) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (!mounted) return;
           ref
