@@ -244,7 +244,7 @@ with the maintainer's consent:
 | Branches in the scratch repo with a second worktree | A branch checked out there shows the worktree chip; Delete is dimmed with the reason |
 | Commit with message `/usr/bin broken` | `git log -1 --format=%s` on the host reads `/usr/bin broken` |
 | History filter `/usr` | Finds that commit |
-| Add worktree, open when done | The new tab stays open after the next refresh (failed on first run: deviation D8) |
+| Add worktree, open when done | The new tab stays open after the next refresh (failed on first run: deviation D8; passed on 2026-09-25 after D8's fix) |
 | A sample `pre-commit` hook that echoes `$1`-style path arguments to a native program | Documents the F16 difference; recorded, not a failure |
 
 ### Phase 8 — Proof and records
@@ -363,7 +363,8 @@ Phase 2 alone would bring back F15.
   a tab missing from the current list failed the same way in scratch clones at `21afbb4` (before
   this plan) and at `b7857ea`, with POSIX paths (`Actual: []`). Move reopens its tab at the new
   path (`:449`) inside its guarded action, and the refresh runs only after that action, so it is
-  exposed the same way. The maintainer chose "openers refresh first":
+  exposed the same way. The maintainer chose "openers refresh first" (superseded on 2026-09-25,
+  below):
   - the sheet refreshes the repository's providers after a successful create, then opens the tab;
   - Move refreshes before it reopens the tab;
   - the sweep never judges a tab dead from a list that is still reloading.
@@ -385,6 +386,55 @@ Phase 2 alone would bring back F15.
   - The fixes are committed as the maintainer chose. The device failure is still unexplained,
     and the gate's Add Worktree check has not been redone. Both stay open until a test
     reproduces the device failure and fails without the fix.
+
+  **Diagnosis (2026-09-25): the sweep judged a list that was still reloading.**
+  - `WorktreesView.build` sweeps every open tab whose path is not in `worktreesAsync.value`.
+    While the list reloads, Riverpod still serves the previous list as that value. So a tab
+    opened for a worktree created or moved a moment ago was swept in the next frame, before the
+    new list arrived.
+  - The tests missed it because the fake list answered at once. In a widget test the refresh a
+    caller starts after the sheet closes completes before the next frame, so the sweep never
+    saw a stale list. Over SSH, `git worktree list` takes a round trip.
+  - With a 300 ms delay on the fake list (`test/worktrees_view_test.dart`, the `listing`
+    pump), both D8 tests fail without the guard, with the device's symptom:
+    `Expected: [<…>/app-new]  Actual: []`, and the same for Move.
+  - Nothing here depends on the host, or on whether it has a watcher. It was observed only on
+    the Windows host.
+  - On the device, in the scratch repository on the Windows host:
+    - the build from `4ee7534`, with none of D8's changes: Add Worktree with "Open it when
+      done" created the worktree, the list showed it, and no tab opened;
+    - the build from `478100d`: the same steps opened the new worktree's tab, and it was
+      still open 18 s later.
+  - **Only the guard is needed.** With the delay in place, each fix was reverted on its own:
+    - the guard (`!worktreesAsync.isLoading`): both D8 tests failed;
+    - the sheet's refresh before opening, and Move's refresh before reopening: both tests
+      still passed.
+
+    Every caller of `AddWorktreeSheet` already refreshes the repository as soon as the sheet
+    closes: the Worktrees panel, both Branches entry points, History, and a drop. Move
+    refreshes after its guarded action. Each of these starts the reload before the next
+    frame, and the guard holds the sweep until that reload settles.
+
+  **Decision (2026-09-25):** the maintainer chose to remove the two early refreshes, so the fix
+  is the guard alone and every line of it is proven by a failing test. The test pump keeps the
+  round-trip delay for the D8 tests. The first resolution above ("openers refresh first") is
+  superseded by this one. Files are unchanged: `lib/features/worktrees/add_worktree_sheet.dart`,
+  `lib/features/worktrees/worktrees_view.dart` and `test/worktrees_view_test.dart`. The gate's
+  Add Worktree check is redone on a build of the final change.
+
+  **Executed (2026-09-25):**
+  - Against the commit before D8, the `lib/` change is now the guard alone:
+    `add_worktree_sheet.dart` is back to its earlier text, and Move reopens its tab as it did.
+    The Add test's name and comment no longer blame a missing watcher.
+  - In a scratch clone carrying these files, `test/worktrees_view_test.dart` passed 20 of 20.
+    With the guard removed it failed 2 of 20, both D8 tests, each at its tab assertion with
+    `Actual: []`.
+  - `flutter analyze` was clean, the full suite gave `+4453 ~3: All tests passed!`, and the
+    records check had 0 findings.
+  - Gate redone on a build of exactly this tree, in the scratch repository on the Windows host:
+    Add Worktree with "Open it when done" opened the new worktree's tab, and it was still open
+    20 s later. The tab opened by the earlier `478100d` build was still open about 20 minutes
+    after it was created.
 
 * **D9 (2026-09-24), found by D8's Move test: switching worktree tabs writes a provider during a
   build.** The Move test failed with Riverpod's "Tried to modify a provider while the widget tree

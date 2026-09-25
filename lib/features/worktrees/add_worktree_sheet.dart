@@ -413,11 +413,6 @@ class _AddWorktreeSheetState extends ConsumerState<AddWorktreeSheet> {
     }
     if (!mounted) return;
 
-    // The worktree list (and any new branch) changed: refresh before the tab
-    // opens. The Worktrees panel judges a tab by that list, and one missing
-    // from it is swept as dead — which, on a host with no file watcher to
-    // refresh it first, was every tab this sheet opened (0070 D8).
-    refreshAfterMutation(ref, repoPath);
     if (_openAfter) ref.read(worktreeTabsProvider.notifier).open(path);
     Navigator.of(context).pop();
   }

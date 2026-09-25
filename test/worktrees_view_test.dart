@@ -227,9 +227,14 @@ void main() {
 
     final container = ProviderContainer(
       overrides: [
-        gitWorktreesProvider(
-          repo,
-        ).overrideWith((ref) async => listing?.call() ?? data ?? worktrees),
+        gitWorktreesProvider(repo).overrideWith((ref) async {
+          if (listing == null) return data ?? worktrees;
+          // A host answers `worktree list` after a round trip. An instant
+          // answer lands before the next frame and hides a sweep that judges
+          // the stale list mid-reload (0070 D8).
+          await Future<void>.delayed(const Duration(milliseconds: 300));
+          return listing();
+        }),
         ...extraOverrides,
       ],
     );
@@ -351,12 +356,12 @@ void main() {
     expect(container.read(worktreeTabsProvider).open, [tabPath]);
   });
 
-  testWidgets('Add Worktree, open when done: the tab outlives a list no '
-      'watcher refreshed (0070 D8)', (tester) async {
+  testWidgets('Add Worktree, open when done: the tab outlives the list '
+      'reloading (0070 D8)', (tester) async {
     SharedPreferences.setMockInitialValues({});
     // The list as git has it. What the panel shows is a copy taken at each
-    // fetch, so it learns of a new worktree only when something refreshes
-    // it — as on a host with no file watcher.
+    // fetch, a round trip after the refresh that follows the sheet — and
+    // until it lands, the panel still holds the list without the new one.
     final listed = [...worktrees];
     final git = _WorktreeGit(listed);
     final created = '${tmp.path}/app-new';

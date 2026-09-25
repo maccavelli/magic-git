@@ -446,12 +446,7 @@ class _WorktreesViewState extends ConsumerState<WorktreesView>
       await WindowManagerBridge.current?.closeDetachedRepoWindows(from);
       if (wasOpen && mounted) {
         final ok = await ref.read(worktreeAccessProvider).ensure(context, to);
-        if (ok) {
-          // Refresh first, so the sweep below finds the tab's new path in
-          // the list rather than dropping it as dead (0070 D8).
-          _refresh();
-          ref.read(worktreeTabsProvider.notifier).open(to);
-        }
+        if (ok) ref.read(worktreeTabsProvider.notifier).open(to);
       }
     });
   }
