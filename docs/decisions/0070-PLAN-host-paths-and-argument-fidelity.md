@@ -245,6 +245,7 @@ with the maintainer's consent:
 | Commit with message `/usr/bin broken` | `git log -1 --format=%s` on the host reads `/usr/bin broken` |
 | History filter `/usr` | Finds that commit |
 | Add worktree, open when done | The new tab stays open after the next refresh (failed on first run: deviation D8; passed on 2026-09-25 after D8's fix) |
+| **(D11)** A tag, a merge and a stash, each with a message starting with `/` | On the host, `git cat-file -p` of the tag, `git log -1 --format=%B` of the merge, and `git stash list` show each message unchanged |
 | A sample `pre-commit` hook that echoes `$1`-style path arguments to a native program | Documents the F16 difference; recorded, not a failure |
 
 ### Phase 8 — Proof and records
@@ -470,6 +471,13 @@ Phase 2 alone would bring back F15.
   scope from D7), each seen to fail under the mutation, and to commit the catalogue as
   `scripts/tools/mutations/0070-host-paths.json`, as MADRs 0032 to 0054 did, so `mutate.py
   --check` keeps it from going stale. Files added: `scripts/tools/mutations/0070-host-paths.json`.
+
+* **D11 (2026-09-25), Phase 7's table is narrower than its criterion.** The acceptance criteria
+  say that a commit, tag, merge or stash message, or a History filter, starting with `/` reaches
+  git unchanged, checked on the device. Phase 7's table has rows for the commit and the filter
+  only, and both passed. The maintainer chose to add three device checks, on a fresh scratch
+  repository on the Windows host: a tag message, a merge message and a stash message, each
+  starting with `/`. The plan closes only once they pass. Files added: none.
 
 ### Phase 0 (2026-09-24)
 

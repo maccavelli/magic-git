@@ -429,6 +429,30 @@ setting is machine-wide.
     intended topic. **Red first:** the updated test failed on the old book in "every locked topic id
     exists in its category, in order" and "quoted UI labels exist in their topic and in source".
     After the change: `help_book_json_test.dart` `+16`, all pass.
+* **D6 (2026-09-25, deviation, Phase 5): evidence against A10.**
+  * **Evidence.** To run the three unrun rows (Copy, Denied, Settings path), the host's
+    `DefaultShell` was removed with the maintainer's consent. Its value
+    (`C:\Program Files\Git\bin\bash.exe`) was saved first, and the SSH session was confirmed
+    elevated. A new connection still ran `/usr/bin/bash`. Reading the registry directly showed the
+    64-bit `HKLM\SOFTWARE\OpenSSH` key with no values, the 32-bit view had no key, and
+    `sshd_config` sets no shell. The parent chain of a new SSH command was `sshd.exe -z` →
+    `c:\program files\git\bin\bash.exe`, lower-case where the registry value is not. The host had
+    booted at 15:57 that day, and the `sshd` listener started then, with `DefaultShell` set. So
+    `sshd` appears to read `DefaultShell` once, at service start, and to hand it to every later
+    session. A10 ("applies to the next connection with no `sshd` restart") was recorded on
+    2026-09-23 from the maintainer's account, not observed. `DefaultShell` was restored to its
+    saved value and read back.
+  * **Why it matters.** If a restart is needed, Enable → Reconnect lands in cmd.exe again until
+    the service restarts, and the prompt comes back as though Enable had failed.
+  * **Resolutions offered:**
+    1. restart `sshd` as part of the gate and settle A10 both ways: remove the value and restart,
+       expecting cmd.exe; then set it with no restart and see whether the next connection gets
+       Git Bash;
+    2. record A10 as unconfirmed and leave the three rows unrun.
+  * **Decision (maintainer, 2026-09-25): option 1.** If a restart turns out to be needed, the fix to
+    Enable and to the copyable command comes back as a proposal before any code changes. The value
+    is restored at the end.
+  * **Files added to scope:** none yet.
 * **Phase 5 (2026-09-23), device gate on the maintainer's Windows 11 laptop.**
   * 5.1: `./build_macos.sh --unsigned --install` (1.9.3.8), at the maintainer's request. The
     running copy was quit with ⌘Q and confirmed, and the installed build launched.
