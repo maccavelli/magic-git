@@ -214,7 +214,7 @@ and is recorded in the execution record.
      | Preview cleanup | Stage a change; start a commit; cancel or let the hook stall past the timeout. Then inspect the repository's git dir. | No `MAGICGIT_MSG_PREVIEW.*` remains. |
      | Wait legibility | Repeat with a hook that prints to stderr. | The Output view carries the hook's lines while the wait is on. |
      | Back bar | At a compact width, open any list's detail. | The "‹ …" control sits at the left edge of its bar, not centred. |
-     | The four other buttons that move (D3) | Look at each: the connection form's button (Connections → add/edit), the Forge create sheet's, a Forge list error's retry, and the switcher's edit-entry sheet's. | Each sits at the left of its row, as its code asks, and looks right there. |
+     | The four other buttons that move (D3) — **widened by D5 to every surface Amendment 0068.7 lists** | Look at each: the connection form's button (Connections → add/edit), the Forge create sheet's, a Forge list error's retry, and the switcher's edit-entry sheet's. | Each sits at the left of its row, as its code asks, and looks right there. |
      | Dropped first click (open observation, 0064 D4) | With the app **not** frontmost, click once on a control with a real mouse. | The click acts. A FAIL here opens a new record; it is not fixed under this plan. |
 5.3. Update this plan's status, the MADR's status, `docs/README.md`, and
      `0067-REPORT`'s Findings 1 and 2 with pointers to what was done.
@@ -472,3 +472,72 @@ nothing to undo.
 
     With one TERM, all six rows are clean. The remote host was not re-probed.
   * AC10–AC13 met. The device check of preview cleanup stays in Phase 5.
+* **Phase 5, first pass (2026-09-25).** `./build_macos.sh --unsigned` exited 0, and the build
+  (1.9.4.11, from `73b6257`) was installed at the maintainer's request with the script's printed
+  steps, after the running copy was quit and its confirmation accepted. The app was driven with
+  `cliclick` and window captures. The fixture was a scratch repository with its hooks path pinned
+  to `.git/hooks`, a staged change, and a `prepare-commit-msg` hook that writes two stderr lines
+  and then sleeps 600 s. It was opened with *Save repository* off. The commit timeout was set to
+  60 s for the gate and put back to 300 s afterwards.
+
+  | Item | Result | Evidence |
+  |---|---|---|
+  | Preview cleanup | **PASS** | Two previews timed out at 60 s. After each, the git dir held no `MAGICGIT_MSG_PREVIEW.*` file and the hook's shell had stopped. The hook's own `sleep` child was reparented to launchd both times, which is 0069-REPORT's finding and not this plan's. |
+  | Wait legibility | **PASS** | While the spinner ran, the Output view showed `$ prepare-commit-msg (message preview)` and both stderr lines. On timeout the composer said "Could not generate a message. Enter one manually." |
+  | Back bar | **PASS** | At 640 pt (the window's minimum), History → a commit: "‹ Commits" sits at x ≈ 8–93, at the bar's left. |
+  | The buttons that move | not yet run | Widened by D5, below. |
+  | Dropped first click | not yet run | The maintainer's check, with a real mouse. |
+
+  **Found at the gate, not fixed here.** Both predate this plan:
+  * At the compact width, the sidebar is painted underneath the content and does not take clicks.
+    It follows the live selection, so it is not a stale frame, and a screen capture shows the same
+    thing as a window capture. It reproduces on a build of `dbd6d1b`, which predates 0068. The
+    maintainer chose a new record: diagnose first, then a MADR and plan.
+  * A timed-out preview on a **local** repository reports "Timed out waiting for the remote
+    command to finish.", and the Output view says "SSH command timed out: …". The text comes from
+    `SSHCommandTimeout.toString` (`ssh_command_executor.dart:70`) and `ssh_error_messages.dart:66`,
+    and dates from `2d8a357`.
+* **D5 (2026-09-25, deviation, Phase 5): D3's inventory missed every button inside a `Wrap`.**
+  * **Evidence.** A `Wrap` gives each child a bounded maximum width. Before Phase 3, a button's
+    `Center` filled that width, so it took the whole run and its capsule sat in the middle. Now
+    the button is content-sized, and the `Wrap` positions it. D3 counted 53 call sites as "list
+    elements, whose width was already content-sized", which holds for a `Row` but not for a
+    `Wrap`. Seen on the device, the same fixture in a build of `dbd6d1b` and in this build:
+    * "Review all visible" (`repo_change_navigator.dart:166`, `WrapAlignment.end`) moved from
+      centred (x ≈ 260–380 at 640 pt) to the right (x ≈ 512–630);
+    * the branch detail's "Check out" moved from a centred line of its own onto the row beside
+      "Advanced", and the tabs below it moved up about 28 pt.
+
+    A scratch scan finds at least 10 call sites directly in a `Wrap`: `branches_view.dart:751-766`
+    (4), `activity_center.dart:341-353` (3), `multi_file_review.dart:253` and
+    `repo_change_navigator.dart:172-177` (2). A button nested one wrapper deeper was not counted.
+    None of the 48 goldens renders them. Amendment 0068.3's claim that 8 single-slot callers are
+    the only ones affected is wrong.
+  * **Resolutions offered:**
+    1. measure the effect per parent kind in a widget test, list every affected call site in a new
+       amendment, and put each on Phase 5's checklist, keeping positions that obey their code;
+    2. the same, and give an explicit alignment to any surface that looks wrong in its new
+       position.
+  * **Decision (maintainer, 2026-09-25): option 1.** The test lays out the button in each kind of
+    parent, next to a reference that fills its width the way the old `Center` did, and records
+    which kinds change position. A scan then classifies every call site by its nearest
+    layout-deciding parent. MADR Amendment 0068.7 lists the result, and each listed surface joins
+    Phase 5.2's row.
+  * **Files added to scope:** none. `test/inline_button_alignment_test.dart` (Phase 3) gains the
+    cases, and the MADR gains the amendment.
+  * **Executed (2026-09-25).**
+    * `inline_button_alignment_test.dart`: "the parents in which the capsule moves are exactly
+      these" lays the button out in ten kinds of parent, beside a reference with the old bare
+      `Center`, and asserts that exactly `Wrap` (start), `Wrap` (end), `Column(start)` and
+      `Align(centerLeft)` move it. `+3: All tests passed!`.
+    * **Seen to fail:** with `widthFactor: 1` removed in a scratch worktree, the harness reported
+      it KILLED (with both Phase 3 cases). Run on its own there, it failed with `Expected:
+      Set:['Wrap (start)', 'Wrap (end)', 'Column (start)', 'Align (centerLeft)']` / `Actual:
+      Set:[]`. The reference is faithful to the old shape. The first rerun in the kept worktree
+      passed because the harness had already restored the file, so the mutation was re-applied
+      with an asserted replacement before the failing run.
+    * **The scan:** all 61 call sites classified, with each `Column` and `Wrap` site read back for
+      its own alignment argument. 21 sites move, one of them the `_detailButton` helper that 8
+      callers use. 40 do not. Amendment 0068.7 lists them, and 0068.3 carries a note that points
+      to it.
+    * The device check of the listed surfaces is Phase 5.2's widened row, still to run.

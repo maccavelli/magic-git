@@ -317,6 +317,10 @@ The spinner's measurement becomes Amendment 0068.3.
 
 ## Amendment 0068.3 (2026-09-22): four more buttons move, each to where its code asks
 
+> **Corrected by Amendment 0068.7 (2026-09-25):** the 53 "list elements" are not all unaffected.
+> A `Wrap` or a `Column(crossAxisAlignment: start)` offers its children a bounded width, and 16
+> of those sites move. The table below is right about the eight single-slot callers.
+
 §C says every caller in a `Row` is unaffected and the back bar's `centerLeft` "starts working, with
 no change there" — implying the back bar is the only visible change. Classifying all 61 call sites
 (a scratch script reading each one's slot and enclosing widgets) contradicts that: 53 are list
@@ -431,3 +435,48 @@ closes the channel, then sends KILL (`ssh_command_executor.dart`, `killAndCloseS
 the script without ignoring it, would narrow the window without closing it. Removing only the
 `finally` would leave the drain-failure path without its KILL. Signalling the process group is
 0069-REPORT's question, and would not by itself stop a repeated TERM re-entering the trap.
+
+## Amendment 0068.7 (2026-09-25): the buttons that move, measured
+
+Amendment 0068.3 counted 53 of the 61 call sites as list elements "whose width was already
+content-sized". That holds for a `Row`, which offers an unbounded width. It does not hold for a
+`Wrap` or a `Column`, which offer a bounded one. Before §C, the button's bare `Center` filled that
+width: a lone button took the whole run with its capsule in the middle, and several buttons in a
+`Wrap` stacked one per run. The device gate showed two of them (0068-PLAN, deviation D5).
+
+**The rule, measured.** `inline_button_alignment_test.dart` lays out the button in each kind of
+parent the call sites use, beside a reference that fills its width the way the old `Center` did,
+and asserts which kinds move the capsule:
+
+| Parent | Offers | Capsule |
+|---|---|---|
+| `Row`, `Expanded` in a `Row`, horizontal `ListView` | unbounded, or tight | unchanged |
+| `Column` (centre), `Column(stretch)`, `Center` | bounded, but centred or tight | unchanged |
+| `Wrap` (start or end), `Column(start)`, `Align(centerLeft)` | bounded and loose, placed off-centre | **moves** |
+
+With the old `Center` restored in a scratch worktree, the test fails with `Actual: Set:[]`. The
+reference reproduces the old shape, so the table measures the real change.
+
+**The call sites.** A scan classified all 61 sites by their nearest layout-deciding parent, skipping
+padding, tooltips and spreads; the `Column` and `Wrap` sites were read back for their own alignment
+argument. 21 sites move, all to where their parent asks. One of them is the `_detailButton` helper,
+which 8 callers use:
+
+| Parent | Call sites (`lib/features/…`) | Before → now |
+|---|---|---|
+| `Wrap` (start) | `branches/branches_view.dart:751-766` (batch Pin, Unpin, Hide, Delete if merged) | stacked, centred → one row, left |
+| `Wrap` (start) | `branches/branch_detail.dart` `_detailButton` (8 callers: `:722-734`, `:833`, `:877-882`, `:939-948`), laid out by the `Wrap` at `:470` | a lone button centred; several stacked → one row, left |
+| `Wrap` (start) | `common/activity_center.dart:341-353` (Output, Undo, Recovery) | stacked, centred → one row, left |
+| `Wrap` (start) | `repository/multi_file_review.dart:253` | centred → left |
+| `Wrap` (end) | `repository/repo_change_navigator.dart:172-177` (Review selected, Review all visible) | centred → right |
+| `Column(start)` | `branches/branch_detail.dart:327`, `:1007`, `:1360`, `:1407`; `forge/forge_widgets.dart:231`; `forge/merge_readiness.dart:70` | centred → left |
+| `centerLeft` | `common/adaptive_workspace_layout.dart:558` (the back bar), `connection/connection_form.dart:441`, `forge/forge_create_sheet_widgets.dart:284`, `switcher/edit_entry_sheets.dart:204` | centred → left (0068.3) |
+
+The other 40 are `Row` children (36, counting a section header's trailing row), the paged commit
+list's Retry and Load more in a `Column(stretch)` (`branch_detail.dart:1764-1771`), the
+scaffold's `Column` in a `Center` (`repository_workspace_scaffold.dart:116`), and a horizontal
+`ListView` item (`multi_file_review.dart:183`). None of them moves.
+
+**Decision (maintainer, 2026-09-25).** Every position now obeys its parent, and none is changed
+back. Each surface in the table joins 0068-PLAN Phase 5's device checklist, so that each new
+position is looked at on the device. None of the 48 workspace goldens renders them.
