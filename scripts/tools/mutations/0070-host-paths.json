@@ -1,0 +1,91 @@
+[
+  {
+    "label": "canonical without the MSYS-drive rule",
+    "file": "lib/core/utils/host_path.dart",
+    "find": "if (msys != null) p = '${msys.group(1)}:${msys.group(2) ?? '/'}';",
+    "replace": "if (msys != null && p.isEmpty) p = '${msys.group(1)}:${msys.group(2) ?? '/'}';",
+    "tests": [
+      "test/host_path_test.dart",
+      "test/connection_env_reset_test.dart"
+    ]
+  },
+  {
+    "label": "same case-sensitive on Windows",
+    "file": "lib/core/utils/host_path.dart",
+    "find": "return _key(a) == _key(b);",
+    "replace": "return canonical(a, style) == canonical(b, style);",
+    "tests": [
+      "test/host_path_test.dart",
+      "test/worktrees_view_test.dart",
+      "test/tabs_controller_test.dart",
+      "test/connection_env_reset_test.dart"
+    ]
+  },
+  {
+    "label": "formatter without MSYS_NO_PATHCONV",
+    "file": "lib/core/ssh/ssh_command_executor.dart",
+    "find": "if (_hostPathStyle == HostPathStyle.windows) 'MSYS_NO_PATHCONV': '1',",
+    "replace": "if (_hostPathStyle == HostPathStyle.windows && _envPath == '\\u0000') 'MSYS_NO_PATHCONV': '1',",
+    "tests": [
+      "test/command_formatter_test.dart",
+      "test/connection_env_reset_test.dart"
+    ]
+  },
+  {
+    "label": "connect without canonicalization (path lists)",
+    "file": "lib/core/providers/app_providers.dart",
+    "find": "String canon(String p) => HostPath.canonical(p, pathStyle);",
+    "replace": "String canon(String p) => p;",
+    "tests": [
+      "test/connection_env_reset_test.dart",
+      "test/connection_provisioning_test.dart"
+    ]
+  },
+  {
+    "label": "connect without canonicalization (repo path)",
+    "file": "lib/core/providers/app_providers.dart",
+    "find": "final canonical = HostPath.canonical(repoPath, style);",
+    "replace": "final canonical = repoPath;",
+    "tests": [
+      "test/connection_env_reset_test.dart",
+      "test/connection_provisioning_test.dart"
+    ]
+  },
+  {
+    "label": "worktreePath back to startsWith('/')",
+    "file": "lib/core/git/git_service.dart",
+    "find": "worktreePath: HostPath.looksAbsolute(wt) ? wt : null,",
+    "replace": "worktreePath: wt.startsWith('/') ? wt : null,",
+    "tests": [
+      "test/refs_parse_test.dart",
+      "test/git_service_test.dart"
+    ]
+  },
+  {
+    "label": "gitfile target back to startsWith('/')",
+    "file": "lib/core/git/git_service.dart",
+    "find": "return HostPath.looksAbsolute(target) ? target : '$repoPath/$target';",
+    "replace": "return target.startsWith('/') ? target : '$repoPath/$target';",
+    "tests": [
+      "test/git_service_test.dart"
+    ]
+  },
+  {
+    "label": "pipeline back to !=",
+    "file": "lib/features/workspace/create_repo_pipeline.dart",
+    "find": "if (!HostPath.same(top, dest, request.pathStyle)) {",
+    "replace": "if (top != dest) {",
+    "tests": [
+      "test/create_repo_pipeline_test.dart"
+    ]
+  },
+  {
+    "label": "sweep back to contains",
+    "file": "lib/features/worktrees/worktrees_view.dart",
+    "find": "bool listed(String p) => paths.any((q) => HostPath.same(p, q, style));",
+    "replace": "bool listed(String p) => paths.contains(p);",
+    "tests": [
+      "test/worktrees_view_test.dart"
+    ]
+  }
+]

@@ -89,8 +89,12 @@ class _RecordingExecutor extends SSHCommandExecutor {
 
 /// A Windows host through Git Bash (0070.3, D7): the environment probe
 /// reports MINGW and `$HOME`, and git spells the repository's top level its
-/// own way.
+/// own way — or, with [topLevel] null, does not report one (D10). A scoped
+/// layout probe answers from the `GIT_DIR`/`GIT_WORK_TREE` it was given.
 class _WindowsProvExecutor extends _RecordingExecutor {
+  _WindowsProvExecutor({this.topLevel = 'C:/Users/u/Temp/New'});
+  final String? topLevel;
+
   @override
   Future<SSHCommandResult> execute({
     required String repoPath,
@@ -114,12 +118,23 @@ class _WindowsProvExecutor extends _RecordingExecutor {
         stderr: '',
       );
     }
-    if (gitArgs.contains('--show-toplevel')) {
-      return const SSHCommandResult(
+    if (gitArgs.contains('--git-common-dir')) {
+      final gitDir = extraEnv?['GIT_DIR'] ?? '';
+      return SSHCommandResult(
         exitCode: 0,
-        stdout: 'C:/Users/u/Temp/New\n',
+        stdout: '${extraEnv?['GIT_WORK_TREE']}\n$gitDir\n$gitDir\n',
         stderr: '',
       );
+    }
+    if (gitArgs.contains('--show-toplevel')) {
+      final top = topLevel;
+      return top == null
+          ? const SSHCommandResult(
+              exitCode: 128,
+              stdout: '',
+              stderr: 'fatal: not a git repository',
+            )
+          : SSHCommandResult(exitCode: 0, stdout: '$top\n', stderr: '');
     }
     return super.execute(repoPath: repoPath, gitArgs: gitArgs);
   }
@@ -354,21 +369,26 @@ void main() {
     },
   );
 
+  ProviderContainer buildWindows({String? topLevel = 'C:/Users/u/Temp/New'}) {
+    manager = _GatedManager();
+    final win = _WindowsProvExecutor(topLevel: topLevel);
+    store = _FakeStore();
+    final c = ProviderContainer(
+      overrides: [
+        sshClientManagerProvider.overrideWithValue(manager),
+        executorProvider.overrideWithValue(win),
+        gitServiceProvider.overrideWithValue(GitService(win)),
+        connectionStoreProvider.overrideWithValue(store),
+      ],
+    );
+    addTearDown(c.dispose);
+    return c;
+  }
+
   test(
     'on a Windows host, finalize keeps git\'s C:/ spelling (0070.3, D7)',
     () async {
-      manager = _GatedManager();
-      final win = _WindowsProvExecutor();
-      store = _FakeStore();
-      container = ProviderContainer(
-        overrides: [
-          sshClientManagerProvider.overrideWithValue(manager),
-          executorProvider.overrideWithValue(win),
-          gitServiceProvider.overrideWithValue(GitService(win)),
-          connectionStoreProvider.overrideWithValue(store),
-        ],
-      );
-      addTearDown(container.dispose);
+      container = buildWindows();
       controller = container.read(connectionProvider.notifier);
       final token = await begin();
 
@@ -390,6 +410,52 @@ void main() {
       );
     },
   );
+
+  test(
+    'on a Windows host, a scoped repository typed C:\\ is kept canonical (D10)',
+    () async {
+      container = buildWindows();
+      controller = container.read(connectionProvider.notifier);
+      final token = await begin();
+
+      // Scoped: the spelling is decided before git is asked, so this route
+      // canonicalizes on its own rather than taking git's case.
+      final ok = await controller.finalizeProvisioned(
+        token: token,
+        conn: _conn(),
+        repoPath: r'C:\Users\u',
+        gitDir: r'C:\Users\u\.home.git',
+      );
+      expect(ok, isTrue);
+      expect(state().repoPath, 'C:/Users/u');
+      expect(store.updated.single.allRepoPaths, contains('C:/Users/u'));
+      expect(
+        store.updated.single.allRepoPaths.where((p) => p.contains(r'\')),
+        isEmpty,
+      );
+    },
+  );
+
+  test('on a Windows host, a repository git does not report is kept canonical '
+      '(D10)', () async {
+    container = buildWindows(topLevel: null);
+    controller = container.read(connectionProvider.notifier);
+    final token = await begin();
+
+    final ok = await controller.finalizeProvisioned(
+      token: token,
+      conn: _conn(),
+      repoPath: r'C:\Users\u\temp\new',
+    );
+    expect(ok, isTrue);
+    // No git spelling to adopt, so the typed case stays; the form is still
+    // canonical.
+    expect(state().repoPath, 'C:/Users/u/temp/new');
+    expect(
+      store.updated.single.allRepoPaths.where((p) => p.contains(r'\')),
+      isEmpty,
+    );
+  });
 
   test('finalize with fsmonitor persists it into the connection', () async {
     container = build();

@@ -455,6 +455,22 @@ Phase 2 alone would bring back F15.
   `test/worktrees_view_test.dart`. Seen to fail (2026-09-24): with the reset put back in a
   scratch clone, 12 tests in that file failed.
 
+* **D10 (2026-09-25), found by Phase 8's mutations: two provisioning routes are untested.**
+  Phase 8's catalogue added two entries beyond the seven listed: "connect without
+  canonicalization" was split into its path lists and its repository path, and the gitfile target
+  got its own entry. One survived: `_hostSpelling` returning the typed `repoPath` instead of
+  `HostPath.canonical(repoPath, style)` (`app_providers.dart:2951`). `connect()` canonicalizes
+  before it calls the helper, so there the mutation changes nothing. `finalizeProvisioned()`
+  (`:3174`) does not, so two of its routes would keep a typed `C:\…` with no test failing:
+  - a scoped (dotfiles) repository, where the helper returns before asking git;
+  - a repository git does not report (`topLevel` returns null).
+
+  The code is right today. What is missing is a test that pins it. Found on the unmodified tree.
+  The maintainer chose to add both cases to `test/connection_provisioning_test.dart` (already in
+  scope from D7), each seen to fail under the mutation, and to commit the catalogue as
+  `scripts/tools/mutations/0070-host-paths.json`, as MADRs 0032 to 0054 did, so `mutate.py
+  --check` keeps it from going stale. Files added: `scripts/tools/mutations/0070-host-paths.json`.
+
 ### Phase 0 (2026-09-24)
 
 * The maintainer approved the plan and Amendment 0070.3, accepting the hook trade-off. Records:
@@ -595,3 +611,36 @@ Phase 2 alone would bring back F15.
   UI label (the error texts it touches already existed), so there was nothing new to anchor.
 * `help_book_json_test`, `docs_records_test`, `no_real_identifiers_scan_test`: `+45: All tests
   passed!`; records check 0 findings.
+
+### Phase 7 (2026-09-25), device gate
+
+The installed build of `73b6257` (1.9.4.11), driven on this Mac against the maintainer's Windows 11
+host. The scratch repository was created over SSH under `%TEMP%` (`mg-gate-0070`, with a second
+worktree `mg-gate-0070-wt` holding branch `wt-held`, a staged change, and the F16 sample hook), with
+the maintainer's consent, and removed afterwards together with its entry in the saved connection.
+
+| Check | Result | Evidence |
+|---|---|---|
+| Connect with the saved entry | **PASS** | Title `magic-cli-remote (master)`, the tab and the sidebar name the folder; the live path is `C:/Users/<user>/gitrepos/magic-cli-remote` (the watcher line); Workspaces lists the folder names, and its hover shows `C:/…`. The saved entry was already all `C:/…`: an earlier connect had rewritten it, so this connect had nothing left to rewrite. |
+| Add the scratch repository as `/c/…` | **PASS** | Browsed to `/c/Users/<user>/AppData/Local/Temp/mg-gate-0070`; the live path became `C:/Users/<user>/AppData/Local/Temp/mg-gate-0070` and the saved connection stored that spelling (D7, on the device). |
+| Branches with a second worktree | **PASS** | `wt-held` carries the worktree chip; its menu offers "Switch to its worktree", and Delete branch is dimmed with "Checked out in the worktree "mg-gate-0070-wt" — remove that worktree first". |
+| Commit with message `/usr/bin broken` | **PASS** | `git log -1 --format=%s` on the host: `/usr/bin broken`. |
+| History filter `/usr` | **PASS** | "1 matching commit", `/usr/bin broken`. |
+| Add worktree, open when done | **PASS** | Recorded under D8 (2026-09-25), on a build of this same code. |
+| F16 sample hook | recorded | The `pre-commit` hook passes `/usr/bin` to `git.exe` and logs what it received. Run by the app: `MSYS_NO_PATHCONV=1 arg= '/usr/bin'`. Run from a plain SSH shell: `MSYS_NO_PATHCONV=unset arg= 'C:/Program Files/Git/usr/bin'`. That is Amendment 0070.3's trade-off, as documented. |
+
+### Phase 8 (2026-09-25), with D10
+
+* The catalogue, `scripts/tools/mutations/0070-host-paths.json`, holds the seven mutations listed
+  plus two (D10): connect split into its path lists and its repository path, and the gitfile
+  target on its own.
+* **First run** (baseline green, 9 test files; compile canary recognised): 8 killed, 1 survived —
+  `connect without canonicalization (repo path)`. That is D10.
+* `test/connection_provisioning_test.dart` gained two cases: a scoped repository typed `C:\Users\u`
+  is kept as `C:/Users/u`, and a repository git does not report keeps the typed case in canonical
+  form. The Windows executor fake answers the layout probe and can report no top level.
+* **Second run:** `9 killed, 0 survived, 0 did not apply, 0 did not compile, 0 observed by no
+  test`. The survivor is now killed by both new cases.
+* `mutate.py --check` on the catalogue: `9 sound`, with the analyzer canary recognised.
+* `flutter analyze`: No issues found. `dart format` reflowed the test file once. Full suite:
+  `03:18 +4455 ~3: All tests passed!`, 0 `[E]`.
