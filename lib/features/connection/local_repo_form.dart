@@ -230,6 +230,11 @@ class _AddExistingRepoSheetState extends ConsumerState<AddExistingRepoSheet>
   /// treating that as This Mac is what made this sheet always open on the Mac.
   WorkspaceDestination _dest = const LocalMacDestination();
 
+  /// The tab's connect attempt when this sheet opened. Its error, if any, is
+  /// an earlier failure (a cancelled Windows shell prompt), not this sheet's;
+  /// only an attempt started since is shown (0070-PLAN D7).
+  int _openedEpoch = 0;
+
   String? get _connectionId => switch (_dest) {
     SavedConnectionDestination(:final id) => id,
     _ => null,
@@ -295,6 +300,7 @@ class _AddExistingRepoSheetState extends ConsumerState<AddExistingRepoSheet>
     // never did — it always opened on This Mac, so a user connected to a host
     // had to re-pick it every time (MADR 0038 F4).
     final conn = ref.read(connectionProvider);
+    _openedEpoch = conn.sessionEpoch;
     _dest = switch (conn) {
       // See the wizards' twin: a disconnected session still reports the `ssh`
       // backend, so `isConnected` is what keeps a session-less sheet on This
@@ -859,9 +865,11 @@ class _AddExistingRepoSheetState extends ConsumerState<AddExistingRepoSheet>
 
   @override
   Widget build(BuildContext context) {
-    final (phase, error) = ref.watch(
-      connectionProvider.select((c) => (c.phase, c.error)),
+    final (phase, error, epoch) = ref.watch(
+      connectionProvider.select((c) => (c.phase, c.error, c.sessionEpoch)),
     );
+    final errorSinceOpened =
+        phase == ConnectionPhase.error && epoch != _openedEpoch ? error : null;
     final conns = ref.watch(savedConnectionsProvider).value ?? const [];
     final session = ref.watch(connectionProvider);
     final typography = MacosTheme.of(context).typography;
@@ -1080,10 +1088,10 @@ class _AddExistingRepoSheetState extends ConsumerState<AddExistingRepoSheet>
                 ),
               ),
             ],
-            if (phase == ConnectionPhase.error && error != null) ...[
+            if (errorSinceOpened != null) ...[
               const SizedBox(height: 16),
               Text(
-                error,
+                errorSinceOpened,
                 style: typography.body.copyWith(
                   color: MacosColors.systemRedColor,
                 ),

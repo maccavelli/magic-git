@@ -75,6 +75,13 @@ Future<void> _pump(
   await tester.pumpAndSettle();
 }
 
+/// A stub session whose state the test can move on after the sheet opens.
+class _PublishingConnection extends StubConnection {
+  _PublishingConnection(super.state);
+
+  void publish(ConnectionState next) => state = next;
+}
+
 /// Records what the sheet persists, so a duplicate save is visible.
 class _RecordingLocalStore extends LocalRepoStore {
   final List<SavedLocalRepo> saved = [];
@@ -275,6 +282,46 @@ void main() {
       );
     });
   });
+  // 0070-PLAN D7: the sheet shows the tab's connect error only when it comes
+  // from an attempt made since the sheet opened. A failed connect from before
+  // (a cancelled Windows shell prompt) is not this sheet's failure.
+  group('which connect error the sheet shows (0070-PLAN D7)', () {
+    const cmdExe =
+        "This Windows host's SSH shell is cmd.exe. Magic Git needs Git Bash "
+        'as the shell, and Git Bash is installed.';
+    const failedBefore = ConnectionState(
+      phase: ConnectionPhase.error,
+      error: cmdExe,
+      repoPath: '/srv/repo',
+      connectionId: 'c1',
+      host: 'h',
+      sessionEpoch: 4,
+    );
+
+    testWidgets('not one left from before it opened', (tester) async {
+      await _pump(tester, connection: StubConnection(failedBefore));
+
+      expect(find.text(cmdExe), findsNothing);
+    });
+
+    testWidgets('one from an attempt since it opened', (tester) async {
+      final connection = _PublishingConnection(failedBefore);
+      await _pump(tester, connection: connection);
+
+      connection.publish(
+        const ConnectionState(
+          phase: ConnectionPhase.error,
+          error: 'not a git repository: /srv/other',
+          repoPath: '/srv/other',
+          sessionEpoch: 5,
+        ),
+      );
+      await tester.pump();
+
+      expect(find.text('not a git repository: /srv/other'), findsOneWidget);
+    });
+  });
+
   // 0009 L18: a dimmed Open names the first missing field, and Enter on
   // the label field is wired to submit.
   testWidgets('Open names the first invalid field and submits on Enter', (

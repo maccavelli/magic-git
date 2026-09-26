@@ -172,6 +172,91 @@ void main() {
     });
   });
 
+  // 0070-PLAN D7: powershell.exe with redirected streams writes its progress
+  // records to stderr as CLIXML, so the host's reason arrived wrapped in XML.
+  // Both samples were captured from a Windows 11 host with the app's own
+  // command line (encodedPowerShellCommand), CRLFs and all.
+  group('PowerShell stderr (D7)', () {
+    // A denial shaped like Enable's: its catch writes the reason as a plain
+    // line, between the CLIXML header and PowerShell's progress record.
+    const enableDenied =
+        '#< CLIXML\r\nRequested registry access is not allowed.\r\n<Objs Version='
+        '"1.1.0.1" xmlns="http://schemas.microsoft.com/powershell/2004/04"><Obj S'
+        '="progress" RefId="0"><TN RefId="0"><T>System.Management.Automation.PSCu'
+        'stomObject</T><T>System.Object</T></TN><MS><I64 N="SourceId">1</I64><PR '
+        'N="Record"><AV>Preparing modules for first use.</AV><AI>0</AI><Nil /><PI'
+        '>-1</PI><PC>-1</PC><T>Completed</T><SR>-1</SR><SD> </SD></PR></MS></Obj>'
+        '</Objs>';
+
+    // An uncaught error: PowerShell serialises it as S="Error" strings with
+    // their line ends escaped as _x000D__x000A_.
+    const uncaughtError =
+        '#< CLIXML\r\n<Objs Version="1.1.0.1" xmlns="http://schemas.microsoft.com'
+        '/powershell/2004/04"><Obj S="progress" RefId="0"><TN RefId="0"><T>System'
+        '.Management.Automation.PSCustomObject</T><T>System.Object</T></TN><MS><I'
+        '64 N="SourceId">1</I64><PR N="Record"><AV>Preparing modules for first us'
+        'e.</AV><AI>0</AI><Nil /><PI>-1</PI><PC>-1</PC><T>Completed</T><SR>-1</SR'
+        '><SD> </SD></PR></MS></Obj><S S="Error">Get-Item : Cannot find path \'HK'
+        'LM:\\SOFTWARE\\NoSuchKeyForMagicGitGate\' because it does not exist._x00'
+        '0D__x000A_</S><S S="Error">At line:1 char:1_x000D__x000A_</S><S S="Error'
+        '">+ Get-Item -Path \'HKLM:\\SOFTWARE\\NoSuchKeyForMagicGitGate\' -ErrorA'
+        'ction ..._x000D__x000A_</S><S S="Error">+ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~'
+        '~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~_x000D__x000A_</S><S S="Error">  '
+        '  + CategoryInfo          : ObjectNotFound: (HKLM:\\SOFTWARE\\NoSuchKeyF'
+        'orMagicGitGate:String) [Get-Item], ItemNotFoun _x000D__x000A_</S><S S="E'
+        'rror">   dException_x000D__x000A_</S><S S="Error">    + FullyQualifiedEr'
+        'rorId : PathNotFound,Microsoft.PowerShell.Commands.GetItemCommand_x000D_'
+        '_x000A_</S><S S="Error"> _x000D__x000A_</S></Objs>';
+
+    test("Enable's reason arrives as the plain line alone", () {
+      expect(
+        powerShellStderrText(enableDenied),
+        'Requested registry access is not allowed.',
+      );
+    });
+
+    test('an uncaught error reads as its lines, unescaped, with no XML', () {
+      final text = powerShellStderrText(uncaughtError);
+      expect(
+        text.split('\n').first,
+        r"Get-Item : Cannot find path 'HKLM:\SOFTWARE\NoSuchKeyForMagicGitGate' "
+        'because it does not exist.',
+      );
+      expect(text, contains('FullyQualifiedErrorId : PathNotFound'));
+      for (final noise in [
+        'CLIXML',
+        '<',
+        '_x000D_',
+        'Preparing modules',
+        '\r',
+      ]) {
+        expect(text, isNot(contains(noise)), reason: 'no "$noise" survives');
+      }
+    });
+
+    test('progress alone reads as nothing, so the caller says the exit code', () {
+      const progressOnly =
+          '#< CLIXML\r\n<Objs Version="1.1.0.1" xmlns="http://schemas.microsoft'
+          '.com/powershell/2004/04"><Obj S="progress" RefId="0"><MS><PR N="Recor'
+          'd"><AV>Preparing modules for first use.</AV></PR></MS></Obj></Objs>';
+      expect(powerShellStderrText(progressOnly), isEmpty);
+    });
+
+    test('stderr that is not CLIXML is kept, only trimmed', () {
+      expect(
+        powerShellStderrText('  Access is denied.\r\n'),
+        'Access is denied.',
+      );
+    });
+
+    test('XML entities in an error string are decoded', () {
+      const escaped =
+          '#< CLIXML\r\n<Objs Version="1.1.0.1"><S S="Error">a &lt;b&gt; &amp; '
+          '&quot;c&quot; &apos;d&apos;_x000D__x000A_</S></Objs>';
+      expect(powerShellStderrText(escaped), '''a <b> & "c" 'd\'''');
+    });
+  });
+
   group('the enable script under pwsh', () {
     test('fails cleanly where it cannot write the registry', () {
       // Enable's contract (0070-PLAN D-d): exit 0 only when the value was set,

@@ -277,9 +277,10 @@ class TabsController extends ChangeNotifier {
   }
 
   /// Opens (or focuses) a tab for [connectionId]/[repoPath] and connects it.
-  /// Dedupe: a matching open tab is focused, not duplicated. A blank landing
-  /// tab (the active one, never targeted) is reused instead of left empty.
-  /// [connect] runs against the TARGET tab's own container.
+  /// Dedupe: a matching open tab is focused, not duplicated — and if its last
+  /// connect failed, connected again (0070-PLAN D7). A blank landing tab (the
+  /// active one, never targeted) is reused instead of left empty. [connect]
+  /// runs against the TARGET tab's own container.
   RepoTab openOrFocus({
     String? connectionId,
     String? repoPath,
@@ -294,6 +295,15 @@ class TabsController extends ChangeNotifier {
       existing.savedReferencePath ??= savedReferencePath;
       _syncTabAlias(existing);
       activate(existing.id);
+      // A failed connect (a cancelled Windows shell prompt, a refused login)
+      // leaves the tab holding its repository with no session behind it.
+      // Choosing that repository again means "try again", not "show me the
+      // failure". A tab that is connecting, connected or recovering from a
+      // drop is only focused.
+      if (existing.container.read(connectionProvider).phase ==
+          ConnectionPhase.error) {
+        connect(existing.container);
+      }
       return existing;
     }
     final act = active;

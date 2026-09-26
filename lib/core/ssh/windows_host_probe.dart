@@ -79,6 +79,53 @@ String encodedPowerShellCommand(String script) {
       '-EncodedCommand $payload';
 }
 
+/// PowerShell's stderr as a person reads it (0070-PLAN D7).
+///
+/// `powershell.exe` with redirected streams writes CLIXML to stderr: a
+/// `#< CLIXML` line, then `<Objs>` blocks holding progress records (such as
+/// "Preparing modules for first use", emitted before the script even runs)
+/// and `S="Error"` strings with their line ends escaped as `_x000D__x000A_`.
+/// Plain lines a script writes itself (Enable's `[Console]::Error.WriteLine`)
+/// sit between the blocks. This keeps those lines and the error strings, in
+/// order, and drops the rest. Stderr without the header is only trimmed.
+String powerShellStderrText(String stderr) {
+  final text = stderr.replaceAll('\r\n', '\n').trimLeft();
+  if (!text.startsWith(_clixmlHeader)) return text.trim();
+  final body = text.substring(_clixmlHeader.length);
+  final parts = <String>[];
+  var at = 0;
+  for (final objs in _clixmlObjs.allMatches(body)) {
+    parts
+      ..add(body.substring(at, objs.start))
+      ..addAll(
+        _clixmlError
+            .allMatches(objs.group(1)!)
+            .map((s) => _clixmlString(s.group(1)!)),
+      );
+    at = objs.end;
+  }
+  parts.add(body.substring(at));
+  return parts.join().replaceAll('\r\n', '\n').trim();
+}
+
+const _clixmlHeader = '#< CLIXML';
+final _clixmlObjs = RegExp(r'<Objs\b[^>]*>(.*?)</Objs>', dotAll: true);
+final _clixmlError = RegExp(r'<S S="Error">(.*?)</S>', dotAll: true);
+final _clixmlEscape = RegExp('_x([0-9A-Fa-f]{4})_');
+
+/// A CLIXML string's text: `_xHHHH_` escapes, then the XML entities, `&amp;`
+/// last so an escaped entity is not decoded twice.
+String _clixmlString(String s) => s
+    .replaceAllMapped(
+      _clixmlEscape,
+      (m) => String.fromCharCode(int.parse(m.group(1)!, radix: 16)),
+    )
+    .replaceAll('&lt;', '<')
+    .replaceAll('&gt;', '>')
+    .replaceAll('&quot;', '"')
+    .replaceAll('&apos;', "'")
+    .replaceAll('&amp;', '&');
+
 /// Whether the SSH identification string names Windows OpenSSH, e.g.
 /// `SSH-2.0-OpenSSH_for_Windows_9.5`.
 bool isWindowsBanner(String? remoteVersion) =>

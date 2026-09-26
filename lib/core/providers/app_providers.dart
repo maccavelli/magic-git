@@ -2543,7 +2543,8 @@ class ConnectionController extends Notifier<ConnectionState> {
     if (attempt != _attempt || !ref.mounted) return;
     final facts = WindowsHostFacts.parse(result.stdout);
     if (facts == null) {
-      final said = result.stderr.trim();
+      // PowerShell wraps stderr in CLIXML; the prompt shows the reason (D7).
+      final said = powerShellStderrText(result.stderr);
       throw WindowsShellSetupRequired(
         WindowsShellPrompt(
           kind: WindowsShellPromptKind.probeFailed,
@@ -2588,7 +2589,7 @@ class ConnectionController extends Notifier<ConnectionState> {
             timeout: _windowsProbeTimeout,
           );
       if (!result.isSuccess) {
-        final said = result.stderr.trim();
+        final said = powerShellStderrText(result.stderr);
         failure = said.isNotEmpty ? said : 'exit ${result.exitCode}';
       }
     } catch (e) {

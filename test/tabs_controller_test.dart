@@ -164,6 +164,75 @@ void main() {
     expect(c.tabs, hasLength(2));
   });
 
+  // 0070-PLAN D7: a tab whose connect failed (a cancelled Windows shell
+  // prompt, a refused login) keeps its repository but has no session, so
+  // choosing that repository again tries again, in that same tab.
+  group('choosing the repository of a tab whose connect failed', () {
+    ({TabsController c, RepoTab t1, RepoTab t2}) twoTabs() {
+      final c = makeController();
+      addTearDown(c.dispose);
+      c.ensureInitialTab();
+      final t1 = c.openOrFocus(
+        connectionId: 'c1',
+        repoPath: '/a',
+        connect: (cont) => connectSaved(cont, '/a'),
+      );
+      final t2 = c.openOrFocus(
+        connectionId: 'c1',
+        repoPath: '/b',
+        connect: (cont) => connectSaved(cont, '/b'),
+      );
+      c.activate(t2.id);
+      return (c: c, t1: t1, t2: t2);
+    }
+
+    void publish(RepoTab tab, ConnectionPhase phase) =>
+        (tab.container.read(connectionProvider.notifier) as _Recorder).publish(
+          ConnectionState(
+            phase: phase,
+            connectionId: 'c1',
+            repoPath: '/a',
+            error: phase == ConnectionPhase.error ? 'shell is cmd.exe' : null,
+          ),
+        );
+
+    test('connects again in that tab, and opens no other', () {
+      final (:c, :t1, t2: _) = twoTabs();
+      publish(t1, ConnectionPhase.error);
+
+      ProviderContainer? connectedIn;
+      final again = c.openOrFocus(
+        connectionId: 'c1',
+        repoPath: '/a',
+        connect: (cont) => connectedIn = cont,
+      );
+      expect(again.id, t1.id);
+      expect(c.activeId, t1.id);
+      expect(connectedIn, same(t1.container));
+      expect(c.tabs, hasLength(2));
+    });
+
+    for (final phase in [
+      ConnectionPhase.connecting,
+      ConnectionPhase.connected,
+      ConnectionPhase.lost,
+    ]) {
+      test('only focuses a tab that is ${phase.name}', () {
+        final (:c, :t1, t2: _) = twoTabs();
+        publish(t1, phase);
+
+        var connectCalled = false;
+        c.openOrFocus(
+          connectionId: 'c1',
+          repoPath: '/a',
+          connect: (_) => connectCalled = true,
+        );
+        expect(connectCalled, isFalse);
+        expect(c.activeId, t1.id);
+      });
+    }
+  });
+
   test('each tab is an isolated session container', () {
     final c = makeController();
     addTearDown(c.dispose);

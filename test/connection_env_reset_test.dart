@@ -170,6 +170,9 @@ class _WindowsHostExecutor extends SSHCommandExecutor {
   String facts;
   int enableExit = 0;
   String enableStderr = '';
+
+  /// What the probe writes to stderr; with empty [facts], a failed probe.
+  String probeStderr = '';
   bool posixRejected = false;
 
   /// What `git rev-parse --show-toplevel` reports: git's own spelling of
@@ -210,7 +213,7 @@ class _WindowsHostExecutor extends SSHCommandExecutor {
     }
     events.add('windows-probe');
     posixRejected = !facts.contains(r'MGW_DEFAULT_SHELL=C:\Program Files\Git');
-    return SSHCommandResult(exitCode: 0, stdout: facts, stderr: '');
+    return SSHCommandResult(exitCode: 0, stdout: facts, stderr: probeStderr);
   }
 
   @override
@@ -752,6 +755,53 @@ void main() {
       expect(prompt!.enableError, 'Requested registry access is not allowed.');
       expect(prompt.enabling, isFalse);
       expect(exec.events, ['windows-probe', 'enable']);
+    });
+
+    // 0070-PLAN D7: as a Windows host really sends it, the reason sits inside
+    // PowerShell's CLIXML (captured from a Windows 11 host).
+    const clixmlDenied =
+        '#< CLIXML\r\nRequested registry access is not allowed.\r\n<Objs Version='
+        '"1.1.0.1" xmlns="http://schemas.microsoft.com/powershell/2004/04"><Obj S'
+        '="progress" RefId="0"><TN RefId="0"><T>System.Management.Automation.PSCu'
+        'stomObject</T><T>System.Object</T></TN><MS><I64 N="SourceId">1</I64><PR '
+        'N="Record"><AV>Preparing modules for first use.</AV><AI>0</AI><Nil /><PI'
+        '>-1</PI><PC>-1</PC><T>Completed</T><SR>-1</SR><SD> </SD></PR></MS></Obj>'
+        '</Objs>';
+
+    test(
+      'Enable denied shows the reason, not the CLIXML around it (D7)',
+      () async {
+        final exec =
+            _WindowsHostExecutor(
+                banner: _windowsBanner,
+                facts: _factsCmdWithBash,
+              )
+              ..enableExit = 1
+              ..enableStderr = clixmlDenied;
+        final (:container, manager: _) = _windowsContainer(exec);
+        final controller = container.read(connectionProvider.notifier);
+        await controller.connect(profile: winProfile, repoPath: '/c/repo');
+
+        await controller.enableGitBashShell();
+
+        final prompt = container.read(connectionProvider).windowsShellPrompt;
+        expect(
+          prompt!.enableError,
+          'Requested registry access is not allowed.',
+        );
+      },
+    );
+
+    test('a failed probe reports the reason, not the CLIXML (D7)', () async {
+      final exec = _WindowsHostExecutor(banner: _windowsBanner, facts: '')
+        ..probeStderr = clixmlDenied;
+      final (:container, manager: _) = _windowsContainer(exec);
+      final controller = container.read(connectionProvider.notifier);
+      await controller.connect(profile: winProfile, repoPath: '/c/repo');
+
+      final prompt = container.read(connectionProvider).windowsShellPrompt;
+      expect(prompt?.kind, WindowsShellPromptKind.probeFailed);
+      expect(prompt!.detail, 'Requested registry access is not allowed.');
     });
 
     test("cmd.exe's rejection finds a Windows host its banner hid", () async {

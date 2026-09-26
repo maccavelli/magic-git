@@ -1,8 +1,8 @@
 ---
-status: "in-progress"
+status: "complete"
 date: 2026-09-23
 associated-madr: "0070-MADR-native-windows-hosts-over-ssh.md"
-verified: 2026-09-23
+verified: 2026-09-26
 ---
 
 # Implement the first Windows slice: detect Git Bash, offer to make it the SSH shell, and list it as a dependency
@@ -506,6 +506,73 @@ setting is machine-wide.
   "Preparing modules for first use" record is emitted before the script runs, so setting
   `$ProgressPreference` inside the script cannot stop it. The Enable error shows stderr as it
   stands. Resolution: pending the maintainer's decision.
+  * **Evidence, captured on the host** with the app's own command line
+    (`encodedPowerShellCommand`), each on a fresh connection:
+    * a denial shaped like Enable's, read-only (`Get-ItemProperty` on the SYSTEM-only
+      `HKLM\SAM\SAM`, which autoloads the module `New-ItemProperty` does): `#< CLIXML`, the plain
+      line `Requested registry access is not allowed.`, then one `<Objs>` holding only the
+      progress record. This is the shape the prompt showed;
+    * an uncaught error: `#< CLIXML`, then an `<Objs>` with the progress record and
+      `<S S="Error">` strings whose line ends are escaped `_x000D__x000A_`.
+    * Both paths that show PowerShell stderr take it as it stands: the probe's failure detail
+      (`app_providers.dart:2545`) and Enable's failure (`:2597`).
+  * **Resolutions offered:**
+    1. decode CLIXML where PowerShell stderr is read: drop progress records, keep the plain lines
+       and the `S="Error"` strings, and unescape `_xHHHH_`;
+    2. have Enable catch its own failure and report the reason on stdout, which would not cover
+       the probe.
+  * **Decision (maintainer, 2026-09-26): option 1.** A `powerShellStderrText` in
+    `windows_host_probe.dart`, applied at both sites, tested against the two captured samples.
+    Each case is seen to fail first.
+  * **Files added to scope:** `lib/core/ssh/windows_host_probe.dart`,
+    `lib/core/providers/app_providers.dart`, `test/windows_host_probe_test.dart`, and the two
+    captured samples as test fixtures in that file.
+  * **The two UX findings, folded in (maintainer, 2026-09-26).** Diagnosed read-only first:
+    * *Choosing the same repository after Cancel does nothing.* `TabsController.openOrFocus`
+      (`tabs_controller.dart:291-297`) finds an open tab by connection and path, via `_find`
+      (`:451-466`), and only activates it. It never looks at that tab's phase. After Cancel, the
+      tab keeps `ConnectionPhase.error` with its `repoPath` and `connectionId`, and
+      `dismissWindowsShellPrompt` (`app_providers.dart:2632-2636`) has released the transport.
+      So nothing dials. **Fix:** when the tab found is in `error` or `disconnected`,
+      `openOrFocus` runs the caller's `connect` again in that tab's container. A tab that is
+      `connecting`, `connected` or `lost` is only focused, as now.
+    * *Add Existing Repository shows an error from before it opened.* The sheet watches the
+      active tab's `(phase, error)` (`local_repo_form.dart:862-863`) and shows any `error`
+      (`:1083-1090`). Nothing clears it when the sheet opens, so a failed connect from earlier
+      reads as this sheet's failure. **Fix:** the sheet notes the tab's `sessionEpoch` when it
+      opens, and shows an error only from an attempt started since then.
+    * **Files added to scope:** `lib/features/tabs/tabs_controller.dart`,
+      `lib/features/connection/local_repo_form.dart`, `test/tabs_controller_test.dart`,
+      `test/add_existing_repo_sheet_test.dart`. Each fix gets a test that is seen to fail first.
+    * ~~re-dial a tab in `error` or `disconnected`~~ **`error` only**, settled while writing the
+      test. `disconnect()` writes a blank state, so a disconnected tab has no `repoPath` and never
+      matches `_find`. The existing dedupe test's fake also sits in `disconnected` for an open
+      repository, and that must stay focus-only.
+  * **Executed (2026-09-26).**
+    * `windows_host_probe.dart`: `powerShellStderrText` keeps the plain lines and the
+      `S="Error"` strings in order, drops progress records, and unescapes `_xHHHH_` and the XML
+      entities (`&amp;` last). Stderr without the header is only trimmed.
+      `app_providers.dart` uses it for the probe's failure detail and Enable's failure.
+    * `tabs_controller.dart`: `openOrFocus` connects a found tab again when its phase is `error`.
+    * `local_repo_form.dart`: the sheet notes `sessionEpoch` on opening and shows an error only
+      when the epoch has moved since.
+    * **Seen to fail first, each on the code before its fix:**
+      * `windows_host_probe_test` "PowerShell stderr (D7)": 4 of 5 failed against a stub with
+        today's behaviour (`Actual: '#< CLIXML\r\n'`). The fifth, stderr that is not CLIXML,
+        passed, as it must.
+      * `connection_env_reset_test`: both wiring cases failed before the two call sites changed.
+      * `tabs_controller_test` "choosing the repository of a tab whose connect failed": the
+        re-dial case failed (`Actual: <null>`), and the three focus-only phases passed.
+      * `add_existing_repo_sheet_test` "which connect error the sheet shows": the before-it-opened
+        case failed (the cmd.exe text was found), and the since-it-opened case passed.
+    * `flutter analyze`: No issues found. `dart format` reflowed two test files. Full suite:
+      `03:01 +4469 ~3: All tests passed!`, 0 `[E]`.
+    * The fixes were verified by these tests, not re-run on the device. The CLIXML cases use the
+      bytes captured from the host.
+* **This plan is complete (2026-09-26).** AC1 to AC8 are met. The Windows gate ran every row:
+  A1 and A10 confirmed, Not active, Enable, Copy, Denied (whose reason now reads as plain text),
+  Settings path, and Git Bash active. The failures seen at the gate are fixed (D7) or were fixed
+  outside this plan (the quoted `~`).
 * **Phase 5 (2026-09-23), device gate on the maintainer's Windows 11 laptop.**
   * 5.1: `./build_macos.sh --unsigned --install` (1.9.3.8), at the maintainer's request. The
     running copy was quit with ⌘Q and confirmed, and the installed build launched.
