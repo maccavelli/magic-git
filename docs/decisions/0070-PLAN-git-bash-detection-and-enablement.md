@@ -429,7 +429,8 @@ setting is machine-wide.
     intended topic. **Red first:** the updated test failed on the old book in "every locked topic id
     exists in its category, in order" and "quoted UI labels exist in their topic and in source".
     After the change: `help_book_json_test.dart` `+16`, all pass.
-* **D6 (2026-09-25, deviation, Phase 5): evidence against A10.**
+* **D6 (2026-09-25, deviation, Phase 5): evidence against A10.** **Withdrawn the same day: the
+  evidence was an artefact of the measurement, and A10 holds** (see *D6 resolved*, below).
   * **Evidence.** To run the three unrun rows (Copy, Denied, Settings path), the host's
     `DefaultShell` was removed with the maintainer's consent. Its value
     (`C:\Program Files\Git\bin\bash.exe`) was saved first, and the SSH session was confirmed
@@ -453,6 +454,58 @@ setting is machine-wide.
     Enable and to the copyable command comes back as a proposal before any code changes. The value
     is restored at the end.
   * **Files added to scope:** none yet.
+* **D6 resolved (2026-09-25): A10 holds, and the contrary evidence was the Mac's SSH multiplexing.**
+  * **The cause.** This Mac's `~/.ssh/config` sets `ControlMaster auto` and `ControlPersist 10m`
+    for every host. Each probe `ssh` was a new channel on a connection opened before the
+    registry change, not a new connection. Win32-OpenSSH picks the shell when a connection's
+    `sshd -z` session starts. The process listing showed it: the probe's `sshd -z` was created at
+    23:06:07, before the restart at 23:06:36, and was still a child of the old listener.
+  * **Measured again**, each probe with `-o ControlMaster=no -o ControlPath=none`, so that each
+    opened its own connection:
+
+    | Step | Fresh connection's shell |
+    |---|---|
+    | `DefaultShell` removed, `sshd` restarted (via a one-shot SYSTEM scheduled task, since removed) | `cmd.exe` |
+    | `DefaultShell` set, **no** restart | `/usr/bin/bash` |
+    | `DefaultShell` removed, **no** restart (listener unchanged, started 23:06:36) | `cmd.exe` |
+
+    A change to `DefaultShell` applies to the next connection in both directions, with no
+    restart. A10 stands as the MADR records it, and Enable needs no change. The one restart was
+    part of the experiment, done with the maintainer's consent.
+  * **Consequence for the gate:** every shell check on a Windows host is made on a fresh
+    connection. The app is not affected: dartssh2 opens its own connections and does not share
+    OpenSSH's control sockets.
+* **Phase 5, second pass (2026-09-25): the three unrun rows.** The installed build of `73b6257`
+  (1.9.4.11), driven on this Mac. `DefaultShell` was removed and restored with the maintainer's
+  consent. The value was saved first and read back identical at the end, and every shell check
+  was made on a fresh connection (D6).
+
+  | Item | Result | Evidence |
+  |---|---|---|
+  | Not active | **PASS** | With `DefaultShell` removed, connecting to a saved repository opened "Git Bash Is Not the SSH Shell", with `C:\Program Files\Git\bin\bash.exe`, the machine-wide note, the copyable command, the undo command, and Cancel / Reconnect / Enable. No "not a git repository". |
+  | Settings path | **PASS** | With Settings → External tools → bash set to `C:\Program Files\Git\usr\bin\bash.exe`, the prompt reported that path, and the copyable command used it. The field was cleared afterwards, as it had been. |
+  | Copy | **PASS** | The copy control put exactly the command on the clipboard: 137 bytes, no trailing newline, replacing a sentinel. Run verbatim in an elevated PowerShell on the host (as `-EncodedCommand`, unedited), it set `DefaultShell`. The next fresh connection got `/usr/bin/bash`, and the prompt's Reconnect connected in 999 ms and closed the sheet. |
+  | Denied | **PASS on behaviour, with a defect (D7)** | Connected as a temporary standard user (`mg-gate-std`, member of Users only, created for the gate and deleted afterwards), the prompt showed the non-administrator note. Enable was refused. The prompt stayed and gave the reason, "Requested registry access is not allowed.", and `DefaultShell` stayed absent. The error text also carried PowerShell's serialised progress stream: `#< CLIXML`, then an `<Objs …>` record, "Preparing modules for first use". |
+
+  **Found at the gate, not fixed here:**
+  * After Cancel, choosing the **same** repository again in Workspaces does nothing. The
+    host's `OpenSSH/Operational` log shows no login for either attempt. Cancel leaves the
+    repository's tab open, and choosing that repository focuses the tab rather than dialling.
+    A different repository dials and shows the prompt.
+  * After Git Bash is active again, Add Existing Repository still shows the earlier "This Windows
+    host's SSH shell is cmd.exe…" error until a new connection replaces it.
+  * The deleted user's profile folder and profile record remain on the host, because Windows keeps
+    its registry hive loaded, with no process left for that SID, until the next restart. The
+    account is gone.
+  * **A slip during the gate, undone:** a click meant to connect landed on the saved
+    magic-cli-remote entry's fsmonitor toggle and turned it on. It was turned off at once. The
+    saved entry reads `fsmonitorPaths: []` again, and the host repository has no
+    `core.fsmonitor`.
+* **D7 (2026-09-25, deviation, Phase 5): Enable's error shows raw CLIXML.** `powershell
+  -EncodedCommand` with redirected streams writes its progress records to stderr as CLIXML. The
+  "Preparing modules for first use" record is emitted before the script runs, so setting
+  `$ProgressPreference` inside the script cannot stop it. The Enable error shows stderr as it
+  stands. Resolution: pending the maintainer's decision.
 * **Phase 5 (2026-09-23), device gate on the maintainer's Windows 11 laptop.**
   * 5.1: `./build_macos.sh --unsigned --install` (1.9.3.8), at the maintainer's request. The
     running copy was quit with ⌘Q and confirmed, and the installed build launched.

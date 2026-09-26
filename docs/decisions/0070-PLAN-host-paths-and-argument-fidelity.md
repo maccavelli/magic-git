@@ -1,8 +1,8 @@
 ---
-status: "in-progress"
+status: "complete"
 date: 2026-09-24
 associated-madr: "0070-MADR-native-windows-hosts-over-ssh.md"
-verified: 2026-09-24
+verified: 2026-09-25
 ---
 
 # Implement Windows host paths and argument fidelity: one canonical path form, and user text that reaches git unchanged
@@ -652,3 +652,25 @@ the maintainer's consent, and removed afterwards together with its entry in the 
 * `mutate.py --check` on the catalogue: `9 sound`, with the analyzer canary recognised.
 * `flutter analyze`: No issues found. `dart format` reflowed the test file once. Full suite:
   `03:18 +4455 ~3: All tests passed!`, 0 `[E]`.
+
+### Phase 7, D11 rows (2026-09-25)
+
+On the same build, in a second scratch repository under `%TEMP%` (`mg-gate-0070b`: a `feature`
+branch, `main` moved on, an uncommitted change), created over SSH and removed afterwards together
+with its saved-connection entry. Each result was read on the host with a fresh SSH connection.
+
+| Message | How the app took it | Result on the host |
+|---|---|---|
+| Stash `/usr/stash note` | Stashes → the pulldown's "Stash with message…" | `git stash list`: `stash@{0}: On main: /usr/stash note` — **PASS** |
+| Tag `/usr/tag note` | Branches → Tags → Create Tag, annotated | `git cat-file -p gate-tag2`: message `/usr/tag note` — **PASS** |
+| Merge `/usr/merge note` | Branch menu → Squash merge, then the commit composer | `git log -1 --format=%B`: `/usr/merge note` — **PASS** |
+
+* **The merge row goes through the composer, which is the only local path that takes a merge
+  message.** `GitService.merge` always runs `git merge --no-edit`, and the only merge-message
+  field in the app is `merge_options_sheet.dart`, for forge MR/PR merges. The composer after a
+  squash (or a conflicted merge) is where a local merge's message is typed.
+* **A first tag attempt is set aside.** The sheet pre-fills the message with the tag name, and the
+  typed text was appended to it (`gate-tag/usr/tag note`), so that run does not test a message
+  that starts with `/`. It was redone with the field cleared first.
+* Every acceptance criterion is now met: commit, tag, merge and stash messages and a History
+  filter starting with `/` reach git unchanged on the device. This plan is `complete`.
